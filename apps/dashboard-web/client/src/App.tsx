@@ -12,6 +12,7 @@ import POSTerminal from './pages/POSTerminal';
 import OrderQueue from './pages/OrderQueue';
 import PendingOrders from './pages/PendingOrders';
 import KitchenDisplay from './pages/KitchenDisplay';
+import POSManagement from './pages/POSManagement';
 import InventoryCount from './pages/InventoryCount';
 import InventoryMovements from './pages/InventoryMovements';
 import LossLog from './pages/LossLog';
@@ -33,6 +34,7 @@ function Router() {
       <Route path={'/order-queue'} component={OrderQueue} />
       <Route path={'/pending-orders'} component={PendingOrders} />
       <Route path={'/kitchen-display'} component={KitchenDisplay} />
+      <Route path={'/pos-management'} component={POSManagement} />
       <Route path={'/inventory-count'} component={InventoryCount} />
       <Route path={'/inventory-movements'} component={InventoryMovements} />
       <Route path={'/loss-log'} component={LossLog} />

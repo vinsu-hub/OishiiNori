@@ -14,6 +14,7 @@ import {
   Users,
   Wallet,
   CalendarDays,
+  Percent,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -46,6 +47,7 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
     { icon: Zap, label: 'Utility Log', href: '/utility-log' },
     ...(isManagerOrExecutive
       ? [
+          { icon: Percent, label: 'POS Management', href: '/pos-management' },
           { icon: Users, label: 'Employees', href: '/employees' },
           { icon: Users, label: 'HR Attendance', href: '/hr/attendance' },
           { icon: Wallet, label: 'Payroll', href: '/hr/payroll' },
