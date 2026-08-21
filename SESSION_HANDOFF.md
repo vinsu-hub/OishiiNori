@@ -1,20 +1,20 @@
 # Oishii Nori Command Suite — Session Handoff
 
-**Date:** 2026-08-20 (build session) · **Updated:** 2026-08-21 (Phase 2 close-out, Phase 3-7 frontend kickoff, Milestones 3-5 completed, logo branding + Milestone 6 completed, pushed to GitHub and deployed to Vercel, an admin login + brand color/font rebrand, then a new digital menu / QR table ordering feature — all same day)
-**Repo:** `D:\ioshinori\oishii-nori-command-suite` — **pushed to GitHub**: `https://github.com/vinsu-hub/OishiiNori` (private, `main` branch, 4 commits). The admin-login/rebrand work AND the new digital-menu feature below are both still **uncommitted local changes** as of this write-up.
+**Date:** 2026-08-20 (build session) · **Updated:** 2026-08-21 (Phase 2 close-out, Phase 3-7 frontend kickoff, Milestones 3-5 completed, logo branding + Milestone 6 completed, pushed to GitHub and deployed to Vercel, an admin login + brand color/font rebrand, then a new digital menu / QR table ordering feature, all committed/pushed and deployed as a 4th Vercel app — all same day)
+**Repo:** `D:\ioshinori\oishii-nori-command-suite` — pushed to GitHub: `https://github.com/vinsu-hub/OishiiNori` (private, `main` branch, 6 commits). Working tree is clean — nothing uncommitted as of this write-up.
 **Live deployments (Vercel, team `vince-tamis`, Git-integration auto-deploy on push to `main`):**
 - Dashboard: `https://oishii-nori-dashboard.vercel.app`
 - Staff Clock kiosk: `https://oishii-nori-staff-clock.vercel.app`
 - Backend API: `https://oishii-nori-api.vercel.app` (`/health` → `{"status":"ok"}`)
-- Customer menu (`apps/customer-menu`): built and verified locally, **no Vercel project created yet** — see "🛎️ Digital menu" below.
+- Customer menu (QR table ordering, `apps/customer-menu`): `https://oishii-nori-menu.vercel.app` — verified live, correctly calling the deployed API, zero console errors. A table's QR code is just this URL with `?table=N` appended (e.g. `https://oishii-nori-menu.vercel.app/?table=5`).
 **Reference spec:** `D:\ioshinori\Oishii_Nori_Menu_Ingredients.xlsx`
 **Structural reference (read-only, different client, never push/pull):** `D:\SMFC_POS\saint_michael_pos\saint_michael_pos` — turned out to have both frontend apps (`dashboard-web`, `staff-clock`) fully built; Phases 3-7 are a port-and-adapt job from this reference, see below.
 **Plan files:** `C:\Users\vinsu\.claude\plans\hazy-noodling-teapot.md` (Phase 0), `C:\Users\vinsu\.claude\plans\ancient-dreaming-lighthouse.md` (Phase 3-7 frontend plan, 6 milestones), `C:\Users\vinsu\.claude\plans\fancy-sparking-patterson.md` (reused across several same-day sessions: logo+Milestone 6, git push+Vercel deploy, admin login+rebrand, digital menu)
-**Build status: ~98% complete on the original 8-phase scope, plus a new digital-menu feature (Phase 9, not in the original plan) built and verified live but not yet deployed.** Local dev servers no longer needed for basic verification of the deployed 3 apps — the live URLs above work end-to-end. Only remaining blocker on the original scope: the Supabase `hr` schema exposure toggle (Phase 2/7 HR live verification only). GitHub auth is fixed and no longer a blocker.
+**Build status: ~98% complete on the original 8-phase scope, plus a new digital-menu feature (Phase 9, not in the original plan), all 4 apps deployed to production.** Local dev servers no longer needed for basic verification — all 4 live URLs above work end-to-end. Only remaining blocker on the original scope: the Supabase `hr` schema exposure toggle (Phase 2/7 HR live verification only). GitHub auth is fixed and no longer a blocker.
 
 ---
 
-## 🎨 Admin login + brand rebrand (completed 2026-08-21, not yet pushed to production)
+## 🎨 Admin login + brand rebrand (completed 2026-08-21, pushed and live)
 
 **Admin login**: Supabase Auth requires a real email format, so a bare `admin` username can't hit the network as-is. Fix: `Login.tsx`'s field is now plain text labeled "Username" (was `type="email"`); on submit, any value without an `@` gets `@oishiinori.com` appended before calling `signInWithPassword` (`email.includes('@') ? email : \`${email}@oishiinori.com\``) — existing full-email logins (`qa.tester@oishiinori.com`) are unaffected since they already contain `@`. A real `admin@oishiinori.com` / `admin123` account (executive role, `employee_number = ADMIN-001`, kiosk PIN `1234`) was created directly via the service-role client (same idempotent pattern as `qa_phase2.py`'s `ensure_qa_user`). Verified live via Playwright: typing literally `admin`/`admin123` logs in successfully.
 
@@ -29,11 +29,11 @@
 
 Verified via `tsc --noEmit` (clean, both apps) and Playwright screenshots: Login, Home/Sidebar/Header, POS Terminal (cart + enabled red Charge button + gold Bundle badges + maroon Unavailable badges), Kitchen Display — zero console errors.
 
-**Not done**: no dark header/sidebar reskin, no category-grouped ALL-CAPS section headers on POS Terminal (would need restructuring the product grid, not just tokens — flagged as out of scope), no copy/microcopy pass, no new logo asset (existing `logo.jpg` already matches the guide's badge description). **Not pushed to GitHub/deployed yet** — sitting as local uncommitted changes pending the user's go-ahead, consistent with treating any push to the shared repo as needing explicit confirmation.
+**Not done**: no dark header/sidebar reskin, no category-grouped ALL-CAPS section headers on POS Terminal (would need restructuring the product grid, not just tokens — flagged as out of scope), no copy/microcopy pass, no new logo asset (existing `logo.jpg` already matches the guide's badge description). **Pushed and deployed** — confirmed live on `oishii-nori-dashboard.vercel.app` via a fresh Playwright login as `admin`/`admin123` against production.
 
 ---
 
-## 🛎️ Digital menu — QR table ordering (new feature, completed 2026-08-21, not yet pushed/deployed)
+## 🛎️ Digital menu — QR table ordering (new feature, completed 2026-08-21, pushed and deployed)
 
 New feature, not part of the original 8-phase master plan: a customer scans a QR code at their table, orders from their phone with no login, and staff approve + manually confirm payment (GCash/Cash) on a new dashboard page before the order becomes a real sale.
 
@@ -58,7 +58,7 @@ New feature, not part of the original 8-phase master plan: a customer scans a QR
 
 **Not done / deferred** (all per the user's own decisions when this was planned): real GCash payment-gateway integration (manual confirmation only), a `tables` management admin page (table is just a QR-encoded integer), customers editing/cancelling their own order after submitting, discounts on customer orders, daily-reset order numbering, item modifiers.
 
-**Not pushed/deployed yet.** A 4th Vercel project (proposed name `oishii-nori-menu`) still needs to be created and linked to `apps/customer-menu`, same process as the other 3 apps — not done automatically, needs the user's go-ahead like every other push/deploy this session.
+**Pushed and deployed.** A 4th Vercel project, `oishii-nori-menu`, was created and linked to `apps/customer-menu`, same process as the other 3 apps. Root Directory (`apps/customer-menu`) had to be set manually by the user in the Vercel dashboard, same limitation hit for the other 3 apps (no CLI/API path found for that setting on an existing project). Live at `https://oishii-nori-menu.vercel.app`, verified via Playwright against production: `?table=5` renders correctly, `GET /public/menu` correctly hits the deployed `oishii-nori-api.vercel.app` (200, zero console errors). A table's real QR code is just this URL with `?table=N` appended — no in-app QR generation needed, per the earlier decision.
 
 ---
 
