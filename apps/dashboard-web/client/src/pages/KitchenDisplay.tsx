@@ -17,10 +17,7 @@ import {
   fetchTransactions,
   updateKitchenStatus,
 } from '@/lib/api';
-
-// Polling, not websockets/Supabase realtime -- matches the reference app's
-// pattern (see build plan architecture notes).
-const POLL_INTERVAL_MS = 20_000;
+import { POLL_INTERVAL_MS } from '@/lib/constants';
 
 const KITCHEN_STATUSES: KitchenStatus[] = ['queued', 'preparing', 'ready', 'completed'];
 
@@ -83,7 +80,7 @@ export default function KitchenDisplay() {
         setTransactions(t.filter((x) => x.status !== 'voided'));
         setProducts(p);
       })
-      .catch((e) => toast.error(`Failed to load kitchen display: ${e.message}`))
+      .catch((e) => toast.error(`Failed to load kitchen display: ${e instanceof Error ? e.message : 'Unknown error'}`))
       .finally(() => setLoading(false));
   }, []);
 

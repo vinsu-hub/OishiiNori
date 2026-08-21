@@ -21,10 +21,8 @@ import {
   fetchProducts,
   rejectDigitalOrder,
 } from '@/lib/api';
-
-// Polling, not websockets/Supabase realtime -- matches the reference app's
-// pattern (see build plan architecture notes).
-const POLL_INTERVAL_MS = 20_000;
+import { formatCurrency } from '@/lib/utils';
+import { POLL_INTERVAL_MS } from '@/lib/constants';
 
 export default function PendingOrders() {
   const [orders, setOrders] = useState<ApiDigitalOrder[]>([]);
@@ -41,7 +39,7 @@ export default function PendingOrders() {
         setOrders([...o].sort((a, b) => a.order_number - b.order_number));
         setProducts(p);
       })
-      .catch((e) => toast.error(`Failed to load pending orders: ${e.message}`))
+      .catch((e) => toast.error(`Failed to load pending orders: ${e instanceof Error ? e.message : 'Unknown error'}`))
       .finally(() => setLoading(false));
   }, []);
 
@@ -78,9 +76,13 @@ export default function PendingOrders() {
 
   async function handleReject() {
     if (!rejectTarget) return;
+    if (!rejectReason.trim()) {
+      toast.error('A decline reason is required');
+      return;
+    }
     setBusy(true);
     try {
-      await rejectDigitalOrder(rejectTarget.id, rejectReason.trim() || undefined);
+      await rejectDigitalOrder(rejectTarget.id, rejectReason.trim());
       toast.success(`Order #${rejectTarget.order_number} declined`);
       setRejectTarget(null);
       setRejectReason('');
@@ -108,7 +110,7 @@ export default function PendingOrders() {
                   <Badge variant="outline">Table {order.table_number}</Badge>
                   <Badge variant="gold">{order.payment_method === 'gcash' ? 'GCash' : 'Cash'}</Badge>
                 </div>
-                <span className="font-semibold">₱{order.subtotal.toFixed(2)}</span>
+                <span className="font-semibold">{formatCurrency(order.subtotal)}</span>
               </div>
 
               <ul className="text-sm text-muted-foreground space-y-0.5">
@@ -125,7 +127,8 @@ export default function PendingOrders() {
                 })}
                 {order.addons.map((addon) => (
                   <li key={addon.id}>
-                    {addon.quantity}x {addon.addon_name || 'Add-on'} <span className="text-xs">(add-on)</span>
+                    {addon.quantity}x {addon.addon_name || 'Add-on'}{' '}
+                    <span className="text-xs">(add-on, {formatCurrency(addon.unit_price)} ea)</span>
                   </li>
                 ))}
               </ul>
@@ -152,7 +155,7 @@ export default function PendingOrders() {
           <DialogHeader>
             <DialogTitle>Confirm order #{approveTarget?.order_number}</DialogTitle>
             <DialogDescription>
-              Confirm ₱{approveTarget?.subtotal.toFixed(2)} received via{' '}
+              Confirm {approveTarget ? formatCurrency(approveTarget.subtotal) : ''} received via{' '}
               {approveTarget?.payment_method === 'gcash' ? 'GCash' : 'Cash'} for Table{' '}
               {approveTarget?.table_number}. This will create the sale and send it to the kitchen.
             </DialogDescription>
@@ -171,7 +174,7 @@ export default function PendingOrders() {
             <DialogTitle>Decline order #{rejectTarget?.order_number}</DialogTitle>
           </DialogHeader>
           <Input
-            placeholder="Reason (optional)"
+            placeholder="Reason for declining"
             value={rejectReason}
             onChange={(e) => setRejectReason(e.target.value)}
           />

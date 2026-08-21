@@ -12,17 +12,24 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { ApiTransaction, TransactionStatus, fetchTransactions, voidTransaction } from '@/lib/api';
+import { ApiTransaction, KitchenStatus, TransactionStatus, fetchTransactions, voidTransaction } from '@/lib/api';
+import { formatCurrency } from '@/lib/utils';
+import { POLL_INTERVAL_MS } from '@/lib/constants';
 
-const STATUS_VARIANT: Record<TransactionStatus, 'default' | 'secondary' | 'destructive'> = {
+type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline' | 'gold';
+
+const STATUS_VARIANT: Record<TransactionStatus, BadgeVariant> = {
   open: 'default',
   closed: 'secondary',
   voided: 'destructive',
 };
 
-// Polling, not websockets/Supabase realtime -- matches the reference app's
-// pattern (see build plan architecture notes).
-const POLL_INTERVAL_MS = 20_000;
+const KITCHEN_STATUS_VARIANT: Record<KitchenStatus, BadgeVariant> = {
+  queued: 'outline',
+  preparing: 'secondary',
+  ready: 'gold',
+  completed: 'default',
+};
 
 export default function OrderQueue() {
   const [transactions, setTransactions] = useState<ApiTransaction[]>([]);
@@ -34,7 +41,7 @@ export default function OrderQueue() {
   const load = useCallback(() => {
     fetchTransactions()
       .then((data) => setTransactions([...data].sort((a, b) => b.opened_at.localeCompare(a.opened_at))))
-      .catch((e) => toast.error(`Failed to load orders: ${e.message}`))
+      .catch((e) => toast.error(`Failed to load orders: ${e instanceof Error ? e.message : 'Unknown error'}`))
       .finally(() => setLoading(false));
   }, []);
 
@@ -78,16 +85,22 @@ export default function OrderQueue() {
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-xs text-muted-foreground">{t.id.slice(0, 8)}</span>
                   <Badge variant={STATUS_VARIANT[t.status]}>{t.status}</Badge>
-                  <Badge variant="outline">{t.kitchen_status}</Badge>
+                  <Badge variant={KITCHEN_STATUS_VARIANT[t.kitchen_status]}>{t.kitchen_status}</Badge>
                   {t.is_owner_request && <Badge variant="secondary">Owner's Request</Badge>}
                 </div>
                 <p className="text-sm text-muted-foreground">
                   {t.items.length} item{t.items.length === 1 ? '' : 's'} -- opened{' '}
                   {new Date(t.opened_at).toLocaleTimeString()}
                 </p>
+                {(t.discount_amount > 0 || t.tax_amount > 0) && (
+                  <p className="text-xs text-muted-foreground">
+                    {t.discount_amount > 0 && <>Discount: -{formatCurrency(t.discount_amount)} </>}
+                    {t.tax_amount > 0 && <>Tax: {formatCurrency(t.tax_amount)}</>}
+                  </p>
+                )}
               </div>
               <div className="flex items-center gap-3">
-                <span className="font-semibold">{t.total_amount.toFixed(2)}</span>
+                <span className="font-semibold">{formatCurrency(t.total_amount)}</span>
                 {t.status === 'open' && (
                   <Button variant="destructive" size="sm" onClick={() => setVoidTarget(t)}>
                     Void

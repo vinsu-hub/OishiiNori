@@ -24,6 +24,8 @@ import {
   fetchDiscountTypes,
   fetchProducts,
 } from '@/lib/api';
+import { formatCurrency } from '@/lib/utils';
+import { VAT_RATE_PREVIEW } from '@/lib/constants';
 
 interface CartLine {
   key: string;
@@ -31,8 +33,6 @@ interface CartLine {
   size: ApiProductSize;
   quantity: number;
 }
-
-const VAT_RATE = 0.12;
 
 export default function POSTerminal() {
   const { user } = useAuth();
@@ -70,7 +70,7 @@ export default function POSTerminal() {
   // display before charging, never sent as-is to the API.
   const previewDiscountAmount = selectedDiscount ? subtotal * (selectedDiscount.percentage / 100) : 0;
   const previewTaxable = subtotal - previewDiscountAmount;
-  const previewTax = selectedDiscount?.vat_exempt ? 0 : previewTaxable * VAT_RATE;
+  const previewTax = selectedDiscount?.vat_exempt ? 0 : previewTaxable * VAT_RATE_PREVIEW;
   const previewTotal = previewTaxable + previewTax;
 
   function addToCart(product: ApiProduct, size: ApiProductSize) {
@@ -137,15 +137,19 @@ export default function POSTerminal() {
         owner_request_note: ownerRequestConfirmed?.note || undefined,
       });
       toast.success(
-        `Sale complete -- total ${transaction.total_amount.toFixed(2)} (discount ${transaction.discount_amount.toFixed(
-          2
-        )}, tax ${transaction.tax_amount.toFixed(2)})`
+        `Sale complete -- total ${formatCurrency(transaction.total_amount)} (discount ${formatCurrency(
+          transaction.discount_amount
+        )}, tax ${formatCurrency(transaction.tax_amount)})`
       );
       setCart([]);
       setDiscountTypeId('none');
       clearOwnerRequest();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to create transaction');
+      // A failed charge invalidates whatever was staged for Owner's Request --
+      // force re-confirmation on retry rather than silently letting a stale
+      // (possibly since-invalid) PIN confirmation be reused.
+      clearOwnerRequest();
     } finally {
       setSubmitting(false);
     }
@@ -186,9 +190,16 @@ export default function POSTerminal() {
                     <CardContent className="pb-3 space-y-1">
                       <p className="text-xs text-muted-foreground">{product.category}</p>
                       <p className="text-sm font-semibold">
-                        {product.sizes.length > 1 ? `from ${cheapest?.price.toFixed(2)}` : cheapest?.price.toFixed(2)}
+                        {product.sizes.length > 1 && cheapest ? `from ${formatCurrency(cheapest.price)}` : cheapest ? formatCurrency(cheapest.price) : ''}
                       </p>
-                      {product.is_bundle && <Badge variant="gold">Bundle</Badge>}
+                      {product.is_bundle && (
+                        <Badge
+                          variant="gold"
+                          title="Ingredient deduction for this bundle is logged by the kitchen at fulfillment time, not at checkout."
+                        >
+                          Bundle
+                        </Badge>
+                      )}
                       {allUnavailable && <Badge variant="destructive">Unavailable</Badge>}
                     </CardContent>
                   </Card>
@@ -218,7 +229,7 @@ export default function POSTerminal() {
                   <Button size="icon" variant="outline" className="h-6 w-6" onClick={() => updateQuantity(line.key, 1)}>
                     +
                   </Button>
-                  <span className="w-14 text-right">{(line.size.price * line.quantity).toFixed(2)}</span>
+                  <span className="w-14 text-right">{formatCurrency(line.size.price * line.quantity)}</span>
                 </div>
               </div>
             ))}
@@ -253,19 +264,19 @@ export default function POSTerminal() {
             <div className="text-sm space-y-1">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Subtotal</span>
-                <span>{subtotal.toFixed(2)}</span>
+                <span>{formatCurrency(subtotal)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Discount (preview)</span>
-                <span>-{previewDiscountAmount.toFixed(2)}</span>
+                <span>-{formatCurrency(previewDiscountAmount)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Tax (preview)</span>
-                <span>{previewTax.toFixed(2)}</span>
+                <span>{formatCurrency(previewTax)}</span>
               </div>
               <div className="flex justify-between font-semibold text-base">
                 <span>Total (preview)</span>
-                <span>{previewTotal.toFixed(2)}</span>
+                <span>{formatCurrency(previewTotal)}</span>
               </div>
             </div>
 
@@ -295,7 +306,7 @@ export default function POSTerminal() {
                 }}
               >
                 <span>{size.size_label}</span>
-                <span>{size.price.toFixed(2)}</span>
+                <span>{formatCurrency(size.price)}</span>
               </Button>
             ))}
           </div>
