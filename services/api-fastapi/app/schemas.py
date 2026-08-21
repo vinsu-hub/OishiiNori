@@ -67,6 +67,10 @@ class ProductOut(BaseModel):
     sizes: list[ProductSizeOut] = Field(default_factory=list)
 
 
+class UpdateProductImageRequest(BaseModel):
+    image_path: str | None = None
+
+
 class RecipeItemOut(BaseModel):
     id: str
     product_size_id: str

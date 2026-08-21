@@ -203,7 +203,14 @@ export default function App() {
 
       {sizePickerProduct && (
         <div className="fixed inset-0 z-30 flex items-end sm:items-center justify-center bg-black/40 p-4">
-          <Card className="w-full max-w-sm">
+          <Card className="w-full max-w-sm overflow-hidden">
+            {sizePickerProduct.image_path && (
+              <img
+                src={sizePickerProduct.image_path}
+                alt={sizePickerProduct.name}
+                className="w-full h-40 object-cover"
+              />
+            )}
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>{sizePickerProduct.name} -- choose a size</CardTitle>
               <button onClick={() => setSizePickerProduct(null)} aria-label="Close">
@@ -269,19 +276,31 @@ function MenuStage({
               return (
                 <Card
                   key={product.id}
-                  className={`cursor-pointer ${allUnavailable ? 'opacity-50' : ''}`}
+                  className={`cursor-pointer overflow-hidden ${allUnavailable ? 'opacity-50' : ''}`}
                   onClick={() => !allUnavailable && onProductClick(product)}
                 >
-                  <CardContent className="py-3 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="font-medium truncate">{product.name}</p>
-                      {product.is_bundle && <p className="text-xs text-[--color-warning] font-medium">Bundle</p>}
-                      {allUnavailable && <p className="text-xs text-destructive">Unavailable</p>}
+                  <div className="flex items-center gap-3 p-2">
+                    {product.image_path ? (
+                      <img
+                        src={product.image_path}
+                        alt={product.name}
+                        className="w-16 h-16 rounded-lg object-cover shrink-0"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="w-16 h-16 rounded-lg bg-muted shrink-0" />
+                    )}
+                    <div className="min-w-0 flex-1 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">{product.name}</p>
+                        {product.is_bundle && <p className="text-xs text-[--color-warning] font-medium">Bundle</p>}
+                        {allUnavailable && <p className="text-xs text-destructive">Unavailable</p>}
+                      </div>
+                      <div className="shrink-0 font-corp-mono text-sm">
+                        {product.sizes.length > 1 ? `from ₱${cheapest?.price.toFixed(2)}` : `₱${cheapest?.price.toFixed(2)}`}
+                      </div>
                     </div>
-                    <div className="shrink-0 font-corp-mono text-sm">
-                      {product.sizes.length > 1 ? `from ₱${cheapest?.price.toFixed(2)}` : `₱${cheapest?.price.toFixed(2)}`}
-                    </div>
-                  </CardContent>
+                  </div>
                 </Card>
               );
             })}
@@ -333,9 +352,20 @@ function CheckoutStage({
         <CardContent className="space-y-3">
           {cart.map((line) => (
             <div key={line.key} className="flex items-center justify-between gap-2 text-sm">
-              <div className="min-w-0">
-                <p className="font-medium truncate">{line.product.name}</p>
-                <p className="text-xs text-muted-foreground">{line.size.size_label}</p>
+              <div className="flex items-center gap-2 min-w-0">
+                {line.product.image_path ? (
+                  <img
+                    src={line.product.image_path}
+                    alt={line.product.name}
+                    className="w-10 h-10 rounded-md object-cover shrink-0"
+                  />
+                ) : (
+                  <div className="w-10 h-10 rounded-md bg-muted shrink-0" />
+                )}
+                <div className="min-w-0">
+                  <p className="font-medium truncate">{line.product.name}</p>
+                  <p className="text-xs text-muted-foreground">{line.size.size_label}</p>
+                </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <button className="btn-outline p-1.5" onClick={() => onUpdateQuantity(line.key, -1)}><Minus className="w-3.5 h-3.5" /></button>

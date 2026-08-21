@@ -1,10 +1,10 @@
 from collections import defaultdict
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.auth import CurrentUser, get_current_user
+from app.auth import CurrentUser, get_current_user, require_role
 from app.deps import get_supabase
-from app.schemas import ProductOut
+from app.schemas import ProductOut, UpdateProductImageRequest
 
 router = APIRouter(tags=["products"])
 
@@ -132,3 +132,28 @@ def list_products(
 ):
     supabase = get_supabase()
     return _list_products_data(supabase, active_only, department)
+
+
+@router.patch("/products/{product_id}/image")
+def update_product_image(
+    product_id: str,
+    body: UpdateProductImageRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Sets (or clears) a product's menu photo. manager/executive only --
+    same access level as catalog-affecting admin actions elsewhere in this
+    build. `image_path` is a site-relative path served from each frontend's
+    own public/products/ folder (e.g. "/products/baked-kani-sushi.jpg"),
+    not a Supabase Storage URL -- no storage bucket exists in this project."""
+    require_role(user, "manager", "executive")
+    supabase = get_supabase()
+    existing = supabase.table("products").select("id").eq("id", product_id).maybe_single().execute()
+    if not existing or not existing.data:
+        raise HTTPException(status_code=404, detail="Product not found")
+    updated = (
+        supabase.table("products")
+        .update({"image_path": body.image_path})
+        .eq("id", product_id)
+        .execute()
+    )
+    return updated.data[0]

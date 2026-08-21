@@ -165,11 +165,21 @@ export default function POSTerminal() {
                 return (
                   <Card
                     key={product.id}
-                    className={`cursor-pointer transition hover:border-primary ${
+                    className={`cursor-pointer overflow-hidden transition hover:border-primary ${
                       allUnavailable ? 'opacity-50' : ''
                     }`}
                     onClick={() => !allUnavailable && handleProductClick(product)}
                   >
+                    {product.image_path ? (
+                      <img
+                        src={product.image_path}
+                        alt={product.name}
+                        className="w-full h-24 object-cover"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="w-full h-24 bg-muted" />
+                    )}
                     <CardHeader className="pb-2">
                       <CardTitle className="text-sm font-corp-display">{product.name}</CardTitle>
                     </CardHeader>
