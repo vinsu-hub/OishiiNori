@@ -19,7 +19,7 @@ export function Header({ title, onMenuClick }: HeaderProps) {
 
   if (!user) return null;
 
-  const deptConfig = user.department ? DEPARTMENT_CONFIG[user.department] : { name: 'Oishii Nori', color: '#14524B' };
+  const deptConfig = user.department ? DEPARTMENT_CONFIG[user.department] : { name: 'Oishii Nori', color: '#D42A2A' };
 
   const getSyncDotColor = () => {
     switch (syncStatus.status) {

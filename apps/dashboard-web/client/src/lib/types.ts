@@ -20,8 +20,8 @@ export interface User {
 }
 
 export const DEPARTMENT_CONFIG: Record<Department, { name: string; color: string }> = {
-  kitchen: { name: 'Kitchen', color: '#14524B' },
-  cafe: { name: 'Cafe', color: '#C98A2C' },
+  kitchen: { name: 'Kitchen', color: '#5C0F10' },
+  cafe: { name: 'Cafe', color: '#FFC93C' },
 };
 
 export interface SyncStatus {

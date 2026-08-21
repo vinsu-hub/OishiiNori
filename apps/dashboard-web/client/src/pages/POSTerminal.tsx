@@ -178,7 +178,7 @@ export default function POSTerminal() {
                       <p className="text-sm font-semibold">
                         {product.sizes.length > 1 ? `from ${cheapest?.price.toFixed(2)}` : cheapest?.price.toFixed(2)}
                       </p>
-                      {product.is_bundle && <Badge variant="secondary">Bundle</Badge>}
+                      {product.is_bundle && <Badge variant="gold">Bundle</Badge>}
                       {allUnavailable && <Badge variant="destructive">Unavailable</Badge>}
                     </CardContent>
                   </Card>

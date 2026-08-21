@@ -236,6 +236,49 @@ export function submitBundleFulfillment(
 }
 
 // ---------------------------------------------------------------------------
+// Digital menu (QR table ordering) -- staff-facing approval endpoints
+// ---------------------------------------------------------------------------
+
+export type DigitalOrderStatus = 'pending' | 'approved' | 'rejected';
+export type PaymentMethod = 'gcash' | 'cash';
+
+export interface ApiDigitalOrderItem {
+  id: string;
+  digital_order_id: string;
+  product_size_id: string;
+  quantity: number;
+  unit_price: number;
+}
+
+export interface ApiDigitalOrder {
+  id: string;
+  order_number: number;
+  table_number: number;
+  status: DigitalOrderStatus;
+  payment_method: PaymentMethod;
+  customer_note: string | null;
+  subtotal: number;
+  approved_by: string | null;
+  approved_at: string | null;
+  rejected_reason: string | null;
+  transaction_id: string | null;
+  created_at: string;
+  items: ApiDigitalOrderItem[];
+}
+
+export function fetchDigitalOrders(status?: DigitalOrderStatus): Promise<ApiDigitalOrder[]> {
+  return request(`/digital-orders${status ? `?status=${status}` : ''}`);
+}
+
+export function approveDigitalOrder(id: string): Promise<ApiDigitalOrder> {
+  return request(`/digital-orders/${id}/approve`, { method: 'POST' });
+}
+
+export function rejectDigitalOrder(id: string, reason?: string): Promise<ApiDigitalOrder> {
+  return request(`/digital-orders/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) });
+}
+
+// ---------------------------------------------------------------------------
 // Inventory
 // ---------------------------------------------------------------------------
 

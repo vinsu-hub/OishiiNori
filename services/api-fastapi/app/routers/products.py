@@ -73,17 +73,11 @@ def _compute_size_availability(supabase, product_size_ids: list[str]) -> dict[st
     return availability
 
 
-@router.get("/products", response_model=list[ProductOut])
-def list_products(
-    active_only: bool = True,
-    department: str | None = Query(None),
-    user: CurrentUser = Depends(get_current_user),
-):
-    """No branch scoping (single-branch build) -- every authenticated user
-    sees the full catalog. `department` is an optional display filter
-    (kitchen/cafe), not an access boundary."""
-    supabase = get_supabase()
-
+def _list_products_data(supabase, active_only: bool, department: str | None) -> list[dict]:
+    """Shared query body behind both the authenticated `/products` route and
+    the public digital-menu route -- no branch scoping (single-branch
+    build), every caller sees the full catalog. `department` is an optional
+    display filter (kitchen/cafe), not an access boundary."""
     query = supabase.table("products").select("*")
     if active_only:
         query = query.eq("active", True)
@@ -128,3 +122,13 @@ def list_products(
         p["sizes"] = sizes
         out.append(p)
     return out
+
+
+@router.get("/products", response_model=list[ProductOut])
+def list_products(
+    active_only: bool = True,
+    department: str | None = Query(None),
+    user: CurrentUser = Depends(get_current_user),
+):
+    supabase = get_supabase()
+    return _list_products_data(supabase, active_only, department)

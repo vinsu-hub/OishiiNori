@@ -159,6 +159,69 @@ class BundleFulfillmentResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Digital menu (QR table ordering) -- a digital_orders row is a staging
+# area, not a sale. See transactions.py's _create_transaction_row for how
+# an approved one becomes a real transaction.
+# ---------------------------------------------------------------------------
+
+DigitalOrderStatus = Literal["pending", "approved", "rejected"]
+PaymentMethod = Literal["gcash", "cash"]
+
+
+class DigitalOrderItemCreate(BaseModel):
+    product_size_id: str
+    quantity: float = Field(gt=0)
+
+
+class CreateDigitalOrderRequest(BaseModel):
+    table_number: int = Field(gt=0)
+    items: list[DigitalOrderItemCreate]
+    payment_method: PaymentMethod
+    customer_note: str | None = None
+
+
+class DigitalOrderItemResponse(BaseModel):
+    id: str
+    digital_order_id: str
+    product_size_id: str
+    quantity: float
+    unit_price: float
+
+
+class DigitalOrderResponse(BaseModel):
+    id: str
+    order_number: int
+    table_number: int
+    status: DigitalOrderStatus
+    payment_method: PaymentMethod
+    customer_note: str | None = None
+    subtotal: float
+    approved_by: str | None = None
+    approved_at: datetime | None = None
+    rejected_reason: str | None = None
+    transaction_id: str | None = None
+    created_at: datetime
+    items: list[DigitalOrderItemResponse] = Field(default_factory=list)
+
+
+class DigitalOrderStatusResponse(BaseModel):
+    """Minimal shape returned to the customer's own unauthenticated polling
+    page -- keyed by the unguessable order id, never the sequential
+    order_number, so one customer can't enumerate another table's order."""
+
+    id: str
+    order_number: int
+    table_number: int
+    status: DigitalOrderStatus
+    subtotal: float
+    rejected_reason: str | None = None
+
+
+class RejectDigitalOrderRequest(BaseModel):
+    reason: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # Inventory
 # ---------------------------------------------------------------------------
 

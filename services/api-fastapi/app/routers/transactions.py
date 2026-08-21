@@ -114,10 +114,21 @@ def _fetch_transaction_with_items(supabase, transaction_id: str) -> dict | None:
     return transaction
 
 
-@router.post("/transactions", response_model=TransactionResponse)
-def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depends(get_current_user)):
-    """Create a sale: resolve each item's product_size, deduct that size's
-    recipe from ingredient stock, and total up the order.
+def _create_transaction_row(
+    supabase,
+    employee_id: str,
+    items: list,
+    discount_type_id: str | None = None,
+    is_owner_request: bool = False,
+    owner_request_by: str | None = None,
+    owner_request_note: str | None = None,
+) -> TransactionResponse:
+    """Insert a transaction + items, deduct non-bundle recipe ingredients,
+    and compute discount/tax. Shared by POS sale creation (create_transaction
+    below) and digital-menu order approval (digital_menu.py's approve
+    endpoint) -- the only difference between those two callers is how
+    employee_id/items are sourced (a logged-in cashier vs. an approved
+    customer order), not how a sale gets recorded.
 
     Bundle line items (product.is_bundle=true) are NOT deducted here -- per
     spec, a bundle's actual ingredient consumption is only known once the
@@ -127,14 +138,10 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
     anyway; the skip is made explicit for clarity and to avoid a wasted
     query per bundle item.
     """
-    if body.employee_id != user.id:
-        raise HTTPException(status_code=403, detail="Cannot record a sale under another employee's id")
-    if not body.items:
+    if not items:
         raise HTTPException(status_code=400, detail="Transaction must have at least one item")
 
-    supabase = get_supabase()
-
-    size_ids = [item.product_size_id for item in body.items]
+    size_ids = [item.product_size_id for item in items]
     sizes_result = (
         supabase.table("product_sizes")
         .select("*, products(id, name, is_bundle, active)")
@@ -149,11 +156,11 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
     discount = None
     discount_amount = 0.0
     vat_exempt = False
-    if body.discount_type_id:
+    if discount_type_id:
         discount_result = (
             supabase.table("discount_types")
             .select("*")
-            .eq("id", body.discount_type_id)
+            .eq("id", discount_type_id)
             .maybe_single()
             .execute()
         )
@@ -164,26 +171,15 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
             raise HTTPException(status_code=400, detail="Discount type is not active")
         vat_exempt = discount["vat_exempt"]
 
-    # Owner's Request: the acting employee must re-verify their own kiosk
-    # credentials (not just type a name) so this is a provable trace.
-    owner_request_by = None
-    if body.is_owner_request:
-        if not body.owner_request_employee_number or not body.owner_request_pin:
-            raise HTTPException(status_code=400, detail="Owner's Request requires employee number and PIN")
-        profile = verify_employee_pin(body.owner_request_employee_number, body.owner_request_pin)
-        if not profile or profile["id"] != user.id:
-            raise HTTPException(status_code=403, detail="Employee ID/PIN did not match your logged-in account")
-        owner_request_by = profile["id"]
-
     now_iso = datetime.now(timezone.utc).isoformat()
     insert_payload = {
-        "employee_id": body.employee_id,
+        "employee_id": employee_id,
         "status": "open",
         "opened_at": now_iso,
         "total_amount": 0,
-        "is_owner_request": body.is_owner_request,
+        "is_owner_request": is_owner_request,
         "owner_request_by": owner_request_by,
-        "owner_request_note": body.owner_request_note,
+        "owner_request_note": owner_request_note,
     }
     if _kitchen_status_supported_check(supabase):
         insert_payload["kitchen_status"] = "queued"
@@ -195,7 +191,7 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
 
     subtotal = 0.0
     item_rows = []
-    for item in body.items:
+    for item in items:
         size = sizes_by_id[item.product_size_id]
         unit_price = float(size["price"])
         subtotal += unit_price * item.quantity
@@ -210,7 +206,7 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
 
     items_insert = supabase.table("transaction_items").insert(item_rows).execute()
 
-    for item in body.items:
+    for item in items:
         size = sizes_by_id[item.product_size_id]
         is_bundle = size["products"]["is_bundle"]
         if is_bundle:
@@ -227,7 +223,7 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
         .update(
             {
                 "total_amount": discounted_subtotal,
-                "discount_type_id": body.discount_type_id,
+                "discount_type_id": discount_type_id,
                 "discount_amount": discount_amount,
                 "tax_amount": tax_amount,
             }
@@ -238,6 +234,39 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
     transaction = updated.data[0]
     transaction.setdefault("kitchen_status", "queued")
     return TransactionResponse(**transaction, items=items_insert.data)
+
+
+@router.post("/transactions", response_model=TransactionResponse)
+def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depends(get_current_user)):
+    """Create a sale via the POS. Auth/ownership and Owner's Request
+    re-verification happen here; the actual insert/deduction/discount logic
+    lives in _create_transaction_row, shared with digital-menu order
+    approval."""
+    if body.employee_id != user.id:
+        raise HTTPException(status_code=403, detail="Cannot record a sale under another employee's id")
+
+    supabase = get_supabase()
+
+    # Owner's Request: the acting employee must re-verify their own kiosk
+    # credentials (not just type a name) so this is a provable trace.
+    owner_request_by = None
+    if body.is_owner_request:
+        if not body.owner_request_employee_number or not body.owner_request_pin:
+            raise HTTPException(status_code=400, detail="Owner's Request requires employee number and PIN")
+        profile = verify_employee_pin(body.owner_request_employee_number, body.owner_request_pin)
+        if not profile or profile["id"] != user.id:
+            raise HTTPException(status_code=403, detail="Employee ID/PIN did not match your logged-in account")
+        owner_request_by = profile["id"]
+
+    return _create_transaction_row(
+        supabase,
+        employee_id=body.employee_id,
+        items=body.items,
+        discount_type_id=body.discount_type_id,
+        is_owner_request=body.is_owner_request,
+        owner_request_by=owner_request_by,
+        owner_request_note=body.owner_request_note,
+    )
 
 
 @router.get("/transactions", response_model=list[TransactionResponse])

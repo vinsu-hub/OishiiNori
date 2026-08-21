@@ -4,6 +4,10 @@ Status as of 2026-08-21 (Milestone 6 close-out, then git push + Vercel deploymen
 
 **Overall: ~98% complete. All 8 phases are done or code-complete, and the app is deployed.** Live URLs: dashboard `https://oishii-nori-dashboard.vercel.app`, staff clock `https://oishii-nori-staff-clock.vercel.app`, API `https://oishii-nori-api.vercel.app`. Only remaining blocker: the Supabase `hr` schema exposure toggle (blocks live verification of Phase 2's `hr.py`/`kiosk.py` and Phase 7's HR pages only — code itself is built, type-checked, and deployed). Nothing remains to be ported from the SMFC reference: every page/feature in the locked scope is built; what's left of SMFC (Malaya AI chat, Command Center, Trend Analysis, Newsfeed, EOD Dashboard, branch-scoping, modifiers, websockets/Realtime) was deliberately excluded, not missed.
 
+**Admin login + brand rebrand — done 2026-08-21, local only, not yet pushed.** `admin`/`admin123` now works as a literal typed login (Login.tsx username field + a real `admin@oishiinori.com` account); full red/black/gold brand rebrand applied to both apps' CSS tokens, `DEPARTMENT_CONFIG`, and a new gold "Bundle" badge variant, per the user's brand guide (light-touch scope, no dark header reskin). See `SESSION_HANDOFF.md` "🎨 Admin login + brand rebrand" section for full detail. `tsc --noEmit` clean, verified visually via Playwright. Sitting as uncommitted local changes pending go-ahead to push (which will auto-deploy to production via the Vercel Git integration).
+
+**Digital menu (QR table ordering) — new feature, done 2026-08-21, local only, not yet pushed.** A 4th app, `apps/customer-menu`, lets a customer scan a per-table QR code and order with no login; orders land as `pending` in a new `digital_orders`/`digital_order_items` schema (migration `0016`, already applied live) and show up on a new staff page, `/pending-orders`, for approval + manual payment confirmation (GCash/Cash). Approving creates a real `transactions` row through the exact same insert/deduction path as a POS sale (a small refactor extracted `_create_transaction_row` out of `create_transaction` so both share it) — approved orders need zero extra code to show up correctly on Kitchen Display, confirmed live. New public (unauthenticated) backend endpoints: `GET /public/menu`, `POST /public/orders`, `GET /public/orders/{id}` — same no-JWT pattern as `kiosk.py`, safety enforced by never trusting a client-sent price and never looking up an order by its guessable sequential number. See `SESSION_HANDOFF.md` "🛎️ Digital menu" section for full detail, including the live QA pass (29/30 automated checks + a full Playwright walkthrough, customer phone-sized viewport → staff approval → Kitchen Display, zero console errors).
+
 | Phase | Status |
 |---|---|
 | 0 — Infra bootstrap | **Done** — GitHub repo pushed, all 3 apps deployed to Vercel (2026-08-21) |
@@ -14,6 +18,7 @@ Status as of 2026-08-21 (Milestone 6 close-out, then git push + Vercel deploymen
 | 5 — Inventory UI + Utility Log | Done, verified live |
 | 6 — Integration & cross-agent QA | **Done, verified live 2026-08-21** — see below |
 | 7 — HR/Payroll/Staff-Clock | Built + type-checked; live verification blocked on the same `hr` schema issue as Phase 2 |
+| 9 — Digital menu (QR ordering, new feature) | **Done, verified live 2026-08-21** — see above, not pushed/deployed yet |
 
 **Logo branding — done 2026-08-21.** Real logo (`D:\ioshinori\logo\logo.jpg`) wired in as favicon on both apps and replacing the placeholder letter-square marks in `Sidebar.tsx`, `Header.tsx`, `Login.tsx` (dashboard-web), and `App.tsx` (staff-clock). Verified visually via Playwright screenshots; `tsc --noEmit` clean.
 

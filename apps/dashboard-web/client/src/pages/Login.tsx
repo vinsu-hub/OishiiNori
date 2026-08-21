@@ -22,7 +22,8 @@ export default function Login() {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await login(email, password);
+      const loginEmail = email.includes('@') ? email : `${email}@oishiinori.com`;
+      await login(loginEmail, password);
       navigate('/');
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Login failed');
@@ -42,10 +43,10 @@ export default function Login() {
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email">Username</Label>
               <Input
                 id="email"
-                type="email"
+                type="text"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}

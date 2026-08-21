@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import (
+    digital_menu,
     discounts,
     hr,
     inventory,
@@ -33,6 +34,7 @@ app.include_router(hr.router)
 app.include_router(kiosk.router)
 app.include_router(transactions.router)
 app.include_router(utility_logs.router)
+app.include_router(digital_menu.router)
 
 
 @app.get("/health")

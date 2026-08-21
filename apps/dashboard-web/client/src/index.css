@@ -63,29 +63,29 @@
    * Warm Slate soft-UI tokens (brand-neutral base, retained from the
    * SMFC reference's design system — see skill: warm-slate-soft-ui)
    * =================================================================== */
-  --ws-color-bg: #F3EEE2;
-  --ws-color-surface-raised: #EFE9DA;
-  --ws-color-surface-inset: #E7DFCC;
-  --ws-color-surface-pressed: #DED4BC;
+  --ws-color-bg: #F4EFE6;
+  --ws-color-surface-raised: #FFFFFF;
+  --ws-color-surface-inset: #EAE3D5;
+  --ws-color-surface-pressed: #DCD3BE;
 
-  --ws-color-accent: #14524B;
-  --ws-color-accent-hover: #0E3F3A;
-  --ws-color-accent-soft: #DCE9E6;
+  --ws-color-accent: #D42A2A;
+  --ws-color-accent-hover: #5C0F10;
+  --ws-color-accent-soft: #F6DEDD;
 
-  --ws-color-text-primary: #2A2620;
-  --ws-color-text-secondary: #6F6A5C;
+  --ws-color-text-primary: #0F0D0C;
+  --ws-color-text-secondary: #3A3634;
   --ws-color-text-on-accent: #FFFFFF;
 
-  --ws-color-success: #1E7A4C;
-  --ws-color-success-bg: #E1EFE6;
-  --ws-color-error: #B23A2E;
-  --ws-color-error-bg: #F7E4E1;
-  --ws-color-warning: #C98A2C;
-  --ws-color-warning-bg: #F5E9D3;
+  --ws-color-success: #2F9E44;
+  --ws-color-success-bg: #E3F3E6;
+  --ws-color-error: #5C0F10;
+  --ws-color-error-bg: #F3E3E1;
+  --ws-color-warning: #FFC93C;
+  --ws-color-warning-bg: #FDF3D9;
 
-  --ws-color-border-thin: rgba(42, 38, 32, 0.08);
-  --ws-color-border-regular: rgba(42, 38, 32, 0.16);
-  --ws-color-border-thick: rgba(42, 38, 32, 0.28);
+  --ws-color-border-thin: rgba(15, 13, 12, 0.08);
+  --ws-color-border-regular: rgba(15, 13, 12, 0.16);
+  --ws-color-border-thick: rgba(15, 13, 12, 0.28);
 
   --ws-shadow-flat: none;
   --ws-shadow-l1-hover: 2px 2px 6px rgba(42, 38, 32, 0.10), -2px -2px 6px rgba(255, 255, 255, 0.6);
@@ -110,11 +110,11 @@
 
   --accent: var(--ws-color-accent-soft);
   --accent-foreground: var(--ws-color-accent);
-  --chart-1: #14524B;
-  --chart-2: #C98A2C;
-  --chart-3: #6F6A5C;
-  --chart-4: #1E7A4C;
-  --chart-5: #B23A2E;
+  --chart-1: #D42A2A;
+  --chart-2: #FFC93C;
+  --chart-3: #3A3634;
+  --chart-4: #2F9E44;
+  --chart-5: #5C0F10;
 
   --background: var(--ws-color-bg);
   --foreground: var(--ws-color-text-primary);
@@ -140,8 +140,8 @@
 
   /* Department accent colors (kitchen vs cafe) -- Oishii Nori is single-
      location, two departments, replacing SMFC's per-branch brand colors. */
-  --dept-kitchen: #14524B;
-  --dept-cafe: #C98A2C;
+  --dept-kitchen: #5C0F10;
+  --dept-cafe: #FFC93C;
 }
 
 @layer base {
@@ -210,12 +210,12 @@
   }
 }
 
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Archivo+Black&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap');
 
 @layer base {
   .font-corp-display {
-    font-family: 'Space Grotesk', sans-serif;
-    font-weight: 600;
+    font-family: 'Archivo Black', sans-serif;
+    font-weight: 400;
   }
 
   .font-corp-body {

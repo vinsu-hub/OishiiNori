@@ -1,15 +1,64 @@
 # Oishii Nori Command Suite — Session Handoff
 
-**Date:** 2026-08-20 (build session) · **Updated:** 2026-08-21 (Phase 2 close-out, Phase 3-7 frontend kickoff, Milestones 3-5 completed, logo branding + Milestone 6 completed, then pushed to GitHub and deployed to Vercel — all same day)
-**Repo:** `D:\ioshinori\oishii-nori-command-suite` — **pushed to GitHub**: `https://github.com/vinsu-hub/OishiiNori` (private, `main` branch, 4 commits)
+**Date:** 2026-08-20 (build session) · **Updated:** 2026-08-21 (Phase 2 close-out, Phase 3-7 frontend kickoff, Milestones 3-5 completed, logo branding + Milestone 6 completed, pushed to GitHub and deployed to Vercel, an admin login + brand color/font rebrand, then a new digital menu / QR table ordering feature — all same day)
+**Repo:** `D:\ioshinori\oishii-nori-command-suite` — **pushed to GitHub**: `https://github.com/vinsu-hub/OishiiNori` (private, `main` branch, 4 commits). The admin-login/rebrand work AND the new digital-menu feature below are both still **uncommitted local changes** as of this write-up.
 **Live deployments (Vercel, team `vince-tamis`, Git-integration auto-deploy on push to `main`):**
 - Dashboard: `https://oishii-nori-dashboard.vercel.app`
 - Staff Clock kiosk: `https://oishii-nori-staff-clock.vercel.app`
 - Backend API: `https://oishii-nori-api.vercel.app` (`/health` → `{"status":"ok"}`)
+- Customer menu (`apps/customer-menu`): built and verified locally, **no Vercel project created yet** — see "🛎️ Digital menu" below.
 **Reference spec:** `D:\ioshinori\Oishii_Nori_Menu_Ingredients.xlsx`
 **Structural reference (read-only, different client, never push/pull):** `D:\SMFC_POS\saint_michael_pos\saint_michael_pos` — turned out to have both frontend apps (`dashboard-web`, `staff-clock`) fully built; Phases 3-7 are a port-and-adapt job from this reference, see below.
-**Plan files:** `C:\Users\vinsu\.claude\plans\hazy-noodling-teapot.md` (Phase 0), `C:\Users\vinsu\.claude\plans\ancient-dreaming-lighthouse.md` (Phase 3-7 frontend plan, 6 milestones), `C:\Users\vinsu\.claude\plans\fancy-sparking-patterson.md` (this session's plan — logo branding + Milestone 6, then reused for the git push + Vercel deploy session)
-**Build status: ~98% complete. All 6 frontend milestones done and verified live, including Milestone 6. Deployed to production.** Local dev servers no longer needed for basic verification — the live URLs above work end-to-end. Only remaining blocker: the Supabase `hr` schema exposure toggle (needed for Phase 2's `hr.py`/`kiosk.py` and Phase 7's HR pages live verification only — everything else, including deployment, is done). GitHub auth is now fixed and no longer a blocker.
+**Plan files:** `C:\Users\vinsu\.claude\plans\hazy-noodling-teapot.md` (Phase 0), `C:\Users\vinsu\.claude\plans\ancient-dreaming-lighthouse.md` (Phase 3-7 frontend plan, 6 milestones), `C:\Users\vinsu\.claude\plans\fancy-sparking-patterson.md` (reused across several same-day sessions: logo+Milestone 6, git push+Vercel deploy, admin login+rebrand, digital menu)
+**Build status: ~98% complete on the original 8-phase scope, plus a new digital-menu feature (Phase 9, not in the original plan) built and verified live but not yet deployed.** Local dev servers no longer needed for basic verification of the deployed 3 apps — the live URLs above work end-to-end. Only remaining blocker on the original scope: the Supabase `hr` schema exposure toggle (Phase 2/7 HR live verification only). GitHub auth is fixed and no longer a blocker.
+
+---
+
+## 🎨 Admin login + brand rebrand (completed 2026-08-21, not yet pushed to production)
+
+**Admin login**: Supabase Auth requires a real email format, so a bare `admin` username can't hit the network as-is. Fix: `Login.tsx`'s field is now plain text labeled "Username" (was `type="email"`); on submit, any value without an `@` gets `@oishiinori.com` appended before calling `signInWithPassword` (`email.includes('@') ? email : \`${email}@oishiinori.com\``) — existing full-email logins (`qa.tester@oishiinori.com`) are unaffected since they already contain `@`. A real `admin@oishiinori.com` / `admin123` account (executive role, `employee_number = ADMIN-001`, kiosk PIN `1234`) was created directly via the service-role client (same idempotent pattern as `qa_phase2.py`'s `ensure_qa_user`). Verified live via Playwright: typing literally `admin`/`admin123` logs in successfully.
+
+**Brand rebrand**: replaced the "Warm Slate" beige/teal design-system theme with a red/black/gold palette per a brand guide the user supplied, **light-touch** scope (kept the cream page backgrounds and card layout, did not do a dark-header reskin). Applied to both `dashboard-web` and `staff-clock` (they share the same palette, previously duplicated by hand across two `index.css` files — still duplicated, just with new values, no cross-app CSS sharing was introduced).
+- Primary/accent (buttons, active nav, "Charge"): teal `#14524B` → brand-red `#D42A2A`.
+- Destructive/error/"Unavailable" badges: `#B23A2E` → brand-red-**dark**/maroon `#5C0F10` — deliberately *not* the same red as primary, so a "Charge" button and an "Unavailable" badge stay visually distinct (a real usability call, not in the brand guide, flagged to the user in the plan).
+- New success green `#2F9E44` (guide's own suggestion — the brand palette has no green).
+- Warning/"Bundle" promo tags: gold `#FFC93C` — added a new `gold` badge variant (`apps/dashboard-web/client/src/components/ui/badge.tsx`) since none of the existing 4 variants mapped to it; wired up on POS Terminal's "Bundle" badge only (left "Owner's Request" as `secondary`, not a promo callout).
+- Department colors (`DEPARTMENT_CONFIG` in `lib/types.ts`, plus matching fallback literals in `Sidebar.tsx`/`Header.tsx`): kitchen → maroon `#5C0F10`, cafe → gold `#FFC93C` (both distinct from the new primary red).
+- Display font: Space Grotesk → Archivo Black (Google Fonts `@import` in both `index.css`, plus the redundant `<link>` in `staff-clock/client/index.html`); body (Inter) and mono (IBM Plex Mono, tabular prices) unchanged — both already matched the brand guide's own suggestions.
+- A few tone values (surface-inset/pressed shades, success/warning/error tint backgrounds) are **derived**, not literal brand-guide hex values — needed to preserve the existing soft-UI light/dark tonal relationships now rebased on cream instead of beige.
+
+Verified via `tsc --noEmit` (clean, both apps) and Playwright screenshots: Login, Home/Sidebar/Header, POS Terminal (cart + enabled red Charge button + gold Bundle badges + maroon Unavailable badges), Kitchen Display — zero console errors.
+
+**Not done**: no dark header/sidebar reskin, no category-grouped ALL-CAPS section headers on POS Terminal (would need restructuring the product grid, not just tokens — flagged as out of scope), no copy/microcopy pass, no new logo asset (existing `logo.jpg` already matches the guide's badge description). **Not pushed to GitHub/deployed yet** — sitting as local uncommitted changes pending the user's go-ahead, consistent with treating any push to the shared repo as needing explicit confirmation.
+
+---
+
+## 🛎️ Digital menu — QR table ordering (new feature, completed 2026-08-21, not yet pushed/deployed)
+
+New feature, not part of the original 8-phase master plan: a customer scans a QR code at their table, orders from their phone with no login, and staff approve + manually confirm payment (GCash/Cash) on a new dashboard page before the order becomes a real sale.
+
+**Architecture decision**: a `digital_orders` row is a staging area, never a sale directly. Approving one calls the exact same insert/deduction logic a POS sale uses (see refactor below), so it flows into Kitchen Display/inventory with zero special-casing. Rejecting one never touches `transactions` at all. This kept the existing, already-tested sales/kitchen pipeline completely untouched.
+
+**Schema** — `supabase/migrations/0016_digital_orders.sql`, **already applied to the live DB** (confirmed by the user, run via the usual `supabase db push --db-url`): new `digital_orders` (status pending/approved/rejected, table_number as a bare int with no table-management entity, payment_method gcash/cash, subtotal, links to the resulting `transaction_id` once approved) and `digital_order_items` tables. RLS enabled, no anon/authenticated policies — same fail-closed posture as every other table, all access goes through the FastAPI service-role client.
+
+**Backend** — `services/api-fastapi/app/routers/digital_menu.py` (new router, registered in `main.py`):
+- Public, unauthenticated (no `Depends(get_current_user)`, mirrors `kiosk.py`'s pattern exactly): `GET /public/menu`, `POST /public/orders`, `GET /public/orders/{id}`. Prices are always recomputed server-side from the live catalog, never trusted from the client. The customer's own status-polling page looks up by the order's unguessable UUID, never by the sequential `order_number`, so one table can't see another's order.
+- Staff-facing, authenticated (same access level as POS charging, no extra role gate): `GET /digital-orders?status=pending`, `POST /digital-orders/{id}/approve`, `POST /digital-orders/{id}/reject`.
+- **Refactor for reuse, not duplication**: extracted `_create_transaction_row()` out of `transactions.py`'s `create_transaction` (which now just does the auth/Owner's-Request checks, then calls the shared helper) — `products.py`'s `list_products` got the same treatment (`_list_products_data()`), so `GET /products` (authenticated) and `GET /public/menu` (public) share one query body instead of two copies.
+
+**Frontend** — new 4th standalone app, `apps/customer-menu` (Vite, port 5175 locally), scaffolded identically to `apps/staff-clock`: no router, no Supabase client, plain unauthenticated `fetch()` (`lib/api.ts`), same brand palette/fonts as the rest of the suite. Reads `?table=N` from the URL once on mount; a menu screen (grouped by category) → cart → payment-method picker → a confirmation screen that polls order status every 5s until staff approve/reject. Cart add/increment/decrement and the size-picker dialog pattern were ported from `POSTerminal.tsx`'s cart logic (state shape/interactions only — the submission call itself is new, `submitOrder` not `createTransaction`, since a customer order isn't an authenticated sale).
+
+**Dashboard** — new page `apps/dashboard-web/client/src/pages/PendingOrders.tsx` at `/pending-orders` (new sidebar nav item, `QrCode` icon, placed right under Order Queue), built following `OrderQueue.tsx`'s exact shape: poll every 20s, `Card` per pending order (table number, order number, gold payment-method badge, resolved item names, customer note), "Approve" opens a confirm dialog ("Confirm ₱X received via GCash/Cash..."), "Decline" opens a reason dialog. No changes needed to `KitchenDisplay.tsx`/`OrderQueue.tsx` — approved orders just appear there automatically.
+
+**QR codes**: no runtime generation, no new dependency (confirmed no `qrcode`-type package existed or was needed) — a table's QR is just a static URL (`https://<customer-menu-url>/?table=N`), generated once via any free external tool and printed. Any table number works, nothing to pre-register.
+
+**Verified live** (disposable QA script, same style as `qa_phase2.py`, 29/30 automated checks passed — the 1 failure was the test script's own wrong formula for `total_amount`, since that field has always excluded tax in this codebase's convention, not a real bug):
+- Public menu loads with zero auth header. Order submission recomputes price server-side correctly. Customer polling by UUID works. Staff pending-orders list, approve, and reject all work. Approving creates a real transaction under the approving staff member's account with `kitchen_status=queued`; ingredient deduction verified correct via direct-DB check (same path as a POS sale). Double-approve/double-reject correctly rejected with 400. Bad input (empty items, nonexistent product_size_id, nonexistent order id) correctly rejected.
+- Full Playwright walkthrough on top of that: customer on a phone-sized viewport (390×844) adds a Medium Sushi Boat, pays via GCash, places the order with a kitchen note — staff logs in as `admin`, sees it on `/pending-orders`, approves it — customer's screen flips from "waiting" to "confirmed" via polling — order appears correctly on Kitchen Display's Queued column with its bundle "Log rolls used" checklist available, no extra code needed for that. Zero console errors on the customer app throughout. Test transaction voided afterward.
+
+**Not done / deferred** (all per the user's own decisions when this was planned): real GCash payment-gateway integration (manual confirmation only), a `tables` management admin page (table is just a QR-encoded integer), customers editing/cancelling their own order after submitting, discounts on customer orders, daily-reset order numbering, item modifiers.
+
+**Not pushed/deployed yet.** A 4th Vercel project (proposed name `oishii-nori-menu`) still needs to be created and linked to `apps/customer-menu`, same process as the other 3 apps — not done automatically, needs the user's go-ahead like every other push/deploy this session.
 
 ---
 

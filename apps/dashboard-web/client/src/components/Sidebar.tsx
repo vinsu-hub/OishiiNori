@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import {
   ShoppingCart,
   ListOrdered,
+  QrCode,
   ChefHat,
   Package,
   AlertCircle,
@@ -33,12 +34,13 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
 
   if (!user) return null;
 
-  const deptConfig = user.department ? DEPARTMENT_CONFIG[user.department] : { name: 'Oishii Nori', color: '#14524B' };
+  const deptConfig = user.department ? DEPARTMENT_CONFIG[user.department] : { name: 'Oishii Nori', color: '#D42A2A' };
   const isManagerOrExecutive = user.role === 'manager' || user.role === 'executive';
 
   const navItems = [
     { icon: ShoppingCart, label: 'POS Terminal', href: '/pos' },
     { icon: ListOrdered, label: 'Order Queue', href: '/order-queue' },
+    { icon: QrCode, label: 'Pending Orders', href: '/pending-orders' },
     { icon: ChefHat, label: 'Kitchen Display', href: '/kitchen-display' },
     { icon: Package, label: 'Inventory Count', href: '/inventory-count' },
     { icon: AlertCircle, label: 'Loss Log', href: '/loss-log' },
