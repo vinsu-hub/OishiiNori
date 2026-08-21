@@ -1,11 +1,36 @@
 # Oishii Nori Command Suite — Session Handoff
 
-**Date:** 2026-08-20 (build session) · **Updated:** 2026-08-21 (Phase 2 close-out, Phase 3-7 frontend kickoff, Milestones 3-5 completed, then logo branding + Milestone 6 completed same day)
-**Repo:** `D:\ioshinori\oishii-nori-command-suite` — git initialized locally, **no GitHub remote yet**, target `https://github.com/vinsu-hub/OishiiNori.git` (see Action Needed)
+**Date:** 2026-08-20 (build session) · **Updated:** 2026-08-21 (Phase 2 close-out, Phase 3-7 frontend kickoff, Milestones 3-5 completed, logo branding + Milestone 6 completed, then pushed to GitHub and deployed to Vercel — all same day)
+**Repo:** `D:\ioshinori\oishii-nori-command-suite` — **pushed to GitHub**: `https://github.com/vinsu-hub/OishiiNori` (private, `main` branch, 4 commits)
+**Live deployments (Vercel, team `vince-tamis`, Git-integration auto-deploy on push to `main`):**
+- Dashboard: `https://oishii-nori-dashboard.vercel.app`
+- Staff Clock kiosk: `https://oishii-nori-staff-clock.vercel.app`
+- Backend API: `https://oishii-nori-api.vercel.app` (`/health` → `{"status":"ok"}`)
 **Reference spec:** `D:\ioshinori\Oishii_Nori_Menu_Ingredients.xlsx`
 **Structural reference (read-only, different client, never push/pull):** `D:\SMFC_POS\saint_michael_pos\saint_michael_pos` — turned out to have both frontend apps (`dashboard-web`, `staff-clock`) fully built; Phases 3-7 are a port-and-adapt job from this reference, see below.
-**Plan files:** `C:\Users\vinsu\.claude\plans\hazy-noodling-teapot.md` (Phase 0), `C:\Users\vinsu\.claude\plans\ancient-dreaming-lighthouse.md` (Phase 3-7 frontend plan, 6 milestones), `C:\Users\vinsu\.claude\plans\fancy-sparking-patterson.md` (this session's plan — logo branding + Milestone 6)
-**Build status: ~95% complete. All 6 frontend milestones done and verified live, including Milestone 6.** Dev servers running: dashboard-web `:3000`, staff-clock `:5174`, backend `:8000`. Still blocked on 2 items needing the user directly — GitHub auth (repo never pushed) and the Supabase `hr` schema exposure toggle (needed for Phase 2's `hr.py`/`kiosk.py` and Phase 7's HR pages live verification only — everything else is done).
+**Plan files:** `C:\Users\vinsu\.claude\plans\hazy-noodling-teapot.md` (Phase 0), `C:\Users\vinsu\.claude\plans\ancient-dreaming-lighthouse.md` (Phase 3-7 frontend plan, 6 milestones), `C:\Users\vinsu\.claude\plans\fancy-sparking-patterson.md` (this session's plan — logo branding + Milestone 6, then reused for the git push + Vercel deploy session)
+**Build status: ~98% complete. All 6 frontend milestones done and verified live, including Milestone 6. Deployed to production.** Local dev servers no longer needed for basic verification — the live URLs above work end-to-end. Only remaining blocker: the Supabase `hr` schema exposure toggle (needed for Phase 2's `hr.py`/`kiosk.py` and Phase 7's HR pages live verification only — everything else, including deployment, is done). GitHub auth is now fixed and no longer a blocker.
+
+---
+
+## 🚀 Deployment (completed 2026-08-21, same session as Milestone 6)
+
+**GitHub**: auth was fixed by the user (`gh auth login -h github.com`); repo created and pushed to `https://github.com/vinsu-hub/OishiiNori.git` (private), branch `main`.
+
+**Vercel**: all 3 pre-existing projects (`oishii-nori-dashboard`, `oishii-nori-staff-clock`, `oishii-nori-api`, team `vince-tamis`) deployed via Git integration (auto-deploy on push to `main`), per the user's explicit choice over direct CLI deploy. Config added, copying the proven pattern from the SMFC reference project (whose equivalent 3 apps are already live on Vercel):
+- `apps/dashboard-web/vercel.json` and `apps/staff-clock/vercel.json`: `{"outputDirectory": "dist/public", "rewrites": [...→ /index.html]}` (SPA rewrite, matches each app's Vite `root: "client"` / `build.outDir: "dist/public"` config).
+- `services/api-fastapi/api/index.py`: thin Vercel entrypoint (`sys.path.insert` + `from app.main import app`).
+- `services/api-fastapi/vercel.json`: **not part of the SMFC pattern, added after debugging a real issue** — see below.
+
+**Real issue hit and fixed**: after the first deploy, `apps/dashboard-web` and `staff-clock` came up fine, but `oishii-nori-api`'s root-level routes (`/health`, `/products`, etc.) all 404'd with `X-Vercel-Error: NOT_FOUND` — a platform-edge error, confirmed via `curl -v` header inspection, meaning the request never reached the Python function at all. Root cause: Vercel's zero-config Python auto-detection only auto-routes the literal `/api/*` prefix to `api/index.py`; it does **not** catch-all route bare paths like `/health` to a lone function the way SMFC's deployment apparently does (SMFC's exact equivalent setup, same file layout, does serve `/health` at 200 — the difference is unconfirmed, possibly an account/dashboard-level Framework Preset setting invisible in the repo, not worth chasing further since the fix is trivial and standard). Fixed by adding `services/api-fastapi/vercel.json` with an explicit catch-all rewrite: `{"rewrites": [{"source": "/(.*)", "destination": "/api/index"}]}`. Verified fixed: `/health` returns 200 after redeploy.
+
+**Root Directory** had to be set manually per project via the Vercel dashboard (Settings → General) — confirmed there is no CLI or `vercel.json` equivalent for this setting on an already-existing project. User set: `apps/dashboard-web`, `apps/staff-clock`, `services/api-fastapi`. (One transcription slip caught and fixed: a stray leading space on `oishii-nori-api`'s value, which would have broken the build.)
+
+**Env vars** set via `vercel env add`, values piped directly from local gitignored `.env.local` files (never typed into chat): `VITE_SUPABASE_URL` + `VITE_SUPABASE_PUBLISHABLE_KEY` + `VITE_API_BASE_URL` on dashboard-web; `VITE_API_BASE_URL` only on staff-clock (confirmed the only one actually referenced in its source — the others in its `.env.example` are unused, copy-pasted from dashboard-web); `SUPABASE_URL` + `SUPABASE_SECRET_KEY` on api-fastapi. `VITE_API_BASE_URL` was deliberately set only *after* the backend's first deploy revealed its real alias (`oishii-nori-api.vercel.app` — turned out to match the project name cleanly here, unlike SMFC's `api-fastapi-omega` naming-collision precedent that had raised doubt), then both frontends were redeployed (`vercel redeploy`, which rebuilds and picks up the new env var — Vite bakes `VITE_*` vars in at build time, so this rebuild was necessary, a plain restart wouldn't have picked it up).
+
+**Post-deploy verification**: real Playwright run against the live URLs — logged in as the QA test user on `oishii-nori-dashboard.vercel.app`, navigated to POS Terminal, confirmed `GET /products` and `GET /discount-types` both hit `oishii-nori-api.vercel.app` and returned 200, zero console errors, full catalog + branding rendered correctly.
+
+**Not done, flagged for later**: `CORSMiddleware` in `app/main.py` still allows `allow_origins=["*"]` — worth tightening to the two real frontend origins now that they're known, not a blocker. Two throwaway `psycopg2-binary`/`uvicorn[standard]` entries remain in `requirements.txt` (harmless on Vercel, only used by local dev/seed scripts) — left as-is, not worth restructuring dependency files for this deploy.
 
 ---
 
@@ -33,7 +58,7 @@
 - A formal QA pass on Phase 2 ran live: 22/22 checks passed for discounts, transactions+discount interaction, and both loss-record deduction paths.
 
 **Still outstanding:**
-1. **GitHub auth is broken.** `gh auth status` still shows an invalid keyring token for `vinsu-hub` (re-checked 2026-08-21). Target remote is `https://github.com/vinsu-hub/OishiiNori.git`. Run `gh auth login -h github.com` (interactively, e.g. via `! gh auth login -h github.com`) before the repo can be pushed. Nothing has been pushed anywhere yet — all work only exists locally + on the live Supabase project.
+1. ~~GitHub auth is broken~~ — **resolved 2026-08-21**, later the same day as Milestone 6. User ran `gh auth login -h github.com` themselves; repo pushed to `https://github.com/vinsu-hub/OishiiNori.git` and all 3 apps deployed to Vercel. See "🚀 Deployment" section above for full detail.
 2. **One manual Supabase Dashboard step still blocks HR/kiosk endpoints**: Settings → API → **Exposed schemas** needs `hr` added (Postgres schema exposure to PostgREST can't be set via SQL/migration). **Re-confirmed still not exposed as of the Milestone 3-5 session (2026-08-21)** — tested twice, ~20s apart, with a real bearer token: `GET /hr/holidays` still 500s while `GET /products` (public schema) succeeds with the same token. User attempted the toggle mid-session; it hadn't taken effect (or hasn't propagated) by session's end. This is now the single blocker standing between the build and Milestone 6's full live pass + Phase 7's HR verification — everything else is code-complete. Confirmed safe to expose: all 7 `hr.*` tables have RLS enabled with zero policies for `anon`/`authenticated` (fail-closed), no functions/views/SECURITY DEFINER objects in the schema — only `service_role` (server-side only) can read/write it.
 3. **Live DB ingredient stock is currently 0 across the board** (confirmed 2026-08-21, not a bug — a fresh catalog with no receiving/count history yet). No product size shows as "available" until a real Count Stock / receiving pass is done. Flagging so this isn't mistaken for a regression before going near real use.
 

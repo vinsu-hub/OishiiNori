@@ -1,12 +1,12 @@
 # Oishii Nori Command Suite — Progress / Task Board
 
-Status as of 2026-08-21 (Milestone 6 close-out session). Phase 2 (backend API) closed out with a formal live QA pass (22/22 checks). Phase 3-7 frontend build — **all 6 milestones done and verified live**, including Milestone 6 integration QA. Logo branding also completed this session. Subagent DB-write autonomy is **check-in required** per user decision — any destructive/schema-changing op stops and asks first; the auto-mode classifier independently enforced this same policy this session (see below). Update this file as phases advance; it's the shared task board the master orchestrator prompt calls for.
+Status as of 2026-08-21 (Milestone 6 close-out, then git push + Vercel deployment, same day). Phase 2 (backend API) closed out with a formal live QA pass (22/22 checks). Phase 3-7 frontend build — **all 6 milestones done and verified live**, including Milestone 6 integration QA. Logo branding completed, and the app is now **live in production** on Vercel. Subagent DB-write autonomy is **check-in required** per user decision — any destructive/schema-changing op stops and asks first; the auto-mode classifier independently enforced this same policy this session (see below). Update this file as phases advance; it's the shared task board the master orchestrator prompt calls for.
 
-**Overall: ~95% complete. All 8 phases are done or code-complete.** Only the two external blockers remain: GitHub auth (repo never pushed) and the Supabase `hr` schema exposure toggle (blocks live verification of Phase 2's `hr.py`/`kiosk.py` and Phase 7's HR pages only — code itself is built and type-checked). Nothing remains to be ported from the SMFC reference: every page/feature in the locked scope is built; what's left of SMFC (Malaya AI chat, Command Center, Trend Analysis, Newsfeed, EOD Dashboard, branch-scoping, modifiers, websockets/Realtime) was deliberately excluded, not missed.
+**Overall: ~98% complete. All 8 phases are done or code-complete, and the app is deployed.** Live URLs: dashboard `https://oishii-nori-dashboard.vercel.app`, staff clock `https://oishii-nori-staff-clock.vercel.app`, API `https://oishii-nori-api.vercel.app`. Only remaining blocker: the Supabase `hr` schema exposure toggle (blocks live verification of Phase 2's `hr.py`/`kiosk.py` and Phase 7's HR pages only — code itself is built, type-checked, and deployed). Nothing remains to be ported from the SMFC reference: every page/feature in the locked scope is built; what's left of SMFC (Malaya AI chat, Command Center, Trend Analysis, Newsfeed, EOD Dashboard, branch-scoping, modifiers, websockets/Realtime) was deliberately excluded, not missed.
 
 | Phase | Status |
 |---|---|
-| 0 — Infra bootstrap | Done except GitHub repo creation (blocked, `gh auth login`) |
+| 0 — Infra bootstrap | **Done** — GitHub repo pushed, all 3 apps deployed to Vercel (2026-08-21) |
 | 1 — Schema & seed | Done (one non-blocking open item below) |
 | 2 — Backend API | Done; `hr.py`/`kiosk.py` code correct but unverified live (blocked on `hr` schema exposure) |
 | 3 — POS Terminal + Order Queue | Done, verified live |
@@ -21,7 +21,7 @@ Status as of 2026-08-21 (Milestone 6 close-out session). Phase 2 (backend API) c
 
 One process note: the direct Supabase `.update()` call needed for the `notes` text change was blocked by the auto-mode classifier (a raw DB write bypassing the FastAPI app) even though it was the one change explicitly pre-authorized in this session's plan — the classifier doesn't know about plan-level authorization. Surfaced to the user directly rather than retried automatically; the user explicitly authorized the retry and it then succeeded. No workaround was attempted.
 
-Git push, Vercel deploy, and the two external blockers (GitHub auth, `hr` schema exposure) remain out of scope for this session per the user's own stopping point.
+**Git push + Vercel deployment — done, later the same day (2026-08-21).** GitHub auth fixed by the user; repo pushed to `https://github.com/vinsu-hub/OishiiNori` (private, `main`). All 3 Vercel projects deployed via Git integration. Root Directory had to be set manually per project (no CLI/vercel.json path exists for that setting on an existing project) — dashboard-web → `apps/dashboard-web`, staff-clock → `apps/staff-clock`, api → `services/api-fastapi`. Hit and fixed one real issue: the API's root-level routes 404'd at the Vercel edge (zero-config Python only auto-routes `/api/*`, not bare paths) — fixed with an explicit `services/api-fastapi/vercel.json` catch-all rewrite. Verified end-to-end via Playwright against the live URLs: login + POS Terminal on `oishii-nori-dashboard.vercel.app` correctly calling `oishii-nori-api.vercel.app` (200s, zero console errors). See `SESSION_HANDOFF.md` "🚀 Deployment" section for full detail. Only the `hr` schema exposure toggle remains out of scope (external Supabase Dashboard step only the user can do).
 
 Legend: `[x]` done & QA-passed · `[~]` in progress / partially done · `[ ]` not started · `[!]` blocked
 
@@ -29,9 +29,9 @@ Legend: `[x]` done & QA-passed · `[~]` in progress / partially done · `[ ]` no
 
 ## Phase 0 — Infra bootstrap
 - [x] New local git repo scaffolded (`D:\ioshinori\oishii-nori-command-suite`)
-- [!] New GitHub repo — **blocked**, `gh auth login -h github.com` needed first
+- [x] GitHub repo — **done 2026-08-21**, pushed to `https://github.com/vinsu-hub/OishiiNori` (private, `main`)
 - [x] Supabase project — using client-provisioned project `vaagbeyvhzgvudxtwkmm` (the `vinsu-tams` org's free-tier cap made creating a dedicated one impossible without a plan upgrade)
-- [x] 3 Vercel projects created (`oishii-nori-api`, `oishii-nori-dashboard`, `oishii-nori-staff-clock`) — not yet deployed
+- [x] 3 Vercel projects created and **deployed to production 2026-08-21** (`oishii-nori-api`, `oishii-nori-dashboard`, `oishii-nori-staff-clock`)
 - [x] `.env.example` (placeholder) + `.env.local` (real, gitignored) for all 3 apps
 - [x] Obsidian project note + graphify knowledge graph (1,790 nodes / 4,109 edges)
 - [x] Location scope confirmed: single branch, two departments (kitchen, cafe)
@@ -86,5 +86,5 @@ Legend: `[x]` done & QA-passed · `[~]` in progress / partially done · `[ ]` no
 ## Before resuming: decisions the user still needs to make
 1. ~~Keep or revert migration `0014`~~ — resolved 2026-08-21, kept.
 2. ~~How much autonomy to grant subagents on live DB writes~~ — resolved 2026-08-21, check-in required.
-3. GitHub auth — still outstanding, run `gh auth login -h github.com` (Action Needed #1 in `SESSION_HANDOFF.md`). Not attempted this session per the user's own stopping point.
-4. Add `hr` to Supabase Dashboard → Settings → API → Exposed schemas — **still outstanding, not re-attempted this session** (out of scope per the user's stopping point). This is the only thing blocking Phase 7's HR live pass — Phase 6 itself is done and did not depend on it.
+3. ~~GitHub auth~~ — resolved 2026-08-21, user fixed it; repo pushed and all 3 apps deployed to Vercel same day.
+4. Add `hr` to Supabase Dashboard → Settings → API → Exposed schemas — **still outstanding**. This is now the only remaining blocker in the whole project — it blocks Phase 7's HR live pass and full live verification of Phase 2's `hr.py`/`kiosk.py`.
