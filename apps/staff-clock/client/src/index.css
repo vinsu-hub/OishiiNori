@@ -1,0 +1,109 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap');
+@import "tailwindcss";
+
+@theme inline {
+  --color-primary: #14524B;
+  --color-primary-foreground: #FFFFFF;
+  --color-secondary: #E7DFCC;
+  --color-secondary-foreground: #2A2620;
+  --color-accent: #DCE9E6;
+  --color-accent-foreground: #14524B;
+  --color-background: #F3EEE2;
+  --color-foreground: #2A2620;
+  --color-muted: #E7DFCC;
+  --color-muted-foreground: #6F6A5C;
+  --color-card: #EFE9DA;
+  --color-card-foreground: #2A2620;
+  --color-border: rgba(42, 38, 32, 0.16);
+  --color-destructive: #B23A2E;
+  --color-destructive-foreground: #FFFFFF;
+  --color-success: #1E7A4C;
+  --color-success-bg: #E1EFE6;
+  --color-warning: #C98A2C;
+  --color-warning-bg: #F5E9D3;
+  --color-error: #B23A2E;
+  --color-error-bg: #F7E4E1;
+
+  --shadow-l1-hover: 2px 2px 6px rgba(42, 38, 32, 0.10), -2px -2px 6px rgba(255, 255, 255, 0.6);
+  --shadow-l2-raised: 4px 4px 10px rgba(42, 38, 32, 0.14), -4px -4px 10px rgba(255, 255, 255, 0.7);
+  --shadow-l3-modal: 0 12px 32px rgba(42, 38, 32, 0.22), 0 2px 6px rgba(42, 38, 32, 0.10);
+  --shadow-inset: inset 2px 2px 5px rgba(42, 38, 32, 0.16), inset -2px -2px 5px rgba(255, 255, 255, 0.5);
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 24px;
+
+  --font-corp-display: 'Space Grotesk', sans-serif;
+  --font-corp-body: 'Inter', sans-serif;
+  --font-corp-mono: 'IBM Plex Mono', monospace;
+}
+
+@layer base {
+  * {
+    @apply border-[--color-border];
+  }
+  body {
+    @apply bg-[--color-background] text-[--color-foreground] font-[--font-corp-body] antialiased;
+  }
+  html, body, #root {
+    height: 100%;
+  }
+}
+
+@layer utilities {
+  .shadow-l1-hover { box-shadow: var(--shadow-l1-hover); }
+  .shadow-l2-raised { box-shadow: var(--shadow-l2-raised); }
+  .shadow-l3-modal { box-shadow: var(--shadow-l3-modal); }
+  .shadow-inset { box-shadow: var(--shadow-inset); }
+  .shadow-none { box-shadow: none; }
+
+  @keyframes slide-up {
+    from { transform: translateY(1rem); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+  .animate-slide-up { animation: slide-up 0.2s ease-out; }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-medium transition-all duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-medium transition-all duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground shadow-l2-raised hover:shadow-l1-hover active:shadow-inset;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-medium transition-all duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-secondary text-secondary-foreground shadow-l2-raised hover:shadow-l1-hover active:shadow-inset;
+  }
+  .btn-success {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-medium transition-all duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-success text-white shadow-l2-raised hover:bg-[--color-success]/90 active:shadow-inset;
+  }
+  .btn-destructive {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-medium transition-all duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-destructive text-destructive-foreground shadow-l2-raised hover:bg-[--color-destructive]/90 active:shadow-inset;
+  }
+  .btn-outline {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-medium transition-all duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 border border-[--color-border] bg-transparent hover:bg-accent active:shadow-inset;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-medium transition-all duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-transparent hover:bg-accent active:shadow-inset;
+  }
+  .btn-lg {
+    @apply px-6 py-4 text-base;
+  }
+  .btn-xl {
+    @apply px-8 py-5 text-lg;
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-[--color-border] bg-background px-4 py-3 text-[--font-corp-body] placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .card {
+    @apply rounded-lg bg-card text-card-foreground shadow-l2-raised border-0;
+  }
+
+  .font-corp-display { font-family: var(--font-corp-display); font-weight: 600; }
+  .font-corp-body { font-family: var(--font-corp-body); }
+  .font-corp-mono { font-family: var(--font-corp-mono); }
+}

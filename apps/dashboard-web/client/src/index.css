@@ -1,0 +1,243 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: var(--ws-radius-sm);
+  --radius-md: var(--ws-radius-md);
+  --radius-lg: var(--ws-radius-lg);
+  --radius-xl: var(--ws-radius-xl);
+  --radius-2xl: var(--ws-radius-2xl);
+  --shadow-flat: var(--ws-shadow-flat);
+  --shadow-l1-hover: var(--ws-shadow-l1-hover);
+  --shadow-l2-raised: var(--ws-shadow-l2-raised);
+  --shadow-l3-modal: var(--ws-shadow-l3-modal);
+  --shadow-l4-popover: var(--ws-shadow-l4-popover);
+  --shadow-inset: var(--ws-shadow-inset);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-soft: var(--ws-color-accent-soft);
+  --color-accent-hover: var(--ws-color-accent-hover);
+  --color-warning: var(--ws-color-warning);
+  --color-warning-bg: var(--ws-color-warning-bg);
+  --color-success: var(--ws-color-success);
+  --color-success-bg: var(--ws-color-success-bg);
+  --color-error-bg: var(--ws-color-error-bg);
+  --color-border-regular: var(--ws-color-border-regular);
+  --color-border-thick: var(--ws-color-border-thick);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root {
+  /* ===================================================================
+   * Warm Slate soft-UI tokens (brand-neutral base, retained from the
+   * SMFC reference's design system — see skill: warm-slate-soft-ui)
+   * =================================================================== */
+  --ws-color-bg: #F3EEE2;
+  --ws-color-surface-raised: #EFE9DA;
+  --ws-color-surface-inset: #E7DFCC;
+  --ws-color-surface-pressed: #DED4BC;
+
+  --ws-color-accent: #14524B;
+  --ws-color-accent-hover: #0E3F3A;
+  --ws-color-accent-soft: #DCE9E6;
+
+  --ws-color-text-primary: #2A2620;
+  --ws-color-text-secondary: #6F6A5C;
+  --ws-color-text-on-accent: #FFFFFF;
+
+  --ws-color-success: #1E7A4C;
+  --ws-color-success-bg: #E1EFE6;
+  --ws-color-error: #B23A2E;
+  --ws-color-error-bg: #F7E4E1;
+  --ws-color-warning: #C98A2C;
+  --ws-color-warning-bg: #F5E9D3;
+
+  --ws-color-border-thin: rgba(42, 38, 32, 0.08);
+  --ws-color-border-regular: rgba(42, 38, 32, 0.16);
+  --ws-color-border-thick: rgba(42, 38, 32, 0.28);
+
+  --ws-shadow-flat: none;
+  --ws-shadow-l1-hover: 2px 2px 6px rgba(42, 38, 32, 0.10), -2px -2px 6px rgba(255, 255, 255, 0.6);
+  --ws-shadow-l2-raised: 4px 4px 10px rgba(42, 38, 32, 0.14), -4px -4px 10px rgba(255, 255, 255, 0.7);
+  --ws-shadow-l3-modal: 0 12px 32px rgba(42, 38, 32, 0.22), 0 2px 6px rgba(42, 38, 32, 0.10);
+  --ws-shadow-l4-popover: 0 16px 40px rgba(42, 38, 32, 0.26);
+  --ws-shadow-inset: inset 2px 2px 5px rgba(42, 38, 32, 0.16), inset -2px -2px 5px rgba(255, 255, 255, 0.5);
+
+  --ws-radius-sm: 4px;
+  --ws-radius-md: 8px;
+  --ws-radius-lg: 12px;
+  --ws-radius-xl: 16px;
+  --ws-radius-2xl: 24px;
+
+  --radius: var(--ws-radius-lg);
+
+  /* Map Warm Slate tokens onto the shadcn variable names every component reads */
+  --primary: var(--ws-color-accent);
+  --primary-foreground: var(--ws-color-text-on-accent);
+  --sidebar-primary: var(--ws-color-accent);
+  --sidebar-primary-foreground: var(--ws-color-text-on-accent);
+
+  --accent: var(--ws-color-accent-soft);
+  --accent-foreground: var(--ws-color-accent);
+  --chart-1: #14524B;
+  --chart-2: #C98A2C;
+  --chart-3: #6F6A5C;
+  --chart-4: #1E7A4C;
+  --chart-5: #B23A2E;
+
+  --background: var(--ws-color-bg);
+  --foreground: var(--ws-color-text-primary);
+  --card: var(--ws-color-surface-raised);
+  --card-foreground: var(--ws-color-text-primary);
+  --popover: var(--ws-color-surface-raised);
+  --popover-foreground: var(--ws-color-text-primary);
+  --secondary: var(--ws-color-surface-inset);
+  --secondary-foreground: var(--ws-color-text-primary);
+  --muted: var(--ws-color-surface-inset);
+  --muted-foreground: var(--ws-color-text-secondary);
+  --destructive: var(--ws-color-error);
+  --destructive-foreground: var(--ws-color-text-on-accent);
+  --border: var(--ws-color-border-thin);
+  --input: var(--ws-color-surface-inset);
+  --ring: var(--ws-color-accent);
+  --sidebar: var(--ws-color-surface-raised);
+  --sidebar-foreground: var(--ws-color-text-primary);
+  --sidebar-accent: var(--ws-color-accent-soft);
+  --sidebar-accent-foreground: var(--ws-color-accent);
+  --sidebar-border: var(--ws-color-border-thin);
+  --sidebar-ring: var(--ws-color-accent);
+
+  /* Department accent colors (kitchen vs cafe) -- Oishii Nori is single-
+     location, two departments, replacing SMFC's per-branch brand colors. */
+  --dept-kitchen: #14524B;
+  --dept-cafe: #C98A2C;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [type="button"]:not(:disabled),
+  [type="submit"]:not(:disabled),
+  [type="reset"]:not(:disabled),
+  a[href],
+  select:not(:disabled),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled) {
+    @apply cursor-pointer;
+  }
+}
+
+@layer components {
+  .container {
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .flex {
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .sync-dot {
+    @apply inline-block w-2 h-2 rounded-full;
+  }
+
+  .sync-dot-synced {
+    @apply bg-success;
+  }
+
+  .sync-dot-syncing {
+    @apply bg-warning animate-pulse;
+  }
+
+  .sync-dot-offline {
+    @apply bg-destructive;
+  }
+
+  @media (min-width: 640px) {
+    .container {
+      padding-left: 1.5rem;
+      padding-right: 1.5rem;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .container {
+      padding-left: 2rem;
+      padding-right: 2rem;
+      max-width: 1280px;
+    }
+  }
+}
+
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap');
+
+@layer base {
+  .font-corp-display {
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 600;
+  }
+
+  .font-corp-body {
+    font-family: 'Inter', sans-serif;
+  }
+
+  .font-corp-mono {
+    font-family: 'IBM Plex Mono', monospace;
+  }
+}
+
+@layer utilities {
+  /* Fluid stat text - scales with viewport width instead of jumping at
+     fixed breakpoints, so large numbers (elapsed time, currency) don't
+     overflow their card on narrow screens. */
+  .text-stat-lg {
+    font-size: clamp(1.5rem, 1.1rem + 1.8vw, 2.5rem);
+    line-height: 1.1;
+  }
+
+  .text-stat-md {
+    font-size: clamp(1.25rem, 1rem + 1.1vw, 1.875rem);
+    line-height: 1.15;
+  }
+}
