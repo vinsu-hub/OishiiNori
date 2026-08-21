@@ -16,13 +16,16 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   ApiDiscountType,
   ApiProduct,
   ApiProductSize,
+  ApiRecipeItem,
   createTransaction,
   fetchDiscountTypes,
   fetchProducts,
+  fetchRecipe,
 } from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
 import { VAT_RATE_PREVIEW } from '@/lib/constants';
@@ -32,6 +35,7 @@ interface CartLine {
   product: ApiProduct;
   size: ApiProductSize;
   quantity: number;
+  held_ingredients: string[];
 }
 
 export default function POSTerminal() {
@@ -48,6 +52,11 @@ export default function POSTerminal() {
   const [ownerRequestOpen, setOwnerRequestOpen] = useState(false);
   const [ownerRequestForm, setOwnerRequestForm] = useState({ employeeNumber: '', pin: '', note: '' });
   const [ownerRequestConfirmed, setOwnerRequestConfirmed] = useState<typeof ownerRequestForm | null>(null);
+
+  const [editOrderOpen, setEditOrderOpen] = useState(false);
+  const [editRecipes, setEditRecipes] = useState<Record<string, ApiRecipeItem[]>>({});
+  const [editSelections, setEditSelections] = useState<Record<string, Set<string>>>({});
+  const [editLoading, setEditLoading] = useState(false);
 
   useEffect(() => {
     Promise.all([fetchProducts(true), fetchDiscountTypes(true)])
@@ -84,7 +93,7 @@ export default function POSTerminal() {
       if (existing) {
         return prev.map((l) => (l.key === key ? { ...l, quantity: l.quantity + 1 } : l));
       }
-      return [...prev, { key, product, size, quantity: 1 }];
+      return [...prev, { key, product, size, quantity: 1, held_ingredients: [] }];
     });
   }
 
@@ -119,6 +128,44 @@ export default function POSTerminal() {
     setOwnerRequestForm({ employeeNumber: '', pin: '', note: '' });
   }
 
+  function openEditOrder() {
+    setEditSelections(
+      Object.fromEntries(cart.map((line) => [line.key, new Set(line.held_ingredients)]))
+    );
+    setEditOrderOpen(true);
+    setEditLoading(true);
+    Promise.all(
+      cart.map((line) =>
+        fetchRecipe(line.size.id).then((recipe) => [line.size.id, recipe] as const)
+      )
+    )
+      .then((entries) => setEditRecipes(Object.fromEntries(entries)))
+      .catch((e) => toast.error(e instanceof Error ? e.message : 'Failed to load ingredients'))
+      .finally(() => setEditLoading(false));
+  }
+
+  function toggleHeldIngredient(lineKey: string, ingredientName: string) {
+    setEditSelections((prev) => {
+      const next = new Set(prev[lineKey] ?? []);
+      if (next.has(ingredientName)) {
+        next.delete(ingredientName);
+      } else {
+        next.add(ingredientName);
+      }
+      return { ...prev, [lineKey]: next };
+    });
+  }
+
+  function saveEditOrder() {
+    setCart((prev) =>
+      prev.map((line) => ({
+        ...line,
+        held_ingredients: Array.from(editSelections[line.key] ?? []),
+      }))
+    );
+    setEditOrderOpen(false);
+  }
+
   async function handleCharge() {
     if (!user) return;
     if (cart.length === 0) {
@@ -129,7 +176,11 @@ export default function POSTerminal() {
     try {
       const transaction = await createTransaction({
         employee_id: user.id,
-        items: cart.map((l) => ({ product_size_id: l.size.id, quantity: l.quantity })),
+        items: cart.map((l) => ({
+          product_size_id: l.size.id,
+          quantity: l.quantity,
+          held_ingredients: l.held_ingredients,
+        })),
         discount_type_id: discountTypeId === 'none' ? undefined : discountTypeId,
         is_owner_request: !!ownerRequestConfirmed,
         owner_request_employee_number: ownerRequestConfirmed?.employeeNumber,
@@ -210,8 +261,11 @@ export default function POSTerminal() {
         </div>
 
         <div className="w-96 border-l flex flex-col overflow-hidden">
-          <div className="p-4 border-b">
+          <div className="p-4 border-b flex items-center justify-between">
             <h3 className="font-corp-display font-semibold">Current Order</h3>
+            <Button size="sm" variant="outline" disabled={cart.length === 0} onClick={openEditOrder}>
+              Edit Order
+            </Button>
           </div>
           <div className="flex-1 overflow-auto p-4 space-y-2">
             {cart.length === 0 && <p className="text-sm text-muted-foreground">No items yet.</p>}
@@ -220,6 +274,9 @@ export default function POSTerminal() {
                 <div>
                   <p className="font-medium">{line.product.name}</p>
                   <p className="text-xs text-muted-foreground">{line.size.size_label}</p>
+                  {line.held_ingredients.length > 0 && (
+                    <p className="text-xs text-destructive">-- hold: {line.held_ingredients.join(', ')}</p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <Button size="icon" variant="outline" className="h-6 w-6" onClick={() => updateQuantity(line.key, -1)}>
@@ -348,6 +405,49 @@ export default function POSTerminal() {
           </div>
           <DialogFooter>
             <Button onClick={confirmOwnerRequest}>Confirm</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Order -- hold ingredients per line before checkout */}
+      <Dialog open={editOrderOpen} onOpenChange={setEditOrderOpen}>
+        <DialogContent className="max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit order</DialogTitle>
+            <DialogDescription>Hold any ingredients the customer doesn't want, per item.</DialogDescription>
+          </DialogHeader>
+          {editLoading && <p className="text-sm text-muted-foreground">Loading ingredients...</p>}
+          {!editLoading && (
+            <div className="space-y-4">
+              {cart.map((line) => {
+                const recipe = editRecipes[line.size.id] ?? [];
+                const selected = editSelections[line.key] ?? new Set<string>();
+                return (
+                  <div key={line.key} className="space-y-2">
+                    <p className="text-sm font-medium">
+                      {line.product.name} ({line.size.size_label})
+                    </p>
+                    {recipe.length === 0 && (
+                      <p className="text-xs text-muted-foreground">No ingredients to hold for this item.</p>
+                    )}
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                      {recipe.map((ingredient) => (
+                        <label key={ingredient.id} className="flex items-center gap-2 text-sm">
+                          <Checkbox
+                            checked={selected.has(ingredient.ingredient_name)}
+                            onCheckedChange={() => toggleHeldIngredient(line.key, ingredient.ingredient_name)}
+                          />
+                          {ingredient.ingredient_name}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <DialogFooter>
+            <Button onClick={saveEditOrder}>Save</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

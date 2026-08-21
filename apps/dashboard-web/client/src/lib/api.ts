@@ -140,6 +140,7 @@ export type TransactionStatus = 'open' | 'closed' | 'voided';
 export interface CreateTransactionItem {
   product_size_id: string;
   quantity: number;
+  held_ingredients?: string[];
 }
 
 export interface CreateTransactionRequest {
@@ -158,6 +159,7 @@ export interface ApiTransactionItem {
   product_size_id: string;
   quantity: number;
   unit_price: number;
+  held_ingredients: string[];
 }
 
 export interface ApiTransaction {

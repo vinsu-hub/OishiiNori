@@ -7,17 +7,21 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { BundleFulfillmentChecklist } from '@/components/kitchen/BundleFulfillmentChecklist';
 import {
+  ApiDigitalOrder,
   ApiProduct,
   ApiProductSize,
   ApiTransaction,
   ApiTransactionItem,
   KitchenStation,
   KitchenStatus,
+  fetchDigitalOrders,
   fetchProducts,
   fetchTransactions,
   updateKitchenStatus,
 } from '@/lib/api';
 import { POLL_INTERVAL_MS } from '@/lib/constants';
+import { buildDigitalOrderLookup } from '@/lib/digitalOrderLookup';
+import { DigitalOrderInfo } from '@/components/shared/DigitalOrderInfo';
 
 const KITCHEN_STATUSES: KitchenStatus[] = ['queued', 'preparing', 'ready', 'completed'];
 
@@ -68,6 +72,7 @@ interface ChecklistTarget {
 export default function KitchenDisplay() {
   const [transactions, setTransactions] = useState<ApiTransaction[]>([]);
   const [products, setProducts] = useState<ApiProduct[]>([]);
+  const [digitalOrderLookup, setDigitalOrderLookup] = useState<Map<string, ApiDigitalOrder>>(new Map());
   const [loading, setLoading] = useState(true);
   const [stationFilter, setStationFilter] = useState<KitchenStation | 'all'>('all');
   const [fulfilledItemIds, setFulfilledItemIds] = useState<Set<string>>(new Set());
@@ -75,10 +80,11 @@ export default function KitchenDisplay() {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    Promise.all([fetchTransactions(), fetchProducts(true)])
-      .then(([t, p]) => {
+    Promise.all([fetchTransactions(), fetchProducts(true), fetchDigitalOrders('approved')])
+      .then(([t, p, digitalOrders]) => {
         setTransactions(t.filter((x) => x.status !== 'voided'));
         setProducts(p);
+        setDigitalOrderLookup(buildDigitalOrderLookup(digitalOrders));
       })
       .catch((e) => toast.error(`Failed to load kitchen display: ${e instanceof Error ? e.message : 'Unknown error'}`))
       .finally(() => setLoading(false));
@@ -188,6 +194,7 @@ export default function KitchenDisplay() {
                   const hasUnfulfilledBundle = bundleItems.some((r) => !fulfilledItemIds.has(r.item.id));
                   const next = NEXT_STATUS[order.kitchen_status];
                   const blockedByBundle = next === 'completed' && hasUnfulfilledBundle;
+                  const digitalOrder = digitalOrderLookup.get(order.id);
 
                   return (
                     <Card key={order.id}>
@@ -199,13 +206,15 @@ export default function KitchenDisplay() {
                         <p className="text-xs text-muted-foreground">
                           opened {new Date(order.opened_at).toLocaleTimeString()}
                         </p>
+                        {digitalOrder && <DigitalOrderInfo order={digitalOrder} />}
                       </CardHeader>
                       <CardContent className="space-y-2 pb-3">
                         <ul className="space-y-1 text-sm">
                           {resolved.map(({ item, product, size }) => {
                             const fulfilled = fulfilledItemIds.has(item.id);
                             return (
-                              <li key={item.id} className="flex items-center justify-between gap-2">
+                              <li key={item.id} className="space-y-0.5">
+                              <div className="flex items-center justify-between gap-2">
                                 <span>
                                   {item.quantity}x {product.name} ({size.size_label})
                                 </span>
@@ -223,6 +232,10 @@ export default function KitchenDisplay() {
                                       Log rolls used
                                     </Button>
                                   ))}
+                              </div>
+                              {item.held_ingredients.length > 0 && (
+                                <p className="text-xs text-destructive">-- hold: {item.held_ingredients.join(', ')}</p>
+                              )}
                               </li>
                             );
                           })}

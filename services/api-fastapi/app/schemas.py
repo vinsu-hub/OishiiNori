@@ -90,6 +90,7 @@ class RecipeItemOut(BaseModel):
 class TransactionItemCreate(BaseModel):
     product_size_id: str
     quantity: float = Field(gt=0)
+    held_ingredients: list[str] = Field(default_factory=list)
 
 
 class CreateTransactionRequest(BaseModel):
@@ -108,6 +109,7 @@ class TransactionItemResponse(BaseModel):
     product_size_id: str
     quantity: float
     unit_price: float
+    held_ingredients: list[str] = Field(default_factory=list)
 
 
 class TransactionResponse(BaseModel):

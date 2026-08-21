@@ -12,9 +12,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { ApiTransaction, KitchenStatus, TransactionStatus, fetchTransactions, voidTransaction } from '@/lib/api';
+import {
+  ApiDigitalOrder,
+  ApiTransaction,
+  KitchenStatus,
+  TransactionStatus,
+  fetchDigitalOrders,
+  fetchTransactions,
+  voidTransaction,
+} from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
 import { POLL_INTERVAL_MS } from '@/lib/constants';
+import { buildDigitalOrderLookup } from '@/lib/digitalOrderLookup';
+import { DigitalOrderInfo } from '@/components/shared/DigitalOrderInfo';
 
 type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline' | 'gold';
 
@@ -33,14 +43,18 @@ const KITCHEN_STATUS_VARIANT: Record<KitchenStatus, BadgeVariant> = {
 
 export default function OrderQueue() {
   const [transactions, setTransactions] = useState<ApiTransaction[]>([]);
+  const [digitalOrderLookup, setDigitalOrderLookup] = useState<Map<string, ApiDigitalOrder>>(new Map());
   const [loading, setLoading] = useState(true);
   const [voidTarget, setVoidTarget] = useState<ApiTransaction | null>(null);
   const [voidReason, setVoidReason] = useState('');
   const [voiding, setVoiding] = useState(false);
 
   const load = useCallback(() => {
-    fetchTransactions()
-      .then((data) => setTransactions([...data].sort((a, b) => b.opened_at.localeCompare(a.opened_at))))
+    Promise.all([fetchTransactions(), fetchDigitalOrders('approved')])
+      .then(([data, digitalOrders]) => {
+        setTransactions([...data].sort((a, b) => b.opened_at.localeCompare(a.opened_at)));
+        setDigitalOrderLookup(buildDigitalOrderLookup(digitalOrders));
+      })
       .catch((e) => toast.error(`Failed to load orders: ${e instanceof Error ? e.message : 'Unknown error'}`))
       .finally(() => setLoading(false));
   }, []);
@@ -78,7 +92,10 @@ export default function OrderQueue() {
         {!loading && transactions.length === 0 && (
           <p className="text-sm text-muted-foreground">No orders yet.</p>
         )}
-        {transactions.map((t) => (
+        {transactions.map((t) => {
+          const digitalOrder = digitalOrderLookup.get(t.id);
+          const heldIngredients = Array.from(new Set(t.items.flatMap((i) => i.held_ingredients)));
+          return (
           <Card key={t.id}>
             <CardContent className="py-3 flex items-center justify-between">
               <div className="space-y-1">
@@ -98,6 +115,10 @@ export default function OrderQueue() {
                     {t.tax_amount > 0 && <>Tax: {formatCurrency(t.tax_amount)}</>}
                   </p>
                 )}
+                {heldIngredients.length > 0 && (
+                  <p className="text-xs text-destructive">-- hold: {heldIngredients.join(', ')}</p>
+                )}
+                {digitalOrder && <DigitalOrderInfo order={digitalOrder} />}
               </div>
               <div className="flex items-center gap-3">
                 <span className="font-semibold">{formatCurrency(t.total_amount)}</span>
@@ -109,7 +130,8 @@ export default function OrderQueue() {
               </div>
             </CardContent>
           </Card>
-        ))}
+          );
+        })}
       </div>
 
       <Dialog open={!!voidTarget} onOpenChange={(open) => !open && setVoidTarget(null)}>

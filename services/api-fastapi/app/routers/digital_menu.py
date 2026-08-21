@@ -226,7 +226,14 @@ def approve_digital_order(order_id: str, user: CurrentUser = Depends(get_current
     transaction = _create_transaction_row(
         supabase,
         employee_id=user.id,
-        items=[TransactionItemCreate(product_size_id=i["product_size_id"], quantity=i["quantity"]) for i in order["items"]],
+        items=[
+            TransactionItemCreate(
+                product_size_id=i["product_size_id"],
+                quantity=i["quantity"],
+                held_ingredients=i.get("held_ingredients", []),
+            )
+            for i in order["items"]
+        ],
     )
 
     # Add-ons aren't real catalog products, so they were never part of

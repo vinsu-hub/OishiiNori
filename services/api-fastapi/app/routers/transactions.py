@@ -201,6 +201,7 @@ def _create_transaction_row(
                 "product_size_id": item.product_size_id,
                 "quantity": item.quantity,
                 "unit_price": unit_price,
+                "held_ingredients": item.held_ingredients,
             }
         )
 
