@@ -175,11 +175,18 @@ PaymentMethod = Literal["gcash", "cash"]
 class DigitalOrderItemCreate(BaseModel):
     product_size_id: str
     quantity: float = Field(gt=0)
+    held_ingredients: list[str] = Field(default_factory=list)
+
+
+class DigitalOrderAddonCreate(BaseModel):
+    addon_id: str
+    quantity: int = Field(gt=0)
 
 
 class CreateDigitalOrderRequest(BaseModel):
     table_number: int = Field(gt=0)
     items: list[DigitalOrderItemCreate]
+    addons: list[DigitalOrderAddonCreate] = Field(default_factory=list)
     payment_method: PaymentMethod
     customer_note: str | None = None
 
@@ -189,6 +196,23 @@ class DigitalOrderItemResponse(BaseModel):
     digital_order_id: str
     product_size_id: str
     quantity: float
+    unit_price: float
+    held_ingredients: list[str] = Field(default_factory=list)
+
+
+class MenuAddonOut(BaseModel):
+    id: str
+    name: str
+    price: float
+    active: bool
+
+
+class DigitalOrderAddonResponse(BaseModel):
+    id: str
+    digital_order_id: str
+    addon_id: str
+    addon_name: str | None = None
+    quantity: int
     unit_price: float
 
 
@@ -206,6 +230,7 @@ class DigitalOrderResponse(BaseModel):
     transaction_id: str | None = None
     created_at: datetime
     items: list[DigitalOrderItemResponse] = Field(default_factory=list)
+    addons: list[DigitalOrderAddonResponse] = Field(default_factory=list)
 
 
 class DigitalOrderStatusResponse(BaseModel):
@@ -219,6 +244,8 @@ class DigitalOrderStatusResponse(BaseModel):
     status: DigitalOrderStatus
     subtotal: float
     rejected_reason: str | None = None
+    items: list[DigitalOrderItemResponse] = Field(default_factory=list)
+    addons: list[DigitalOrderAddonResponse] = Field(default_factory=list)
 
 
 class RejectDigitalOrderRequest(BaseModel):

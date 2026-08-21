@@ -29,18 +29,61 @@ export interface ApiProduct {
   sizes: ApiProductSize[];
 }
 
+export interface ApiRecipeItem {
+  id: string;
+  product_size_id: string;
+  ingredient_id: string;
+  ingredient_name: string;
+  qty_per_serving: number;
+  unit: string;
+  prep_notes: string | null;
+  needs_review: boolean;
+}
+
+export interface ApiAddon {
+  id: string;
+  name: string;
+  price: number;
+  active: boolean;
+}
+
 export type PaymentMethod = 'gcash' | 'cash';
 
 export interface SubmitOrderItem {
   product_size_id: string;
+  quantity: number;
+  held_ingredients?: string[];
+}
+
+export interface SubmitOrderAddon {
+  addon_id: string;
   quantity: number;
 }
 
 export interface SubmitOrderPayload {
   table_number: number;
   items: SubmitOrderItem[];
+  addons?: SubmitOrderAddon[];
   payment_method: PaymentMethod;
   customer_note?: string;
+}
+
+export interface DigitalOrderStatusItem {
+  id: string;
+  digital_order_id: string;
+  product_size_id: string;
+  quantity: number;
+  unit_price: number;
+  held_ingredients: string[];
+}
+
+export interface DigitalOrderStatusAddon {
+  id: string;
+  digital_order_id: string;
+  addon_id: string;
+  addon_name: string | null;
+  quantity: number;
+  unit_price: number;
 }
 
 export interface DigitalOrderStatus {
@@ -50,6 +93,8 @@ export interface DigitalOrderStatus {
   status: 'pending' | 'approved' | 'rejected';
   subtotal: number;
   rejected_reason: string | null;
+  items: DigitalOrderStatusItem[];
+  addons: DigitalOrderStatusAddon[];
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -66,6 +111,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function fetchMenu(): Promise<ApiProduct[]> {
   return request('/public/menu');
+}
+
+export function fetchAddons(): Promise<ApiAddon[]> {
+  return request('/public/addons');
+}
+
+export function fetchRecipe(productSizeId: string): Promise<ApiRecipeItem[]> {
+  return request(`/public/product-sizes/${productSizeId}/recipe`);
 }
 
 export function submitOrder(payload: SubmitOrderPayload): Promise<DigitalOrderStatus> {

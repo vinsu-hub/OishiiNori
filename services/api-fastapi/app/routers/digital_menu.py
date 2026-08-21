@@ -12,7 +12,10 @@ service-role `get_supabase()` client like every other router.
 A digital_orders row is a staging area, not a sale -- see
 transactions.py's `_create_transaction_row` for how an approved one
 becomes a real transaction, through the exact same insert/deduction path
-a POS sale uses.
+a POS sale uses. Add-ons (menu_addons/digital_order_addons) and held
+ingredients (digital_order_items.held_ingredients) are digital-menu-only
+concepts, not wired into recipe/ingredient deduction -- see migration
+0017's header comment for why.
 """
 
 from datetime import datetime, timezone
@@ -22,12 +25,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.auth import CurrentUser, get_current_user
 from app.deps import get_supabase
 from app.routers.products import _list_products_data
-from app.routers.transactions import _create_transaction_row
+from app.routers.recipes import _get_recipe_data
+from app.routers.transactions import VAT_RATE, _create_transaction_row
 from app.schemas import (
     CreateDigitalOrderRequest,
     DigitalOrderResponse,
     DigitalOrderStatusResponse,
+    MenuAddonOut,
     ProductOut,
+    RecipeItemOut,
     RejectDigitalOrderRequest,
     TransactionItemCreate,
 )
@@ -42,6 +48,19 @@ def _fetch_digital_order(supabase, order_id: str) -> dict | None:
     order = result.data
     items_result = supabase.table("digital_order_items").select("*").eq("digital_order_id", order_id).execute()
     order["items"] = items_result.data
+
+    addons_result = (
+        supabase.table("digital_order_addons")
+        .select("*, menu_addons(name)")
+        .eq("digital_order_id", order_id)
+        .execute()
+    )
+    addons = []
+    for row in addons_result.data:
+        addon_info = row.pop("menu_addons", None) or {}
+        row["addon_name"] = addon_info.get("name")
+        addons.append(row)
+    order["addons"] = addons
     return order
 
 
@@ -53,6 +72,17 @@ def _fetch_digital_order(supabase, order_id: str) -> dict | None:
 @router.get("/public/menu", response_model=list[ProductOut])
 def public_menu():
     return _list_products_data(get_supabase(), active_only=True, department=None)
+
+
+@router.get("/public/addons", response_model=list[MenuAddonOut])
+def public_addons():
+    result = get_supabase().table("menu_addons").select("*").eq("active", True).order("name").execute()
+    return result.data
+
+
+@router.get("/public/product-sizes/{product_size_id}/recipe", response_model=list[RecipeItemOut])
+def public_recipe(product_size_id: str):
+    return _get_recipe_data(get_supabase(), product_size_id)
 
 
 @router.post("/public/orders", response_model=DigitalOrderStatusResponse)
@@ -68,12 +98,29 @@ def submit_digital_order(body: CreateDigitalOrderRequest):
     if missing:
         raise HTTPException(status_code=404, detail=f"Product sizes not found: {missing}")
 
+    addon_ids = [a.addon_id for a in body.addons]
+    addons_by_id: dict[str, dict] = {}
+    if addon_ids:
+        addons_result = (
+            supabase.table("menu_addons").select("id, price, active").in_("id", addon_ids).execute()
+        )
+        addons_by_id = {a["id"]: a for a in addons_result.data}
+        missing_addons = [aid for aid in addon_ids if aid not in addons_by_id]
+        if missing_addons:
+            raise HTTPException(status_code=404, detail=f"Add-ons not found: {missing_addons}")
+        inactive_addons = [aid for aid in addon_ids if not addons_by_id[aid]["active"]]
+        if inactive_addons:
+            raise HTTPException(status_code=400, detail=f"Add-ons no longer available: {inactive_addons}")
+
     # Prices are always recomputed from the live catalog -- a client-sent
     # price is never trusted, same posture as create_transaction.
     subtotal = 0.0
     for item in body.items:
         unit_price = float(sizes_by_id[item.product_size_id]["price"])
         subtotal += unit_price * item.quantity
+    for addon in body.addons:
+        unit_price = float(addons_by_id[addon.addon_id]["price"])
+        subtotal += unit_price * addon.quantity
 
     order_insert = (
         supabase.table("digital_orders")
@@ -96,12 +143,25 @@ def submit_digital_order(body: CreateDigitalOrderRequest):
             "product_size_id": item.product_size_id,
             "quantity": item.quantity,
             "unit_price": float(sizes_by_id[item.product_size_id]["price"]),
+            "held_ingredients": item.held_ingredients,
         }
         for item in body.items
     ]
     supabase.table("digital_order_items").insert(item_rows).execute()
 
-    return order
+    if body.addons:
+        addon_rows = [
+            {
+                "digital_order_id": order["id"],
+                "addon_id": addon.addon_id,
+                "quantity": addon.quantity,
+                "unit_price": float(addons_by_id[addon.addon_id]["price"]),
+            }
+            for addon in body.addons
+        ]
+        supabase.table("digital_order_addons").insert(addon_rows).execute()
+
+    return _fetch_digital_order(supabase, order["id"])
 
 
 @router.get("/public/orders/{order_id}", response_model=DigitalOrderStatusResponse)
@@ -135,8 +195,22 @@ def list_digital_orders(
     items_by_order: dict[str, list] = {}
     for item in items_result.data:
         items_by_order.setdefault(item["digital_order_id"], []).append(item)
+
+    addons_result = (
+        supabase.table("digital_order_addons")
+        .select("*, menu_addons(name)")
+        .in_("digital_order_id", order_ids)
+        .execute()
+    )
+    addons_by_order: dict[str, list] = {}
+    for row in addons_result.data:
+        addon_info = row.pop("menu_addons", None) or {}
+        row["addon_name"] = addon_info.get("name")
+        addons_by_order.setdefault(row["digital_order_id"], []).append(row)
+
     for order in orders:
         order["items"] = items_by_order.get(order["id"], [])
+        order["addons"] = addons_by_order.get(order["id"], [])
     return orders
 
 
@@ -155,6 +229,20 @@ def approve_digital_order(order_id: str, user: CurrentUser = Depends(get_current
         items=[TransactionItemCreate(product_size_id=i["product_size_id"], quantity=i["quantity"]) for i in order["items"]],
     )
 
+    # Add-ons aren't real catalog products, so they were never part of
+    # _create_transaction_row's items -- fold their (taxed) cost into the
+    # transaction's totals now so the till reconciles correctly. The
+    # digital_orders row (linked via transaction_id) remains the record of
+    # exactly which add-ons were ordered.
+    addons_subtotal = sum(float(a["unit_price"]) * a["quantity"] for a in order["addons"])
+    if addons_subtotal:
+        supabase.table("transactions").update(
+            {
+                "total_amount": transaction.total_amount + addons_subtotal,
+                "tax_amount": transaction.tax_amount + addons_subtotal * VAT_RATE,
+            }
+        ).eq("id", transaction.id).execute()
+
     updated = (
         supabase.table("digital_orders")
         .update(
@@ -170,6 +258,7 @@ def approve_digital_order(order_id: str, user: CurrentUser = Depends(get_current
     )
     result = updated.data[0]
     result["items"] = order["items"]
+    result["addons"] = order["addons"]
     return result
 
 
@@ -194,4 +283,5 @@ def reject_digital_order(
     )
     result = updated.data[0]
     result["items"] = order["items"]
+    result["addons"] = order["addons"]
     return result

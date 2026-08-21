@@ -7,9 +7,12 @@ from app.schemas import RecipeItemOut
 router = APIRouter(tags=["recipes"])
 
 
-@router.get("/product-sizes/{product_size_id}/recipe", response_model=list[RecipeItemOut])
-def get_recipe(product_size_id: str, user: CurrentUser = Depends(get_current_user)):
-    """Recipe (bill of materials) for one specific size tier of a product.
+def _get_recipe_data(supabase, product_size_id: str) -> list[dict]:
+    """Shared query body behind both the authenticated `/product-sizes/{id}/
+    recipe` route and the public digital-menu variant -- ingredient names
+    aren't sensitive (the same info is already shown to POS staff), so
+    exposing them publicly is safe; it's exactly what a customer-facing
+    menu's "what's inside" / hold-an-ingredient UI needs.
 
     JUDGMENT CALL: this build's recipe_items hangs off product_sizes, not
     products (see task spec: size-tier recipe deduction), so the route is
@@ -17,8 +20,6 @@ def get_recipe(product_size_id: str, user: CurrentUser = Depends(get_current_use
     (Platter/Sushi Boat) legitimately returns an empty list -- its BOM is
     only known at kitchen bundle-fulfillment time, see transactions.py.
     """
-    supabase = get_supabase()
-
     size_result = (
         supabase.table("product_sizes").select("id").eq("id", product_size_id).maybe_single().execute()
     )
@@ -37,3 +38,9 @@ def get_recipe(product_size_id: str, user: CurrentUser = Depends(get_current_use
         row["ingredient_name"] = ingredient.get("name", "Unknown")
         items.append(row)
     return items
+
+
+@router.get("/product-sizes/{product_size_id}/recipe", response_model=list[RecipeItemOut])
+def get_recipe(product_size_id: str, user: CurrentUser = Depends(get_current_user)):
+    supabase = get_supabase()
+    return _get_recipe_data(supabase, product_size_id)

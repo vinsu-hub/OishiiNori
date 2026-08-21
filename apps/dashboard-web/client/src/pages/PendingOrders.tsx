@@ -117,9 +117,17 @@ export default function PendingOrders() {
                   return (
                     <li key={item.id}>
                       {item.quantity}x {resolved ? `${resolved.product.name} (${resolved.size.size_label})` : 'Unknown item'}
+                      {item.held_ingredients.length > 0 && (
+                        <span className="text-destructive"> -- hold: {item.held_ingredients.join(', ')}</span>
+                      )}
                     </li>
                   );
                 })}
+                {order.addons.map((addon) => (
+                  <li key={addon.id}>
+                    {addon.quantity}x {addon.addon_name || 'Add-on'} <span className="text-xs">(add-on)</span>
+                  </li>
+                ))}
               </ul>
 
               {order.customer_note && (

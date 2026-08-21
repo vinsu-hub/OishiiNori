@@ -248,6 +248,16 @@ export interface ApiDigitalOrderItem {
   product_size_id: string;
   quantity: number;
   unit_price: number;
+  held_ingredients: string[];
+}
+
+export interface ApiDigitalOrderAddon {
+  id: string;
+  digital_order_id: string;
+  addon_id: string;
+  addon_name: string | null;
+  quantity: number;
+  unit_price: number;
 }
 
 export interface ApiDigitalOrder {
@@ -264,6 +274,7 @@ export interface ApiDigitalOrder {
   transaction_id: string | null;
   created_at: string;
   items: ApiDigitalOrderItem[];
+  addons: ApiDigitalOrderAddon[];
 }
 
 export function fetchDigitalOrders(status?: DigitalOrderStatus): Promise<ApiDigitalOrder[]> {
