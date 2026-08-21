@@ -10,7 +10,6 @@ import {
   ChefHat,
   Package,
   AlertCircle,
-  Truck,
   Zap,
   Users,
   Wallet,
@@ -44,7 +43,6 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
     { icon: ChefHat, label: 'Kitchen Display', href: '/kitchen-display' },
     { icon: Package, label: 'Inventory Count', href: '/inventory-count' },
     { icon: AlertCircle, label: 'Loss Log', href: '/loss-log' },
-    { icon: Truck, label: 'Inventory Movements', href: '/inventory-movements' },
     { icon: Zap, label: 'Utility Log', href: '/utility-log' },
     ...(isManagerOrExecutive
       ? [
