@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import (
+    analytics,
+    dashboard_summary,
     digital_menu,
     discounts,
     hr,
@@ -35,6 +37,8 @@ app.include_router(kiosk.router)
 app.include_router(transactions.router)
 app.include_router(utility_logs.router)
 app.include_router(digital_menu.router)
+app.include_router(dashboard_summary.router)
+app.include_router(analytics.router)
 
 
 @app.get("/health")

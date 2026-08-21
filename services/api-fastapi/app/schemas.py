@@ -610,3 +610,73 @@ class EmployeeCreatedResponse(BaseModel):
 
 class SetPinRequest(BaseModel):
     pin: str = Field(min_length=4, max_length=8)
+
+
+# ---------------------------------------------------------------------------
+# Dashboard summary (Command Center) / analytics (Trend Analysis)
+# ---------------------------------------------------------------------------
+
+
+class LowStockIngredient(BaseModel):
+    id: str
+    name: str
+    current_stock: float
+    reorder_threshold: float
+    base_unit: str
+
+
+class UtilityCostBreakdown(BaseModel):
+    utility_type: UtilityType
+    cost: float
+
+
+class DepartmentBreakdown(BaseModel):
+    department: DepartmentType
+    item_revenue: float
+    item_count: float
+
+
+class DashboardSummaryResponse(BaseModel):
+    date: date
+    revenue: float
+    discount_total: float
+    tax_total: float
+    order_count: int
+    loss_total: float
+    low_stock_ingredients: list[LowStockIngredient]
+    utility_cost_today: float
+    utility_breakdown: list[UtilityCostBreakdown]
+    by_department: list[DepartmentBreakdown]
+    # None (with hr_available=False) rather than 0 when the hr schema isn't
+    # exposed yet -- distinguishes "no one clocked in" from "couldn't check",
+    # same resilience pattern as transactions.py's kitchen_status feature
+    # detection.
+    staff_clocked_in: int | None = None
+    hr_available: bool = True
+
+
+class SalesTrendPoint(BaseModel):
+    date: date
+    revenue: float
+    order_count: int
+
+
+class SalesTrendResponse(BaseModel):
+    date_from: date
+    date_to: date
+    points: list[SalesTrendPoint]
+    total_revenue: float
+    total_orders: int
+
+
+class TopProductRow(BaseModel):
+    product_id: str
+    product_name: str
+    quantity_sold: float
+    revenue: float
+
+
+class TopProductsResponse(BaseModel):
+    date_from: date
+    date_to: date
+    products: list[TopProductRow]

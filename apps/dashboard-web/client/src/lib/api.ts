@@ -687,3 +687,89 @@ export function fetchPayrollAuditLog(params?: { entity_type?: string; limit?: nu
   const query = qs.toString();
   return request(`/hr/payroll-audit-log${query ? `?${query}` : ''}`);
 }
+
+// ---------------------------------------------------------------------------
+// Dashboard summary (Command Center) / analytics (Trend Analysis)
+// ---------------------------------------------------------------------------
+
+export interface ApiLowStockIngredient {
+  id: string;
+  name: string;
+  current_stock: number;
+  reorder_threshold: number;
+  base_unit: string;
+}
+
+export interface ApiUtilityCostBreakdown {
+  utility_type: UtilityType;
+  cost: number;
+}
+
+export interface ApiDepartmentBreakdown {
+  department: Department;
+  item_revenue: number;
+  item_count: number;
+}
+
+export interface ApiDashboardSummary {
+  date: string;
+  revenue: number;
+  discount_total: number;
+  tax_total: number;
+  order_count: number;
+  loss_total: number;
+  low_stock_ingredients: ApiLowStockIngredient[];
+  utility_cost_today: number;
+  utility_breakdown: ApiUtilityCostBreakdown[];
+  by_department: ApiDepartmentBreakdown[];
+  staff_clocked_in: number | null;
+  hr_available: boolean;
+}
+
+export function fetchDashboardSummary(onDate?: string): Promise<ApiDashboardSummary> {
+  return request(`/dashboard/summary${onDate ? `?date=${onDate}` : ''}`);
+}
+
+export interface ApiSalesTrendPoint {
+  date: string;
+  revenue: number;
+  order_count: number;
+}
+
+export interface ApiSalesTrend {
+  date_from: string;
+  date_to: string;
+  points: ApiSalesTrendPoint[];
+  total_revenue: number;
+  total_orders: number;
+}
+
+export function fetchSalesTrend(params?: { date_from?: string; date_to?: string }): Promise<ApiSalesTrend> {
+  const qs = new URLSearchParams();
+  if (params?.date_from) qs.set('date_from', params.date_from);
+  if (params?.date_to) qs.set('date_to', params.date_to);
+  const query = qs.toString();
+  return request(`/analytics/sales-trend${query ? `?${query}` : ''}`);
+}
+
+export interface ApiTopProductRow {
+  product_id: string;
+  product_name: string;
+  quantity_sold: number;
+  revenue: number;
+}
+
+export interface ApiTopProducts {
+  date_from: string;
+  date_to: string;
+  products: ApiTopProductRow[];
+}
+
+export function fetchTopProducts(params?: { date_from?: string; date_to?: string; limit?: number }): Promise<ApiTopProducts> {
+  const qs = new URLSearchParams();
+  if (params?.date_from) qs.set('date_from', params.date_from);
+  if (params?.date_to) qs.set('date_to', params.date_to);
+  if (params?.limit) qs.set('limit', String(params.limit));
+  const query = qs.toString();
+  return request(`/analytics/top-products${query ? `?${query}` : ''}`);
+}

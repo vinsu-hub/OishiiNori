@@ -15,6 +15,8 @@ import {
   Wallet,
   CalendarDays,
   Percent,
+  LayoutDashboard,
+  TrendingUp,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -36,6 +38,7 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
 
   const deptConfig = user.department ? DEPARTMENT_CONFIG[user.department] : { name: 'Oishii Nori', color: '#D42A2A' };
   const isManagerOrExecutive = user.role === 'manager' || user.role === 'executive';
+  const isExecutive = user.role === 'executive';
 
   const navItems = [
     { icon: ShoppingCart, label: 'POS Terminal', href: '/pos' },
@@ -53,6 +56,12 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
           { icon: Wallet, label: 'Payroll', href: '/hr/payroll' },
           { icon: CalendarDays, label: 'Holiday Calendar', href: '/hr/holiday-calendar' },
           { icon: Wallet, label: 'Payroll Settings', href: '/hr/payroll-settings' },
+        ]
+      : []),
+    ...(isExecutive
+      ? [
+          { icon: LayoutDashboard, label: 'Command Center', href: '/command-center' },
+          { icon: TrendingUp, label: 'Trend Analysis', href: '/trends' },
         ]
       : []),
     { icon: Settings, label: 'Settings', href: '/settings' },
