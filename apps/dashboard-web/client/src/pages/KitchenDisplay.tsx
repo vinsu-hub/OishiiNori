@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Progress } from '@/components/ui/progress';
+import { Volume2, VolumeX } from 'lucide-react';
 import { BundleFulfillmentChecklist } from '@/components/kitchen/BundleFulfillmentChecklist';
 import {
   ApiDigitalOrder,
@@ -23,6 +24,7 @@ import {
 import { POLL_INTERVAL_MS } from '@/lib/constants';
 import { buildDigitalOrderLookup } from '@/lib/digitalOrderLookup';
 import { DigitalOrderInfo } from '@/components/shared/DigitalOrderInfo';
+import { playNewOrderBeep } from '@/lib/orderSounds';
 
 const KITCHEN_STATUSES: KitchenStatus[] = ['queued', 'preparing', 'ready', 'completed'];
 
@@ -99,6 +101,8 @@ export default function KitchenDisplay() {
   const [checklistTarget, setChecklistTarget] = useState<ChecklistTarget | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
+  const [soundOn, setSoundOn] = useState(true);
+  const seenQueuedIdsRef = useRef<Set<string> | null>(null);
 
   // Separate 1s tick (elapsed-time labels/progress bars) from the 20s data
   // poll -- ticking doesn't need a network round trip.
@@ -126,10 +130,21 @@ export default function KitchenDisplay() {
           }
           return next;
         });
+
+        // Chime on any order newly seen in "queued" -- skip entirely on the
+        // very first load (ref starts null) so opening the page doesn't
+        // chime for every already-queued order.
+        const queuedIds = new Set(t.filter((tx) => tx.kitchen_status === 'queued').map((tx) => tx.id));
+        if (seenQueuedIdsRef.current) {
+          const isNew = Array.from(queuedIds).some((id) => !seenQueuedIdsRef.current!.has(id));
+          if (isNew && soundOn) playNewOrderBeep();
+        }
+        seenQueuedIdsRef.current = queuedIds;
       })
       .catch((e) => toast.error(`Failed to load kitchen display: ${e instanceof Error ? e.message : 'Unknown error'}`))
       .finally(() => setLoading(false));
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [soundOn]);
 
   useEffect(() => {
     load();
@@ -250,6 +265,16 @@ export default function KitchenDisplay() {
               ))}
             </SelectContent>
           </Select>
+          <Button
+            size="icon"
+            variant="outline"
+            className="ml-2"
+            onClick={() => setSoundOn((v) => !v)}
+            aria-label={soundOn ? 'Mute new-order sound' : 'Unmute new-order sound'}
+            title={soundOn ? 'Mute new-order sound' : 'Unmute new-order sound'}
+          >
+            {soundOn ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+          </Button>
         </div>
 
         <div className="grid grid-cols-3 gap-3">

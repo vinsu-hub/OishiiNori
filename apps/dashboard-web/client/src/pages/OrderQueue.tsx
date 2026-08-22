@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { Card, CardContent } from '@/components/ui/card';
@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Volume2, VolumeX } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -28,6 +29,7 @@ import { formatCurrency } from '@/lib/utils';
 import { POLL_INTERVAL_MS } from '@/lib/constants';
 import { buildDigitalOrderLookup } from '@/lib/digitalOrderLookup';
 import { DigitalOrderInfo } from '@/components/shared/DigitalOrderInfo';
+import { playOrderReadyBeep } from '@/lib/orderSounds';
 
 type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline' | 'gold';
 
@@ -75,6 +77,8 @@ export default function OrderQueue() {
   const [dateFilter, setDateFilter] = useState(todayIso());
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
   const [page, setPage] = useState(1);
+  const [soundOn, setSoundOn] = useState(true);
+  const seenReadyIdsRef = useRef<Set<string> | null>(null);
 
   useEffect(() => {
     fetchProducts(true)
@@ -93,11 +97,21 @@ export default function OrderQueue() {
       .then(([data, digitalOrders]) => {
         setTransactions(data);
         setDigitalOrderLookup(buildDigitalOrderLookup(digitalOrders));
+
+        // Chime on any order newly seen in "ready" -- skip the very first
+        // load (ref starts null) so opening the page doesn't chime for
+        // every already-ready order.
+        const readyIds = new Set(data.filter((t) => t.kitchen_status === 'ready').map((t) => t.id));
+        if (seenReadyIdsRef.current) {
+          const isNew = Array.from(readyIds).some((id) => !seenReadyIdsRef.current!.has(id));
+          if (isNew && soundOn) playOrderReadyBeep();
+        }
+        seenReadyIdsRef.current = readyIds;
       })
       .catch((e) => toast.error(`Failed to load orders: ${e instanceof Error ? e.message : 'Unknown error'}`))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateFilter, statusFilter]);
+  }, [dateFilter, statusFilter, soundOn]);
 
   useEffect(() => {
     load();
@@ -208,6 +222,15 @@ export default function OrderQueue() {
               </SelectContent>
             </Select>
           </div>
+          <Button
+            size="icon"
+            variant="outline"
+            onClick={() => setSoundOn((v) => !v)}
+            aria-label={soundOn ? 'Mute order-ready sound' : 'Unmute order-ready sound'}
+            title={soundOn ? 'Mute order-ready sound' : 'Unmute order-ready sound'}
+          >
+            {soundOn ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+          </Button>
         </div>
 
         {loading && <p className="text-sm text-muted-foreground">Loading orders...</p>}
