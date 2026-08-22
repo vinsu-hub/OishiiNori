@@ -57,6 +57,12 @@ function loadFavorites(): Set<string> {
   }
 }
 
+// "You might also like" -- the drinks/dessert and light-side categories in
+// this catalog, the closest analog to SMFC's Sides/Drinks/Desserts upsell
+// rail. Confirmed against live product data rather than guessed (this
+// catalog's category strings aren't enumerable from static code).
+const UPSELL_CATEGORIES = ['Cafe (16oz Iced)', 'Oishii Salad'];
+
 export default function POSTerminal() {
   const { user } = useAuth();
   const [products, setProducts] = useState<ApiProduct[]>([]);
@@ -114,6 +120,18 @@ export default function POSTerminal() {
     () => cart.reduce((sum, line) => sum + line.size.price * line.quantity, 0),
     [cart]
   );
+
+  const upsellItems = useMemo(() => {
+    const cartProductIds = new Set(cart.map((l) => l.product.id));
+    return products
+      .filter(
+        (p) =>
+          UPSELL_CATEGORIES.includes(p.category) &&
+          !cartProductIds.has(p.id) &&
+          p.sizes.some((s) => s.availability !== 'unavailable')
+      )
+      .slice(0, 6);
+  }, [products, cart]);
   // Preview only -- the backend recomputes discount_amount/tax_amount
   // server-side from the live discount_type row; these numbers are for
   // display before charging, never sent as-is to the API.
@@ -358,6 +376,27 @@ export default function POSTerminal() {
                   </Card>
                 );
               })}
+            </div>
+          )}
+
+          {!loading && upsellItems.length > 0 && (
+            <div className="mt-4">
+              <p className="text-sm font-medium text-muted-foreground mb-2">You might also like</p>
+              <div className="flex gap-2 overflow-x-auto pb-2">
+                {upsellItems.map((product) => {
+                  const cheapest = [...product.sizes].sort((a, b) => a.price - b.price)[0];
+                  return (
+                    <button
+                      key={product.id}
+                      className="shrink-0 w-32 text-left border rounded-md p-2 hover:border-primary transition"
+                      onClick={() => handleProductClick(product)}
+                    >
+                      <p className="text-xs font-medium truncate">{product.name}</p>
+                      {cheapest && <p className="text-xs text-muted-foreground">{formatCurrency(cheapest.price)}</p>}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
