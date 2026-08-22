@@ -20,10 +20,13 @@ router = APIRouter(tags=["oishi-ai"])
 # Groq (OpenAI-compatible endpoint) -- switched from xAI/Grok since that
 # account had no billing set up. llama-3.3-70b-versatile (the model the
 # SMFC reference's Malaya AI uses) has since been retired from Groq's
-# lineup; openai/gpt-oss-120b is the current largest general-purpose
-# instruction model available there, confirmed live to return clean JSON
-# under response_format=json_object.
-GROQ_MODEL = "openai/gpt-oss-120b"
+# lineup. The free/on-demand tier's 8000 TPM cap is per-organization,
+# not per-model, so model size doesn't buy headroom directly -- but the
+# smaller openai/gpt-oss-20b (vs. -120b) still answers this app's
+# grounded-JSON-lookup task perfectly well and leaves more margin for
+# the ~6-7k token context payload (see _inventory_analysis's comment on
+# why all_ingredients was trimmed down to fit under this cap).
+GROQ_MODEL = "openai/gpt-oss-20b"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
 SYSTEM_PROMPT = """You are Oishii AI, the AI business analyst for Oishii Nori,
@@ -76,7 +79,7 @@ don't guess from the wrong one:
   total_payroll_cost, total_hours, employee_count. Use
   top_overtime_holiday_driver for "who's costing the most in OT/holiday
   pay this period" questions.
-- payroll_history: up to the last 12 generated payroll runs (period_start,
+- payroll_history: up to the last 8 generated payroll runs (period_start,
   period_end, total_pay, total_hours, employee_count, created_at), most
   recent first -- use for "how much did we spend on payroll last
   month/period" or any historical/period-over-period payroll question that
@@ -94,11 +97,13 @@ don't guess from the wrong one:
   totals for those windows -- use for "how are we doing this month",
   "total revenue all-time", or any non-daily revenue-window question
   sales_trend_30d's daily granularity isn't suited for.
-- inventory_analysis.all_ingredients: every ingredient's category, unit,
-  current_stock, reorder_threshold, needs_review -- use this for "what's
-  my current stock of X" for ANY ingredient, not just ones running low.
-  There is no cost/valuation figure for inventory in this data -- don't
-  invent one.
+- inventory_analysis.all_ingredients: every ingredient's category and
+  current stock (as a "quantity unit" string, e.g. "500 g") -- use this
+  for "what's my current stock of X" for ANY ingredient, not just ones
+  running low. It does not carry reorder_threshold or needs_review --
+  those are only on low_stock_items (for the ingredients that are
+  actually low) and needs_review_count (aggregate only). There is no
+  cost/valuation figure for inventory in this data -- don't invent one.
 - inventory_analysis.low_stock_items / low_stock_count: ingredients at or
   below their reorder threshold, worst shortage first, capped at 15 rows
   (low_stock_count is the true total even if the list is capped) -- use
@@ -106,7 +111,7 @@ don't guess from the wrong one:
 - inventory_analysis.by_category / total_ingredient_count /
   needs_review_count: use for "how many ingredients do we stock", "what
   needs review", or category-breakdown questions.
-- recent_inventory_movements: last 15 stock movements (delivery, transfer,
+- recent_inventory_movements: last 8 stock movements (delivery, transfer,
   count adjustment, etc.) with ingredient, quantity, reason, employee, and
   when -- use for "what was just received/adjusted" questions.
 - discount_types: currently active discounts (name, percentage,
@@ -139,7 +144,7 @@ def _employee_roster(supabase) -> list[dict]:
     return result.data
 
 
-def _payroll_history(limit: int = 12) -> list[dict]:
+def _payroll_history(limit: int = 8) -> list[dict]:
     result = (
         hr_table("payroll_records")
         .select("period_start, period_end, total_hours, total_pay, employee_count, created_at")
@@ -150,7 +155,7 @@ def _payroll_history(limit: int = 12) -> list[dict]:
     return result.data
 
 
-def _recent_inventory_movements(supabase, limit: int = 15) -> list[dict]:
+def _recent_inventory_movements(supabase, limit: int = 8) -> list[dict]:
     result = (
         supabase.table("inventory_movements")
         .select("ingredient_id, type, quantity, reason, employee_id, created_at")
@@ -378,15 +383,13 @@ def _inventory_analysis(supabase, low_stock_limit: int = 15) -> dict:
             }
             for r in low_stock[:low_stock_limit]
         ],
+        # Deliberately terse (3 fields, not the 6 low_stock_items carries) --
+        # this list alone was over half the total context payload at full
+        # width (73 rows), which pushed requests over Groq's free-tier
+        # 8000 TPM cap. reorder_threshold/needs_review stay available via
+        # low_stock_items / needs_review_count for the rows that need them.
         "all_ingredients": [
-            {
-                "ingredient": r["name"],
-                "category": r.get("category"),
-                "unit": r["base_unit"],
-                "current_stock": r["current_stock"],
-                "reorder_threshold": r["reorder_threshold"],
-                "needs_review": bool(r.get("needs_review")),
-            }
+            {"ingredient": r["name"], "category": r.get("category"), "stock": f"{r['current_stock']} {r['base_unit']}"}
             for r in rows
         ],
     }
