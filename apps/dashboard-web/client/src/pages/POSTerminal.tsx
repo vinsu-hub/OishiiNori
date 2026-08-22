@@ -47,6 +47,7 @@ interface HeldCart {
 }
 
 const FAVORITES_STORAGE_KEY = 'pos-favorite-products';
+const HELD_CARTS_STORAGE_KEY = 'pos-held-carts';
 
 function loadFavorites(): Set<string> {
   try {
@@ -55,6 +56,30 @@ function loadFavorites(): Set<string> {
   } catch {
     return new Set();
   }
+}
+
+// sessionStorage, not localStorage -- held orders are shift-scoped (should
+// survive ordinary in-app navigation, which was the actual bug: wouter
+// unmounts POSTerminal on route change, resetting plain component state),
+// not meant to persist indefinitely across days the way Favorites should.
+function loadHeldCarts(): HeldCart[] {
+  try {
+    const raw = sessionStorage.getItem(HELD_CARTS_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as HeldCart[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+// crypto.randomUUID() requires a secure context (HTTPS/localhost) -- this
+// app always runs over Vercel HTTPS, but a plain fallback costs nothing and
+// avoids a hard crash if that's ever not true (e.g. a local kiosk over
+// plain HTTP/LAN).
+function generateId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
 // "You might also like" -- the drinks/dessert and light-side categories in
@@ -83,9 +108,18 @@ export default function POSTerminal() {
   const [editSelections, setEditSelections] = useState<Record<string, Set<string>>>({});
   const [editLoading, setEditLoading] = useState(false);
 
-  const [heldCarts, setHeldCarts] = useState<HeldCart[]>([]);
+  const [heldCarts, setHeldCarts] = useState<HeldCart[]>(() => loadHeldCarts());
   const [favorites, setFavorites] = useState<Set<string>>(() => loadFavorites());
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(HELD_CARTS_STORAGE_KEY, JSON.stringify(heldCarts));
+    } catch {
+      // sessionStorage unavailable (private mode, etc.) -- held orders just
+      // won't survive navigation in that case, not worth surfacing an error.
+    }
+  }, [heldCarts]);
 
   useEffect(() => {
     Promise.all([fetchProducts(true), fetchDiscountTypes(true)])
@@ -156,12 +190,16 @@ export default function POSTerminal() {
       return;
     }
     setCart((prev) => {
-      const key = size.id;
-      const existing = prev.find((l) => l.key === key);
+      // Only merge into an existing line for this size when that line has
+      // no held ingredients -- a line with holds represents one customer's
+      // specific customization and shouldn't silently absorb a plain unit
+      // meant for someone else (e.g. a second, unrelated order of the same
+      // roll). A held line always gets its own new line instead.
+      const existing = prev.find((l) => l.size.id === size.id && l.held_ingredients.length === 0);
       if (existing) {
-        return prev.map((l) => (l.key === key ? { ...l, quantity: l.quantity + 1 } : l));
+        return prev.map((l) => (l.key === existing.key ? { ...l, quantity: l.quantity + 1 } : l));
       }
-      return [...prev, { key, product, size, quantity: 1, held_ingredients: [] }];
+      return [...prev, { key: generateId(), product, size, quantity: 1, held_ingredients: [] }];
     });
   }
 
@@ -245,14 +283,25 @@ export default function POSTerminal() {
       toast.error('Cart is empty');
       return;
     }
-    setHeldCarts((prev) => [...prev, { id: crypto.randomUUID(), heldAt: new Date().toISOString(), lines: cart }]);
+    setHeldCarts((prev) => [...prev, { id: generateId(), heldAt: new Date().toISOString(), lines: cart }]);
     clearOrder();
     toast.success('Order held');
   }
 
   function resumeHeldCart(held: HeldCart) {
+    // Don't silently discard an in-progress, not-yet-held cart -- auto-hold
+    // it first (same as pressing F4) so nothing is lost, then swap in the
+    // one being resumed.
+    if (cart.length > 0) {
+      setHeldCarts((prev) => [
+        ...prev.filter((h) => h.id !== held.id),
+        { id: generateId(), heldAt: new Date().toISOString(), lines: cart },
+      ]);
+      toast.info('Current order held automatically to avoid losing it');
+    } else {
+      setHeldCarts((prev) => prev.filter((h) => h.id !== held.id));
+    }
     setCart(held.lines);
-    setHeldCarts((prev) => prev.filter((h) => h.id !== held.id));
   }
 
   function toggleFavorite(productId: string) {
