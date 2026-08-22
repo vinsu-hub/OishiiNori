@@ -149,7 +149,14 @@ export default function OrderQueue() {
   }, [transactions, statusFilter, searchQuery, productNameById, sortOrder]);
 
   const totalPages = Math.max(1, Math.ceil(filteredTransactions.length / PAGE_SIZE));
-  const pageTransactions = filteredTransactions.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  // Clamp at read time rather than via a reconciling effect -- a poll can
+  // shrink the filtered result set (e.g. an order leaves "ready") without
+  // any of the filter/sort/search inputs changing, so the effect that
+  // resets `page` to 1 on those inputs never fires; reading a clamped
+  // value here means a stale `page` can never point past the real last
+  // page and strand the view on a blank slice.
+  const currentPage = Math.min(page, totalPages);
+  const pageTransactions = filteredTransactions.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   async function handleVoid() {
     if (!voidTarget) return;
@@ -205,6 +212,12 @@ export default function OrderQueue() {
           <div className="space-y-1">
             <label className="text-xs text-muted-foreground">Date</label>
             <Input type="date" value={dateFilter} onChange={(e) => setDateFilter(e.target.value)} className="w-40" />
+            {/* A cleared native date input silently switches the fetch to
+                unbounded/all-time -- unlike Status, which has an explicit
+                "All statuses" option, there's no way to select that scope
+                on purpose here, so make the resulting state visible rather
+                than a silent, unindicated change. */}
+            {!dateFilter && <p className="text-xs text-muted-foreground">Showing all dates</p>}
           </div>
           <div className="space-y-1">
             <label className="text-xs text-muted-foreground">Sort</label>
@@ -276,20 +289,20 @@ export default function OrderQueue() {
 
         {!loading && totalPages > 1 && (
           <div className="flex items-center justify-center gap-2 pt-2">
-            <Button size="sm" variant="outline" disabled={page === 1} onClick={() => setPage((p) => p - 1)}>
+            <Button size="sm" variant="outline" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>
               Prev
             </Button>
             {Array.from({ length: totalPages }, (_, i) => i + 1).map((n) => (
               <Button
                 key={n}
                 size="sm"
-                variant={n === page ? 'default' : 'outline'}
+                variant={n === currentPage ? 'default' : 'outline'}
                 onClick={() => setPage(n)}
               >
                 {n}
               </Button>
             ))}
-            <Button size="sm" variant="outline" disabled={page === totalPages} onClick={() => setPage((p) => p + 1)}>
+            <Button size="sm" variant="outline" disabled={currentPage === totalPages} onClick={() => setPage(currentPage + 1)}>
               Next
             </Button>
           </div>
