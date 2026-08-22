@@ -10,3 +10,17 @@ export const POLL_INTERVAL_MS = 20_000;
 // transactions.py's own VAT_RATE constant) and this must be kept in sync
 // with it by hand if that ever changes.
 export const VAT_RATE_PREVIEW = 0.12;
+
+// Matches the backend's ph_time.py: timestamps are stored/compared as true
+// UTC everywhere, but a "today"/date-range default needs to mean a
+// Philippines calendar day, not whatever the viewing device's local
+// timezone (or plain UTC, via Date.toISOString()) happens to be.
+const PH_UTC_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+export function todayIsoPH(): string {
+  return new Date(Date.now() + PH_UTC_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+export function daysAgoIsoPH(days: number): string {
+  return new Date(Date.now() + PH_UTC_OFFSET_MS - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}

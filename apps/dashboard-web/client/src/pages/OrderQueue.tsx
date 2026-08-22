@@ -26,7 +26,7 @@ import {
   voidTransaction,
 } from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
-import { POLL_INTERVAL_MS } from '@/lib/constants';
+import { POLL_INTERVAL_MS, todayIsoPH } from '@/lib/constants';
 import { buildDigitalOrderLookup } from '@/lib/digitalOrderLookup';
 import { DigitalOrderInfo } from '@/components/shared/DigitalOrderInfo';
 import { playOrderReadyBeep } from '@/lib/orderSounds';
@@ -59,10 +59,6 @@ const KITCHEN_STATUS_VALUES: KitchenStatus[] = ['queued', 'preparing', 'ready', 
 
 const PAGE_SIZE = 10;
 
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-
 export default function OrderQueue() {
   const [transactions, setTransactions] = useState<ApiTransaction[]>([]);
   const [products, setProducts] = useState<ApiProduct[]>([]);
@@ -74,7 +70,7 @@ export default function OrderQueue() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilterValue>('all');
-  const [dateFilter, setDateFilter] = useState(todayIso());
+  const [dateFilter, setDateFilter] = useState(todayIsoPH());
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
   const [page, setPage] = useState(1);
   const [soundOn, setSoundOn] = useState(true);

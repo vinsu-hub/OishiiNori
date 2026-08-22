@@ -1,10 +1,11 @@
 from collections import defaultdict
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Query
 
 from app.auth import CurrentUser, get_current_user, require_role
 from app.deps import get_supabase
+from app.ph_time import ph_day_bounds_utc
 from app.schemas import SalesTrendPoint, SalesTrendResponse, TopProductRow, TopProductsResponse
 
 router = APIRouter(tags=["analytics"])
@@ -13,9 +14,9 @@ DEFAULT_TREND_DAYS = 29  # 30-day window inclusive of today
 
 
 def _range_bounds(date_from: date, date_to: date) -> tuple[str, str]:
-    start = datetime.combine(date_from, datetime.min.time(), tzinfo=timezone.utc)
-    end = datetime.combine(date_to, datetime.max.time(), tzinfo=timezone.utc)
-    return start.isoformat(), end.isoformat()
+    start, _ = ph_day_bounds_utc(date_from)
+    _, end = ph_day_bounds_utc(date_to)
+    return start, end
 
 
 def _resolve_range(date_from: date | None, date_to: date | None) -> tuple[date, date]:

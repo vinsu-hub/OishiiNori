@@ -7,15 +7,12 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ApiDashboardSummary, fetchDashboardSummary } from '@/lib/api';
 import { DEPARTMENT_CONFIG } from '@/lib/types';
+import { todayIsoPH } from '@/lib/constants';
 
 // Polling, not websockets/Supabase realtime -- matches this app's established
 // pattern (OrderQueue.tsx/KitchenDisplay.tsx), even though the SMFC
 // reference's own Command Center uses Supabase Realtime.
 const POLL_INTERVAL_MS = 30_000;
-
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 export default function CommandCenter() {
   const { user } = useAuth();
@@ -23,7 +20,7 @@ export default function CommandCenter() {
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(() => {
-    fetchDashboardSummary(todayIso())
+    fetchDashboardSummary(todayIsoPH())
       .then(setSummary)
       .catch((e) => toast.error(`Failed to load Command Center: ${e.message}`))
       .finally(() => setLoading(false));

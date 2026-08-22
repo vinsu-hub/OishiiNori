@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import date, datetime, timezone
+from datetime import date
 
 from fastapi import APIRouter, Depends, Query
 from postgrest.exceptions import APIError
@@ -7,6 +7,7 @@ from postgrest.exceptions import APIError
 from app.attendance_utils import hr_table
 from app.auth import CurrentUser, get_current_user, require_role
 from app.deps import get_supabase
+from app.ph_time import ph_day_bounds_utc
 from app.schemas import (
     DashboardSummaryResponse,
     DepartmentBreakdown,
@@ -15,12 +16,6 @@ from app.schemas import (
 )
 
 router = APIRouter(tags=["dashboard"])
-
-
-def _day_bounds(on_date: date) -> tuple[str, str]:
-    start = datetime.combine(on_date, datetime.min.time(), tzinfo=timezone.utc)
-    end = datetime.combine(on_date, datetime.max.time(), tzinfo=timezone.utc)
-    return start.isoformat(), end.isoformat()
 
 
 @router.get("/dashboard/summary", response_model=DashboardSummaryResponse)
@@ -40,7 +35,7 @@ def get_dashboard_summary(
         on_date = date.today()
 
     supabase = get_supabase()
-    start, end = _day_bounds(on_date)
+    start, end = ph_day_bounds_utc(on_date)
 
     transactions_result = (
         supabase.table("transactions")

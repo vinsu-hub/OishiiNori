@@ -106,13 +106,23 @@ export default function POSTerminal() {
         e.preventDefault();
         handleHoldOrder();
       } else if (e.key === 'Escape') {
+        // Radix's dialog dismissal listens on `document` in the capture
+        // phase, which runs before an ordinary (bubble-phase) `window`
+        // listener would see this same keydown -- by the time a bubble
+        // listener ran, `ownerRequestOpen` etc. had already flipped to
+        // false, so the guard below was checking stale state and never
+        // actually blocked clearOrder(). Registering this listener on
+        // `window` in the capture phase too puts it earlier in the capture
+        // path (window is captured before document), so it runs first and
+        // still sees the real pre-close state.
+        if (sizePickerProduct || ownerRequestOpen || editOrderOpen) return;
         clearOrder();
       }
     }
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener('keydown', onKeyDown, { capture: true });
+    return () => window.removeEventListener('keydown', onKeyDown, { capture: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cart]);
+  }, [cart, sizePickerProduct, ownerRequestOpen, editOrderOpen]);
 
   const selectedDiscount = discountTypes.find((d) => d.id === discountTypeId) || null;
 

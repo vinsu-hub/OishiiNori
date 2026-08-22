@@ -9,12 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ChartConfig, ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { ApiSalesTrend, ApiTopProducts, fetchSalesTrend, fetchTopProducts } from '@/lib/api';
-
-function isoDaysAgo(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().slice(0, 10);
-}
+import { daysAgoIsoPH } from '@/lib/constants';
 
 const chartConfig: ChartConfig = {
   revenue: { label: 'Revenue', color: 'var(--primary)' },
@@ -22,8 +17,8 @@ const chartConfig: ChartConfig = {
 
 export default function TrendAnalysis() {
   const { user } = useAuth();
-  const [dateFrom, setDateFrom] = useState(isoDaysAgo(29));
-  const [dateTo, setDateTo] = useState(isoDaysAgo(0));
+  const [dateFrom, setDateFrom] = useState(daysAgoIsoPH(29));
+  const [dateTo, setDateTo] = useState(daysAgoIsoPH(0));
   const [trend, setTrend] = useState<ApiSalesTrend | null>(null);
   const [topProducts, setTopProducts] = useState<ApiTopProducts | null>(null);
   const [loading, setLoading] = useState(true);

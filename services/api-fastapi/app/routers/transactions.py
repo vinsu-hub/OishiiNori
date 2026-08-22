@@ -6,6 +6,7 @@ from postgrest.exceptions import APIError
 
 from app.auth import CurrentUser, get_current_user, require_role, verify_employee_pin
 from app.deps import get_supabase
+from app.ph_time import ph_day_bounds_utc
 from app.schemas import (
     BundleFulfillmentRequest,
     BundleFulfillmentResponse,
@@ -38,6 +39,7 @@ KITCHEN_STATUS_ORDER = ["queued", "preparing", "ready", "completed"]
 # deduction flow works either way.
 _kitchen_status_supported: bool | None = None
 _bundle_fulfillments_supported: bool | None = None
+_held_ingredients_supported: bool | None = None
 
 
 def _kitchen_status_supported_check(supabase) -> bool:
@@ -60,6 +62,21 @@ def _bundle_fulfillments_supported_check(supabase) -> bool:
         except APIError:
             _bundle_fulfillments_supported = False
     return _bundle_fulfillments_supported
+
+
+def _held_ingredients_supported_check(supabase) -> bool:
+    """Migration 0019 feature-detection, same pattern as the two checks
+    above -- this dev environment has a documented history of migration DDL
+    silently failing to apply (see 0014's handoff notes), so every column
+    added since is guarded rather than assumed present."""
+    global _held_ingredients_supported
+    if _held_ingredients_supported is None:
+        try:
+            supabase.table("transaction_items").select("held_ingredients").limit(1).execute()
+            _held_ingredients_supported = True
+        except APIError:
+            _held_ingredients_supported = False
+    return _held_ingredients_supported
 
 
 _MIGRATION_PENDING_DETAIL = (
@@ -213,21 +230,23 @@ def _create_transaction_row(
     transaction = transaction_insert.data[0]
     transaction_id = transaction["id"]
 
+    held_ingredients_supported = _held_ingredients_supported_check(supabase)
+
     subtotal = 0.0
     item_rows = []
     for item in items:
         size = sizes_by_id[item.product_size_id]
         unit_price = float(size["price"])
         subtotal += unit_price * item.quantity
-        item_rows.append(
-            {
-                "transaction_id": transaction_id,
-                "product_size_id": item.product_size_id,
-                "quantity": item.quantity,
-                "unit_price": unit_price,
-                "held_ingredients": item.held_ingredients,
-            }
-        )
+        row = {
+            "transaction_id": transaction_id,
+            "product_size_id": item.product_size_id,
+            "quantity": item.quantity,
+            "unit_price": unit_price,
+        }
+        if held_ingredients_supported:
+            row["held_ingredients"] = item.held_ingredients
+        item_rows.append(row)
 
     items_insert = supabase.table("transaction_items").insert(item_rows).execute()
 
@@ -303,9 +322,8 @@ def list_transactions(
     supabase = get_supabase()
     query = supabase.table("transactions").select("*")
     if on_date:
-        start = datetime.combine(on_date, datetime.min.time(), tzinfo=timezone.utc)
-        end = datetime.combine(on_date, datetime.max.time(), tzinfo=timezone.utc)
-        query = query.gte("opened_at", start.isoformat()).lte("opened_at", end.isoformat())
+        start, end = ph_day_bounds_utc(on_date)
+        query = query.gte("opened_at", start).lte("opened_at", end)
     if status_filter:
         query = query.eq("status", status_filter)
     transactions_result = query.order("opened_at", desc=True).execute()
