@@ -18,6 +18,7 @@ import {
   LayoutDashboard,
   TrendingUp,
   Sparkles,
+  Truck,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -47,6 +48,7 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
     { icon: QrCode, label: 'Pending Orders', href: '/pending-orders' },
     { icon: ChefHat, label: 'Kitchen Display', href: '/kitchen-display' },
     { icon: Package, label: 'Inventory Count', href: '/inventory-count' },
+    { icon: Truck, label: 'Receive Shipment', href: '/inventory-movements' },
     { icon: AlertCircle, label: 'Loss Log', href: '/loss-log' },
     { icon: Zap, label: 'Utility Log', href: '/utility-log' },
     ...(isManagerOrExecutive

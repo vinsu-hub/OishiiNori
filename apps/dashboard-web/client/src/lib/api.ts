@@ -331,6 +331,7 @@ export interface ApiIngredient {
   current_stock: number;
   reorder_threshold: number;
   needs_review: boolean;
+  unit_cost: number | null;
 }
 
 export function fetchInventory(): Promise<ApiIngredient[]> {
@@ -339,6 +340,18 @@ export function fetchInventory(): Promise<ApiIngredient[]> {
 
 export function fetchIngredient(id: string): Promise<ApiIngredient> {
   return request(`/inventory/${id}`);
+}
+
+export interface ApiExpiringIngredient {
+  ingredient_id: string;
+  ingredient_name: string;
+  base_unit: string;
+  expiry_date: string;
+  days_until_expiry: number;
+}
+
+export function fetchExpiringSoon(days = 7): Promise<ApiExpiringIngredient[]> {
+  return request(`/inventory/expiring-soon?days=${days}`);
 }
 
 export function countStock(
@@ -359,6 +372,7 @@ export interface CreateInventoryMovementRequest {
   reference_id?: string | null;
   employee_id: string;
   unit_cost_snapshot?: number | null;
+  expiry_date?: string | null;
 }
 
 export interface ApiInventoryMovement {
@@ -371,6 +385,7 @@ export interface ApiInventoryMovement {
   reference_id: string | null;
   employee_id: string;
   unit_cost_snapshot: number | null;
+  expiry_date: string | null;
   created_at: string;
 }
 

@@ -34,7 +34,13 @@ def create_inventory_movement(body: InventoryMovementCreate, user: CurrentUser =
     else:
         raise HTTPException(status_code=400, detail=f"Unknown movement type: {body.type}")
 
-    supabase.table("ingredients").update({"current_stock": new_stock}).eq("id", body.ingredient_id).execute()
+    ingredient_update = {"current_stock": new_stock}
+    # Most-recent-cost costing: a receiving movement with a supplied cost
+    # becomes the ingredient's new unit_cost. No weighted-average, no
+    # validation against a "real" cost -- just the latest known price.
+    if body.type in ("delivery", "trans_in") and body.unit_cost_snapshot is not None:
+        ingredient_update["unit_cost"] = body.unit_cost_snapshot
+    supabase.table("ingredients").update(ingredient_update).eq("id", body.ingredient_id).execute()
 
     insert_result = (
         supabase.table("inventory_movements")
@@ -48,6 +54,7 @@ def create_inventory_movement(body: InventoryMovementCreate, user: CurrentUser =
                 "reference_id": body.reference_id,
                 "employee_id": body.employee_id,
                 "unit_cost_snapshot": body.unit_cost_snapshot,
+                "expiry_date": body.expiry_date.isoformat() if body.expiry_date else None,
             }
         )
         .execute()

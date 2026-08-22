@@ -273,6 +273,18 @@ class IngredientOut(BaseModel):
     current_stock: float
     reorder_threshold: float
     needs_review: bool
+    # Most-recent-cost only (not weighted-average) -- set whenever a
+    # delivery/trans_in movement is logged with a unit_cost_snapshot. Null
+    # until the first such movement is ever logged for this ingredient.
+    unit_cost: float | None = None
+
+
+class ExpiringIngredient(BaseModel):
+    ingredient_id: str
+    ingredient_name: str
+    base_unit: str
+    expiry_date: date
+    days_until_expiry: int
 
 
 class InventoryCountRequest(BaseModel):
@@ -294,12 +306,14 @@ class InventoryMovementCreate(BaseModel):
     reason: str | None = None
     reference_id: str | None = None
     employee_id: str
-    # JUDGMENT CALL: unlike the SMFC reference, `ingredients` here has no
-    # unit_cost column (only a qualitative cost_volatility string), so there
-    # is no authoritative source to auto-snapshot a cost from. Caller may
-    # optionally supply one; it is stored as-is with no validation against
-    # any "real" cost.
+    # Caller-supplied cost for this specific movement. When set on a
+    # delivery/trans_in, it also becomes the ingredient's new unit_cost
+    # (see create_inventory_movement) -- most-recent-cost costing, no
+    # validation against any "real" cost.
     unit_cost_snapshot: float | None = None
+    # Advisory only -- batch-level expiry for this specific delivery, not
+    # enforced FIFO consumption (see 0021's migration comment).
+    expiry_date: date | None = None
 
 
 class InventoryMovementResponse(BaseModel):
@@ -312,6 +326,7 @@ class InventoryMovementResponse(BaseModel):
     reference_id: str | None = None
     employee_id: str
     unit_cost_snapshot: float | None = None
+    expiry_date: date | None = None
     created_at: datetime
 
 
@@ -354,11 +369,11 @@ class CreateLossRecordRequest(BaseModel):
     employee_id: str
     reason: LossReason
     quantity: float = Field(gt=0)
-    # JUDGMENT CALL: same unit-cost gap as InventoryMovementCreate above --
-    # ingredients has no unit_cost column, so cost_impact cannot be derived
-    # server-side the way SMFC's loss_records.py does. Caller supplies
-    # either unit_cost (multiplied by quantity) or cost_impact directly; if
-    # neither is given, cost_impact defaults to 0.
+    # Caller may override with an explicit unit_cost (multiplied by
+    # quantity) or cost_impact directly; if neither is given,
+    # create_loss_record falls back to the ingredient's own unit_cost
+    # (most-recent-cost from receiving), and only defaults to 0 if that's
+    # also unset.
     unit_cost: float | None = None
     cost_impact: float | None = None
     photo_url: str | None = None

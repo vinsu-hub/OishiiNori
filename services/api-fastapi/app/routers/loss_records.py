@@ -19,7 +19,11 @@ def create_loss_record(body: CreateLossRecordRequest, user: CurrentUser = Depend
     supabase = get_supabase()
 
     ingredient_result = (
-        supabase.table("ingredients").select("current_stock").eq("id", body.ingredient_id).maybe_single().execute()
+        supabase.table("ingredients")
+        .select("current_stock, unit_cost")
+        .eq("id", body.ingredient_id)
+        .maybe_single()
+        .execute()
     )
     if not ingredient_result or not ingredient_result.data:
         raise HTTPException(status_code=404, detail="Ingredient not found")
@@ -31,13 +35,17 @@ def create_loss_record(body: CreateLossRecordRequest, user: CurrentUser = Depend
         if not product_result or not product_result.data:
             raise HTTPException(status_code=404, detail="Product not found")
 
-    # See schemas.CreateLossRecordRequest for why cost_impact isn't derived
-    # from an ingredients.unit_cost column -- that column doesn't exist in
-    # this schema.
+    # Falls back to the ingredient's most-recent-cost (see
+    # inventory_movements.py) when the caller supplies neither -- this is
+    # what the Inventory Count shrinkage-dialog flow hits, since it never
+    # asks for a cost, so shrinkage/spoilage gets a real cost_impact
+    # instead of silently recording ₱0 whenever a cost is known.
     if body.cost_impact is not None:
         cost_impact = round(body.cost_impact, 2)
     elif body.unit_cost is not None:
         cost_impact = round(body.unit_cost * body.quantity, 2)
+    elif ingredient_result.data.get("unit_cost") is not None:
+        cost_impact = round(float(ingredient_result.data["unit_cost"]) * body.quantity, 2)
     else:
         cost_impact = 0.0
 

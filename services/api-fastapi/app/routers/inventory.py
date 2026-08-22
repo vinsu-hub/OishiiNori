@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import date, timedelta
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.auth import CurrentUser, get_current_user
 from app.deps import get_supabase
-from app.schemas import IngredientOut, InventoryCountRequest, InventoryCountResponse
+from app.schemas import ExpiringIngredient, IngredientOut, InventoryCountRequest, InventoryCountResponse
 
 router = APIRouter(tags=["inventory"])
 
@@ -12,6 +14,59 @@ def list_inventory(user: CurrentUser = Depends(get_current_user)):
     supabase = get_supabase()
     result = supabase.table("ingredients").select("*").order("name").execute()
     return result.data
+
+
+@router.get("/inventory/expiring-soon", response_model=list[ExpiringIngredient])
+def list_expiring_soon(days: int = Query(7, ge=1, le=90), user: CurrentUser = Depends(get_current_user)):
+    """Advisory, not exact FIFO tracking: for each ingredient, look at its
+    single most recent delivery/trans_in movement that has an expiry_date,
+    and flag it if that date falls within the next `days` days. This
+    schema has no per-batch remaining-quantity tracking, only a running
+    current_stock total, so this can't know whether that specific batch
+    has already been fully consumed -- it's a heads-up, not a guarantee.
+    """
+    supabase = get_supabase()
+    horizon = date.today() + timedelta(days=days)
+
+    movements_result = (
+        supabase.table("inventory_movements")
+        .select("ingredient_id, expiry_date, created_at")
+        .in_("type", ["delivery", "trans_in"])
+        .not_.is_("expiry_date", "null")
+        .order("created_at", desc=True)
+        .execute()
+    )
+
+    latest_expiry_by_ingredient: dict[str, str] = {}
+    for m in movements_result.data:
+        # First row seen per ingredient is the most recent (already
+        # ordered desc), so only take it the first time.
+        latest_expiry_by_ingredient.setdefault(m["ingredient_id"], m["expiry_date"])
+
+    upcoming = {
+        ing_id: expiry
+        for ing_id, expiry in latest_expiry_by_ingredient.items()
+        if date.fromisoformat(expiry) <= horizon
+    }
+    if not upcoming:
+        return []
+
+    ingredients_result = (
+        supabase.table("ingredients").select("id, name, base_unit").in_("id", list(upcoming.keys())).execute()
+    )
+    today = date.today()
+    rows = [
+        ExpiringIngredient(
+            ingredient_id=i["id"],
+            ingredient_name=i["name"],
+            base_unit=i["base_unit"],
+            expiry_date=upcoming[i["id"]],
+            days_until_expiry=(date.fromisoformat(upcoming[i["id"]]) - today).days,
+        )
+        for i in ingredients_result.data
+    ]
+    rows.sort(key=lambda r: r.days_until_expiry)
+    return rows
 
 
 @router.get("/inventory/{ingredient_id}", response_model=IngredientOut)

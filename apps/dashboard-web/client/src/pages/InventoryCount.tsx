@@ -15,13 +15,22 @@ import {
   ChevronDown,
   ChevronUp,
   ChevronsUpDown,
+  Clock,
   HelpCircle,
   Loader2,
   Package,
   TrendingDown,
   TrendingUp,
 } from 'lucide-react';
-import { ApiIngredient, LossReason, countStock, createLossRecord, fetchInventory } from '@/lib/api';
+import {
+  ApiExpiringIngredient,
+  ApiIngredient,
+  LossReason,
+  countStock,
+  createLossRecord,
+  fetchExpiringSoon,
+  fetchInventory,
+} from '@/lib/api';
 
 type ItemStatus = 'pending' | 'counted' | 'overage' | 'shortage';
 type SortKey = 'name' | 'category' | 'expected' | 'variance' | 'status';
@@ -65,6 +74,7 @@ export default function InventoryCount() {
   const [howItWorksOpen, setHowItWorksOpen] = useState(true);
   const [sortKey, setSortKey] = useState<SortKey>('name');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
+  const [expiringSoon, setExpiringSoon] = useState<ApiExpiringIngredient[]>([]);
 
   function handleSort(key: SortKey) {
     if (key === sortKey) {
@@ -86,6 +96,9 @@ export default function InventoryCount() {
       .then((data) => setIngredients([...data].sort((a, b) => a.name.localeCompare(b.name))))
       .catch(() => toast.error('Could not load inventory. Check your connection.'))
       .finally(() => setLoading(false));
+    fetchExpiringSoon().then(setExpiringSoon).catch(() => {
+      // Non-critical -- the rest of the page still works without it.
+    });
   }, []);
 
   useEffect(() => {
@@ -259,7 +272,7 @@ export default function InventoryCount() {
     <DashboardLayout title="Inventory Count">
       <div className="p-6 space-y-6">
         {/* Progress Summary */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Card className="border-l-4 border-l-success">
             <CardContent className="p-4">
               <p className="text-sm text-muted-foreground mb-1">Items Counted</p>
@@ -284,7 +297,53 @@ export default function InventoryCount() {
               <p className="text-xs text-muted-foreground mt-2">Items with &gt;5% difference</p>
             </CardContent>
           </Card>
+
+          <Card className="border-l-4 border-l-destructive">
+            <CardContent className="p-4">
+              <p className="text-sm text-muted-foreground mb-1">Expiring Soon</p>
+              <p className="text-3xl font-bold text-destructive">{expiringSoon.length}</p>
+              {expiringSoon.length > 0 ? (
+                <p className="text-xs text-muted-foreground mt-2 truncate">
+                  {expiringSoon[0].ingredient_name} in {expiringSoon[0].days_until_expiry}d
+                  {expiringSoon.length > 1 ? ` +${expiringSoon.length - 1} more` : ''}
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground mt-2">None within 7 days (advisory only)</p>
+              )}
+            </CardContent>
+          </Card>
         </div>
+
+        {/* Expiring Soon detail */}
+        {expiringSoon.length > 0 && (
+          <Card className="border-l-4 border-l-destructive bg-error-bg">
+            <CardHeader>
+              <CardTitle className="text-destructive flex items-center gap-2">
+                <Clock className="w-4 h-4" />
+                Expiring Soon
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-xs text-muted-foreground mb-3">
+                Based on each ingredient's most recent delivery date -- advisory only, not exact remaining-batch
+                tracking.
+              </p>
+              <div className="space-y-2">
+                {expiringSoon.map((item) => (
+                  <div
+                    key={item.ingredient_id}
+                    className="flex justify-between items-center p-3 bg-card rounded-md border border-border"
+                  >
+                    <p className="font-semibold text-foreground">{item.ingredient_name}</p>
+                    <Badge variant="destructive" className="text-xs">
+                      {item.days_until_expiry <= 0 ? 'Expired' : `${item.days_until_expiry}d left`} -- {item.expiry_date}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* How It Works */}
         <Collapsible open={howItWorksOpen} onOpenChange={setHowItWorksOpen}>
