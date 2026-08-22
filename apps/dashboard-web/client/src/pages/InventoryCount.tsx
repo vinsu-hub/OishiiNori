@@ -10,10 +10,24 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { CheckCircle, ChevronDown, HelpCircle, Loader2, Package, TrendingDown, TrendingUp } from 'lucide-react';
+import {
+  CheckCircle,
+  ChevronDown,
+  ChevronUp,
+  ChevronsUpDown,
+  HelpCircle,
+  Loader2,
+  Package,
+  TrendingDown,
+  TrendingUp,
+} from 'lucide-react';
 import { ApiIngredient, LossReason, countStock, createLossRecord, fetchInventory } from '@/lib/api';
 
 type ItemStatus = 'pending' | 'counted' | 'overage' | 'shortage';
+type SortKey = 'name' | 'category' | 'expected' | 'variance' | 'status';
+type SortDir = 'asc' | 'desc';
+
+const STATUS_RANK: Record<ItemStatus, number> = { pending: 0, counted: 1, overage: 2, shortage: 3 };
 
 const SHRINKAGE_REASONS: { value: LossReason; label: string }[] = [
   { value: 'shrinkage', label: 'Shrinkage (unexplained)' },
@@ -49,6 +63,22 @@ export default function InventoryCount() {
   const [shrinkageItems, setShrinkageItems] = useState<ShrinkageItem[]>([]);
   const [loggingId, setLoggingId] = useState<string | null>(null);
   const [howItWorksOpen, setHowItWorksOpen] = useState(true);
+  const [sortKey, setSortKey] = useState<SortKey>('name');
+  const [sortDir, setSortDir] = useState<SortDir>('asc');
+
+  function handleSort(key: SortKey) {
+    if (key === sortKey) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  }
+
+  function SortIcon({ column }: { column: SortKey }) {
+    if (column !== sortKey) return <ChevronsUpDown className="w-3.5 h-3.5 text-muted-foreground/40" />;
+    return sortDir === 'asc' ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />;
+  }
 
   const loadInventory = useCallback(() => {
     setLoading(true);
@@ -190,6 +220,41 @@ export default function InventoryCount() {
   const countedItems = rows.filter((r) => r.counted !== null).length;
   const varianceItems = rows.filter((r) => r.status === 'overage' || r.status === 'shortage').length;
 
+  function compareRows(a: (typeof rows)[number], b: (typeof rows)[number]): number {
+    switch (sortKey) {
+      case 'name':
+        return sortDir === 'asc'
+          ? a.ingredient.name.localeCompare(b.ingredient.name)
+          : b.ingredient.name.localeCompare(a.ingredient.name);
+      case 'category': {
+        const ac = a.ingredient.category;
+        const bc = b.ingredient.category;
+        if (ac === null && bc === null) return 0;
+        if (ac === null) return 1; // uncategorized always sorts last
+        if (bc === null) return -1;
+        return sortDir === 'asc' ? ac.localeCompare(bc) : bc.localeCompare(ac);
+      }
+      case 'expected':
+        return sortDir === 'asc'
+          ? a.ingredient.current_stock - b.ingredient.current_stock
+          : b.ingredient.current_stock - a.ingredient.current_stock;
+      case 'variance': {
+        if (a.variance === null && b.variance === null) return 0;
+        if (a.variance === null) return 1; // not-yet-counted always sorts last
+        if (b.variance === null) return -1;
+        return sortDir === 'asc' ? a.variance - b.variance : b.variance - a.variance;
+      }
+      case 'status':
+        return sortDir === 'asc'
+          ? STATUS_RANK[a.status] - STATUS_RANK[b.status]
+          : STATUS_RANK[b.status] - STATUS_RANK[a.status];
+      default:
+        return 0;
+    }
+  }
+
+  const sortedRows = [...rows].sort(compareRows);
+
   return (
     <DashboardLayout title="Inventory Count">
       <div className="p-6 space-y-6">
@@ -312,16 +377,36 @@ export default function InventoryCount() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Item</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead className="text-right">Expected</TableHead>
+                    <TableHead className="cursor-pointer select-none" onClick={() => handleSort('name')}>
+                      <span className="inline-flex items-center gap-1">
+                        Item <SortIcon column="name" />
+                      </span>
+                    </TableHead>
+                    <TableHead className="cursor-pointer select-none" onClick={() => handleSort('category')}>
+                      <span className="inline-flex items-center gap-1">
+                        Category <SortIcon column="category" />
+                      </span>
+                    </TableHead>
+                    <TableHead className="text-right cursor-pointer select-none" onClick={() => handleSort('expected')}>
+                      <span className="inline-flex items-center gap-1 justify-end">
+                        Expected <SortIcon column="expected" />
+                      </span>
+                    </TableHead>
                     <TableHead className="text-right">Counted</TableHead>
-                    <TableHead className="text-right">Variance</TableHead>
-                    <TableHead className="text-center">Status</TableHead>
+                    <TableHead className="text-right cursor-pointer select-none" onClick={() => handleSort('variance')}>
+                      <span className="inline-flex items-center gap-1 justify-end">
+                        Variance <SortIcon column="variance" />
+                      </span>
+                    </TableHead>
+                    <TableHead className="text-center cursor-pointer select-none" onClick={() => handleSort('status')}>
+                      <span className="inline-flex items-center gap-1 justify-center">
+                        Status <SortIcon column="status" />
+                      </span>
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {rows.map(({ ingredient, counted, variance, variancePercent, status }) => (
+                  {sortedRows.map(({ ingredient, counted, variance, variancePercent, status }) => (
                     <TableRow key={ingredient.id}>
                       <TableCell className="font-medium">{ingredient.name}</TableCell>
                       <TableCell className="text-muted-foreground">{ingredient.category || '--'}</TableCell>
@@ -375,7 +460,7 @@ export default function InventoryCount() {
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                {rows
+                {sortedRows
                   .filter((r) => r.status === 'overage' || r.status === 'shortage')
                   .map(({ ingredient, counted, variancePercent, status }) => (
                     <div
