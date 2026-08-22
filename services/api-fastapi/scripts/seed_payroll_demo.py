@@ -55,6 +55,15 @@ API_BASE = os.environ.get("QA_API_BASE", "http://localhost:8000")
 PERIOD_START = date(2026, 6, 1)
 PERIOD_END = date(2026, 6, 15)
 
+# A second, separate demo: one employee with a FULL calendar month of
+# attendance (as opposed to the semimonthly period above), to demo
+# generating payroll over a full-month period specifically. July has no
+# seeded 2026 holiday, so this is deliberately the "plain month, mostly
+# regular days plus a little overtime" case -- a different flavor of demo
+# than the June period's scenario variety.
+MONTH_PERIOD_START = date(2026, 7, 1)
+MONTH_PERIOD_END = date(2026, 7, 31)
+
 admin = create_client(SUPABASE_URL, SUPABASE_SECRET_KEY)
 
 
@@ -137,6 +146,16 @@ EMPLOYEES = [
 ]
 
 
+# Full-month demo employee (separate from the June semimonthly roster above).
+MONTH_EMPLOYEE = {
+    "full_name": "Liza Fernandez",
+    "role": "employee",
+    "department": "cafe",
+    "position": "Waitstaff",
+    "pay_rate": 82.0,
+}
+
+
 def ensure_employee(spec: dict, exec_headers: dict) -> str:
     email_guess = spec["full_name"].lower().replace(" ", ".") + "@oishiinori.com"
     existing = admin.table("profiles").select("id, full_name").eq("full_name", spec["full_name"]).maybe_single().execute()
@@ -206,6 +225,78 @@ def build_attendance_rows(employee_id: str, spec: dict) -> list[dict]:
     return rows
 
 
+def build_full_month_attendance_rows(
+    employee_id: str, year: int, month: int, overtime_days: set[int] | None = None
+) -> list[dict]:
+    """Regular 8h shifts (09:00-17:00 PH) on every weekday of the given
+    month, skipping Sat/Sun -- computed from the real calendar via
+    date.weekday() rather than a hand-picked day list, to avoid the kind
+    of "forgot to include one day" mistake a manual list invites."""
+    overtime_days = overtime_days or set()
+    rows = []
+    day = 1
+    while True:
+        try:
+            d = date(year, month, day)
+        except ValueError:
+            break  # ran past the end of the month
+        if d.weekday() < 5:  # Monday=0 .. Friday=4
+            h = 10 if day in overtime_days else 8
+            clock_in = ph_dt(year, month, day, 9, 0)
+            clock_out = clock_in + timedelta(hours=h)
+            breakdown = compute_attendance_breakdown(clock_in, clock_out, False)
+            rows.append(
+                {
+                    "employee_id": employee_id,
+                    "kiosk_id": None,
+                    "clock_in": clock_in.isoformat(),
+                    "clock_out": clock_out.isoformat(),
+                    "date": d.isoformat(),
+                    "is_rest_day": False,
+                    "status": "completed",
+                    "auto_closed": False,
+                    **breakdown,
+                }
+            )
+        day += 1
+    return rows
+
+
+def generate_payroll(exec_headers: dict, period_start: date, period_end: date) -> dict:
+    """POST /payroll has no upsert -- it always inserts a new record, so a
+    rerun would otherwise leave a stale duplicate (with the previous run's
+    numbers) sitting in HRPayroll.tsx's History tab alongside the fresh
+    one. No DELETE /payroll/{id} endpoint exists either, so removing a
+    prior record for the same period goes direct via the service-role
+    client, same as the attendance rows."""
+    existing_records = requests.get(f"{API_BASE}/payroll?limit=50", headers=exec_headers).json()
+    stale = [
+        r for r in existing_records
+        if r["period_start"] == period_start.isoformat() and r["period_end"] == period_end.isoformat()
+    ]
+    for rec in stale:
+        admin.schema("hr").table("payroll_items").delete().eq("payroll_record_id", rec["id"]).execute()
+        admin.schema("hr").table("payroll_records").delete().eq("id", rec["id"]).execute()
+        print(f"  removed stale payroll record for this period (id={rec['id']}) before regenerating")
+
+    gen_resp = requests.post(
+        f"{API_BASE}/payroll",
+        json={"period_start": period_start.isoformat(), "period_end": period_end.isoformat()},
+        headers=exec_headers,
+    )
+    gen_resp.raise_for_status()
+    record = gen_resp.json()
+    print(f"  payroll record generated: id={record['id']}")
+    print(f"  total_hours={record['total_hours']}  total_pay=₱{record['total_pay']:.2f}  employee_count={record['employee_count']}")
+    for item in record["items"]:
+        print(
+            f"    {item['employee_name']:<20} {item['hours_worked']:>6.2f}h  "
+            f"reg={item['regular_hours']:.1f} ot={item['overtime_hours']:.1f} nd={item['night_diff_hours']:.1f}  "
+            f"-> ₱{item['total_pay']:.2f}"
+        )
+    return record
+
+
 def main():
     print(f"== Oishii Nori payroll demo seed -- API base: {API_BASE} ==\n")
     try:
@@ -238,38 +329,25 @@ def main():
         admin.schema("hr").table("attendance_logs").insert(rows).execute()
         print(f"  {spec['full_name']}: {len(rows)} attendance rows inserted")
 
-    print("\nGenerating payroll record...")
-    # POST /payroll has no upsert -- it always inserts a new record, so a
-    # rerun would otherwise leave a stale duplicate (with the previous
-    # run's numbers) sitting in HRPayroll.tsx's History tab alongside the
-    # fresh one. No DELETE /payroll/{id} endpoint exists either, so this
-    # goes direct via the service-role client, same as the attendance rows
-    # above.
-    existing_records = requests.get(f"{API_BASE}/payroll?limit=50", headers=exec_headers).json()
-    stale = [
-        r for r in existing_records
-        if r["period_start"] == PERIOD_START.isoformat() and r["period_end"] == PERIOD_END.isoformat()
-    ]
-    for rec in stale:
-        admin.schema("hr").table("payroll_items").delete().eq("payroll_record_id", rec["id"]).execute()
-        admin.schema("hr").table("payroll_records").delete().eq("id", rec["id"]).execute()
-        print(f"  removed stale payroll record for this period (id={rec['id']}) before regenerating")
+    print("\nGenerating payroll record (semimonthly demo)...")
+    generate_payroll(exec_headers, PERIOD_START, PERIOD_END)
 
-    gen_resp = requests.post(
-        f"{API_BASE}/payroll",
-        json={"period_start": PERIOD_START.isoformat(), "period_end": PERIOD_END.isoformat()},
-        headers=exec_headers,
+    # --- Full-month demo: one employee, one full calendar month ---------
+    print(f"\nEnsuring full-month demo employee exists...")
+    month_employee_id = ensure_employee(MONTH_EMPLOYEE, exec_headers)
+
+    print(f"\nSeeding attendance for {MONTH_PERIOD_START} to {MONTH_PERIOD_END} (Liza Fernandez)...")
+    admin.schema("hr").table("attendance_logs").delete().eq("employee_id", month_employee_id).gte(
+        "date", MONTH_PERIOD_START.isoformat()
+    ).lte("date", MONTH_PERIOD_END.isoformat()).execute()
+    month_rows = build_full_month_attendance_rows(
+        month_employee_id, MONTH_PERIOD_START.year, MONTH_PERIOD_START.month, overtime_days={8, 22}
     )
-    gen_resp.raise_for_status()
-    record = gen_resp.json()
-    print(f"  payroll record generated: id={record['id']}")
-    print(f"  total_hours={record['total_hours']}  total_pay=₱{record['total_pay']:.2f}  employee_count={record['employee_count']}")
-    for item in record["items"]:
-        print(
-            f"    {item['employee_name']:<20} {item['hours_worked']:>6.2f}h  "
-            f"reg={item['regular_hours']:.1f} ot={item['overtime_hours']:.1f} nd={item['night_diff_hours']:.1f}  "
-            f"-> ₱{item['total_pay']:.2f}"
-        )
+    admin.schema("hr").table("attendance_logs").insert(month_rows).execute()
+    print(f"  Liza Fernandez: {len(month_rows)} attendance rows inserted (every weekday in July, 2 with overtime)")
+
+    print("\nGenerating payroll record (full-month demo)...")
+    generate_payroll(exec_headers, MONTH_PERIOD_START, MONTH_PERIOD_END)
 
     print("\nDone. View this on HRPayroll.tsx (History tab) or Employees.tsx.")
 
