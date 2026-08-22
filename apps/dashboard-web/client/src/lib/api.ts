@@ -188,8 +188,12 @@ export function createTransaction(body: CreateTransactionRequest): Promise<ApiTr
   return request('/transactions', { method: 'POST', body: JSON.stringify(body) });
 }
 
-export function fetchTransactions(): Promise<ApiTransaction[]> {
-  return request('/transactions');
+export function fetchTransactions(params?: { date?: string; status?: TransactionStatus }): Promise<ApiTransaction[]> {
+  const qs = new URLSearchParams();
+  if (params?.date) qs.set('date', params.date);
+  if (params?.status) qs.set('status', params.status);
+  const query = qs.toString();
+  return request(`/transactions${query ? `?${query}` : ''}`);
 }
 
 export function fetchTransaction(id: string): Promise<ApiTransaction> {
