@@ -17,8 +17,14 @@ from app.schemas import OishiAiQueryRequest, OishiAiQueryResponse
 
 router = APIRouter(tags=["oishi-ai"])
 
-XAI_MODEL = "grok-4"
-XAI_BASE_URL = "https://api.x.ai/v1"
+# Groq (OpenAI-compatible endpoint) -- switched from xAI/Grok since that
+# account had no billing set up. llama-3.3-70b-versatile (the model the
+# SMFC reference's Malaya AI uses) has since been retired from Groq's
+# lineup; openai/gpt-oss-120b is the current largest general-purpose
+# instruction model available there, confirmed live to return clean JSON
+# under response_format=json_object.
+GROQ_MODEL = "openai/gpt-oss-120b"
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
 SYSTEM_PROMPT = """You are Oishii AI, the AI business analyst for Oishii Nori,
 a single-location sushi/cafe restaurant. You answer questions using ONLY the
@@ -395,9 +401,9 @@ def query_oishi_ai(body: OishiAiQueryRequest, user: CurrentUser = Depends(get_cu
     # narrower scope a manager could safely see here anyway.
     require_role(user, "executive")
 
-    api_key = os.environ.get("XAI_API_KEY")
+    api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=503, detail="Oishii AI isn't configured (missing XAI_API_KEY)")
+        raise HTTPException(status_code=503, detail="Oishii AI isn't configured (missing GROQ_API_KEY)")
 
     supabase = get_supabase()
 
@@ -427,10 +433,10 @@ def query_oishi_ai(body: OishiAiQueryRequest, user: CurrentUser = Depends(get_cu
         "utility_cost_by_type_30d": _utility_cost_by_type_30d(supabase),
     }
 
-    client = OpenAI(api_key=api_key, base_url=XAI_BASE_URL)
+    client = OpenAI(api_key=api_key, base_url=GROQ_BASE_URL)
     try:
         completion = client.chat.completions.create(
-            model=XAI_MODEL,
+            model=GROQ_MODEL,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
