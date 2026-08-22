@@ -129,13 +129,22 @@ def _bundle_fulfilled_item_ids(supabase, item_ids: list[str]) -> set[str]:
     """
     if not item_ids or not _bundle_fulfillments_supported_check(supabase):
         return set()
-    result = (
-        supabase.table("bundle_fulfillments")
-        .select("transaction_item_id")
-        .in_("transaction_item_id", item_ids)
-        .execute()
-    )
-    return {row["transaction_item_id"] for row in result.data}
+    # Chunked so the underlying PostgREST `in.(id1,id2,...)` filter never
+    # risks exceeding URL/header length limits as order history grows --
+    # list_transactions's unpaginated, no-date-filter call path (Kitchen
+    # Display) can hand this the full transaction-item history.
+    fulfilled: set[str] = set()
+    chunk_size = 200
+    for i in range(0, len(item_ids), chunk_size):
+        chunk = item_ids[i : i + chunk_size]
+        result = (
+            supabase.table("bundle_fulfillments")
+            .select("transaction_item_id")
+            .in_("transaction_item_id", chunk)
+            .execute()
+        )
+        fulfilled.update(row["transaction_item_id"] for row in result.data)
+    return fulfilled
 
 
 def _fetch_transaction_with_items(supabase, transaction_id: str) -> dict | None:
@@ -451,7 +460,17 @@ def void_transaction(
     )
     updated_row = updated.data[0]
     updated_row.setdefault("kitchen_status", "queued")
-    return TransactionResponse(**updated_row, items=transaction["items"])
+
+    # transaction["items"] was fetched (with its bundle_fulfilled flags)
+    # before the restore loop above deleted this transaction's
+    # bundle_fulfillments rows -- recompute so the response reflects what's
+    # actually true right now, not a pre-restore snapshot.
+    response_items = transaction["items"]
+    fulfilled_ids = _bundle_fulfilled_item_ids(supabase, [i["id"] for i in response_items])
+    for item in response_items:
+        item["bundle_fulfilled"] = item["id"] in fulfilled_ids
+
+    return TransactionResponse(**updated_row, items=response_items)
 
 
 def _set_kitchen_status(supabase, transaction: dict, new_status: str, user: CurrentUser, allow_skip: bool) -> dict:

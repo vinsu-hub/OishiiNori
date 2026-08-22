@@ -180,13 +180,14 @@ def public_order_status(order_id: str):
 @router.get("/digital-orders", response_model=list[DigitalOrderResponse])
 def list_digital_orders(
     status: str | None = Query(None),
+    limit: int = Query(200, le=500),
     user: CurrentUser = Depends(get_current_user),
 ):
     supabase = get_supabase()
     query = supabase.table("digital_orders").select("*")
     if status:
         query = query.eq("status", status)
-    orders = query.order("created_at", desc=True).execute().data
+    orders = query.order("created_at", desc=True).limit(limit).execute().data
     if not orders:
         return []
 
@@ -275,6 +276,9 @@ def reject_digital_order(
     body: RejectDigitalOrderRequest,
     user: CurrentUser = Depends(get_current_user),
 ):
+    if not body.reason or not body.reason.strip():
+        raise HTTPException(status_code=400, detail="A reason is required")
+
     supabase = get_supabase()
     order = _fetch_digital_order(supabase, order_id)
     if not order:
@@ -284,7 +288,7 @@ def reject_digital_order(
 
     updated = (
         supabase.table("digital_orders")
-        .update({"status": "rejected", "rejected_reason": body.reason})
+        .update({"status": "rejected", "rejected_reason": body.reason.strip()})
         .eq("id", order_id)
         .execute()
     )
