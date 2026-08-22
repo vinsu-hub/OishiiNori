@@ -43,6 +43,24 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function requestBlob(path: string): Promise<Blob> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (!session) {
+    throw new Error('Not signed in');
+  }
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    headers: { Authorization: `Bearer ${session.access_token}` },
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`API ${path} failed: ${response.status} ${body}`);
+  }
+  return response.blob();
+}
+
 export function fetchHealth(): Promise<{ status: string }> {
   return fetch(`${API_BASE_URL}/health`).then((r) => r.json());
 }
@@ -599,6 +617,16 @@ export function fetchPayrollRecord(id: string): Promise<ApiPayrollRecord> {
   return request(`/payroll/${id}`);
 }
 
+export function fetchPayrollReceiptPdf(employeeId: string, periodStart: string, periodEnd: string): Promise<Blob> {
+  return requestBlob(
+    `/payroll/receipt.pdf?employee_id=${employeeId}&period_start=${periodStart}&period_end=${periodEnd}`
+  );
+}
+
+export function fetchPayrollReceiptsZip(periodStart: string, periodEnd: string): Promise<Blob> {
+  return requestBlob(`/payroll/receipts.zip?period_start=${periodStart}&period_end=${periodEnd}`);
+}
+
 export interface ApiHoliday {
   id: string;
   holiday_date: string;
@@ -779,4 +807,33 @@ export function fetchTopProducts(params?: { date_from?: string; date_to?: string
   if (params?.limit) qs.set('limit', String(params.limit));
   const query = qs.toString();
   return request(`/analytics/top-products${query ? `?${query}` : ''}`);
+}
+
+// ---------------------------------------------------------------------------
+// Oishii AI
+// ---------------------------------------------------------------------------
+
+export interface ApiOishiAiChartPoint {
+  label: string;
+  value: number;
+}
+
+export interface ApiOishiAiChartSeries {
+  name: string;
+  data: ApiOishiAiChartPoint[];
+}
+
+export interface ApiOishiAiChartSpec {
+  type: 'bar' | 'line';
+  title: string;
+  series: ApiOishiAiChartSeries[];
+}
+
+export interface ApiOishiAiQueryResponse {
+  answer: string;
+  chart: ApiOishiAiChartSpec | null;
+}
+
+export function queryOishiAi(question: string): Promise<ApiOishiAiQueryResponse> {
+  return request('/ai/query', { method: 'POST', body: JSON.stringify({ question }) });
 }

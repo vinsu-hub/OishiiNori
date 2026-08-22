@@ -17,6 +17,7 @@ import {
   Percent,
   LayoutDashboard,
   TrendingUp,
+  Sparkles,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -62,6 +63,7 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
       ? [
           { icon: LayoutDashboard, label: 'Command Center', href: '/command-center' },
           { icon: TrendingUp, label: 'Trend Analysis', href: '/trends' },
+          { icon: Sparkles, label: 'Oishii AI', href: '/oishii-ai' },
         ]
       : []),
     { icon: Settings, label: 'Settings', href: '/settings' },

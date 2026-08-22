@@ -1,13 +1,17 @@
+import io
 import re
 import secrets
+import zipfile
 from datetime import date, datetime, timezone
 
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 
 from app.attendance_utils import auto_close_stale_attendance, hr_table
 from app.auth import CurrentUser, get_current_user, require_role
 from app.deps import get_supabase
+from app.payroll_pdf import build_payslip_pdf
 from app.schemas import (
     AttendanceLogResponse,
     EmployeeCreate,
@@ -323,6 +327,132 @@ def list_payroll_records(limit: int = Query(50, le=200), user: CurrentUser = Dep
     for record in records:
         record["items"] = []
     return records
+
+
+def _fetch_employee_attendance_rows(employee_id: str, date_from: date, date_to: date) -> list[dict]:
+    """Daily attendance_logs for one employee/period, shaped for
+    build_payslip_pdf. payroll_records/items never persist this detail --
+    it's always recomputed live from hr.attendance_logs."""
+    return (
+        hr_table("attendance_logs")
+        .select("date, clock_in, clock_out, hours_worked, status, auto_closed")
+        .eq("employee_id", employee_id)
+        .gte("date", date_from.isoformat())
+        .lte("date", date_to.isoformat())
+        .order("date")
+        .execute()
+        .data
+    )
+
+
+@router.get("/payroll/receipt.pdf")
+def get_payroll_receipt_pdf(
+    employee_id: str = Query(...),
+    period_start: date = Query(...),
+    period_end: date = Query(...),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Real PDF payslip for one employee: header, pay summary, and a full
+    daily time-log table. Must be registered before /payroll/{payroll_id}
+    so this literal path isn't swallowed by that dynamic route."""
+    require_role(user, "manager", "executive")
+    supabase = get_supabase()
+    auto_close_stale_attendance()
+
+    profile_result = (
+        supabase.table("profiles")
+        .select("id, full_name, employee_number, position, pay_rate")
+        .eq("id", employee_id)
+        .maybe_single()
+        .execute()
+    )
+    if not profile_result or not profile_result.data:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    profile = profile_result.data
+
+    summary = _compute_payroll_summary(supabase, period_start, period_end)
+    row = next((r for r in summary["rows"] if r["employee_id"] == employee_id), None)
+    attendance_rows = _fetch_employee_attendance_rows(employee_id, period_start, period_end)
+
+    pdf_bytes = build_payslip_pdf(
+        employee=profile,
+        company_name="Oishii Nori",
+        period_start=period_start,
+        period_end=period_end,
+        hours_worked=row["hours_worked"] if row else 0.0,
+        pay_rate=float(profile.get("pay_rate") or 0),
+        total_pay=row["total_pay"] if row else 0.0,
+        attendance_rows=attendance_rows,
+        regular_hours=row.get("regular_hours") if row else None,
+        overtime_hours=row.get("overtime_hours") if row else None,
+        overtime_pay=row.get("overtime_pay") if row else None,
+        night_diff_hours=row.get("night_diff_hours") if row else None,
+        night_diff_pay=row.get("night_diff_pay") if row else None,
+        holiday_pay=row.get("holiday_pay") if row else None,
+    )
+    safe_name = (profile.get("full_name") or "employee").replace(" ", "_")
+    filename = f"payslip_{safe_name}_{period_start}_{period_end}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
+
+
+@router.get("/payroll/receipts.zip")
+def get_payroll_receipts_zip(
+    period_start: date = Query(...),
+    period_end: date = Query(...),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """One PDF payslip per employee for a period, bundled into a ZIP --
+    avoids the browser popup-blocker problem of opening one window per
+    employee from the client."""
+    require_role(user, "manager", "executive")
+    supabase = get_supabase()
+    summary = _compute_payroll_summary(supabase, period_start, period_end)
+
+    employee_ids = [row["employee_id"] for row in summary["rows"]]
+    profiles: dict[str, dict] = {}
+    if employee_ids:
+        profiles_result = (
+            supabase.table("profiles")
+            .select("id, full_name, employee_number, position, pay_rate")
+            .in_("id", employee_ids)
+            .execute()
+        )
+        profiles = {p["id"]: p for p in profiles_result.data}
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for row in summary["rows"]:
+            profile = profiles.get(row["employee_id"], {"full_name": row["employee_name"]})
+            attendance_rows = _fetch_employee_attendance_rows(row["employee_id"], period_start, period_end)
+            pdf_bytes = build_payslip_pdf(
+                employee=profile,
+                company_name="Oishii Nori",
+                period_start=period_start,
+                period_end=period_end,
+                hours_worked=row["hours_worked"],
+                pay_rate=row["pay_rate"],
+                total_pay=row["total_pay"],
+                attendance_rows=attendance_rows,
+                regular_hours=row.get("regular_hours"),
+                overtime_hours=row.get("overtime_hours"),
+                overtime_pay=row.get("overtime_pay"),
+                night_diff_hours=row.get("night_diff_hours"),
+                night_diff_pay=row.get("night_diff_pay"),
+                holiday_pay=row.get("holiday_pay"),
+            )
+            safe_name = (profile.get("full_name") or "employee").replace(" ", "_")
+            zf.writestr(f"payslip_{safe_name}.pdf", pdf_bytes)
+
+    filename = f"payroll_receipts_{period_start}_{period_end}.zip"
+    return Response(
+        content=zip_buffer.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/payroll/{payroll_id}", response_model=PayrollRecordResponse)

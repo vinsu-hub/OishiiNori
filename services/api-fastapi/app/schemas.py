@@ -683,3 +683,33 @@ class TopProductsResponse(BaseModel):
     date_from: date
     date_to: date
     products: list[TopProductRow]
+
+
+# ---------------------------------------------------------------------------
+# Oishii AI
+# ---------------------------------------------------------------------------
+
+
+class OishiAiQueryRequest(BaseModel):
+    question: str
+
+
+class OishiAiChartPoint(BaseModel):
+    label: str
+    value: float
+
+
+class OishiAiChartSeries(BaseModel):
+    name: str
+    data: list[OishiAiChartPoint]
+
+
+class OishiAiChartSpec(BaseModel):
+    type: Literal["bar", "line"]
+    title: str
+    series: list[OishiAiChartSeries]
+
+
+class OishiAiQueryResponse(BaseModel):
+    answer: str
+    chart: OishiAiChartSpec | None = None

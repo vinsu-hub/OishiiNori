@@ -11,6 +11,7 @@ from app.routers import (
     inventory_movements,
     kiosk,
     loss_records,
+    oishi_ai,
     products,
     recipes,
     transactions,
@@ -39,6 +40,7 @@ app.include_router(utility_logs.router)
 app.include_router(digital_menu.router)
 app.include_router(dashboard_summary.router)
 app.include_router(analytics.router)
+app.include_router(oishi_ai.router)
 
 
 @app.get("/health")
