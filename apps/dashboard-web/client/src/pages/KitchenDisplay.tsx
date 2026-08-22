@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Progress } from '@/components/ui/progress';
 import { BundleFulfillmentChecklist } from '@/components/kitchen/BundleFulfillmentChecklist';
 import {
   ApiDigitalOrder,
@@ -56,6 +57,25 @@ const STATIONS: { value: KitchenStation; label: string }[] = [
 
 const ROLL_CATEGORY = 'Oishii Maki Rolls';
 
+// Hardcoded starting points (SMFC's own defaults), not per-branch
+// configurable -- a settings surface for these is a reasonable future
+// addition, not required now. "completed" never counts as delayed.
+const DELAYED_THRESHOLD_SECONDS: Partial<Record<KitchenStatus, number>> = {
+  queued: 15 * 60,
+  preparing: 15 * 60,
+  ready: 10 * 60,
+};
+
+function elapsedSeconds(since: string, now: Date): number {
+  return Math.max(0, Math.floor((now.getTime() - new Date(since).getTime()) / 1000));
+}
+
+function elapsedLabel(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  if (mins < 60) return `${mins}m`;
+  return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+}
+
 interface ResolvedItem {
   item: ApiTransactionItem;
   product: ApiProduct;
@@ -78,6 +98,14 @@ export default function KitchenDisplay() {
   const [fulfilledItemIds, setFulfilledItemIds] = useState<Set<string>>(new Set());
   const [checklistTarget, setChecklistTarget] = useState<ChecklistTarget | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [now, setNow] = useState(() => new Date());
+
+  // Separate 1s tick (elapsed-time labels/progress bars) from the 20s data
+  // poll -- ticking doesn't need a network round trip.
+  useEffect(() => {
+    const tick = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(tick);
+  }, []);
 
   const load = useCallback(() => {
     Promise.all([fetchTransactions(), fetchProducts(true), fetchDigitalOrders('approved')])
@@ -149,6 +177,38 @@ export default function KitchenDisplay() {
     return map;
   }, [visibleOrders]);
 
+  const delayedCount = useMemo(() => {
+    let count = 0;
+    for (const order of visibleOrders) {
+      const threshold = DELAYED_THRESHOLD_SECONDS[order.kitchen_status];
+      if (threshold != null && elapsedSeconds(order.kitchen_status_updated_at || order.opened_at, now) > threshold) {
+        count += 1;
+      }
+    }
+    return count;
+  }, [visibleOrders, now]);
+
+  // Client-side approximation (no per-order "time entered preparing" field
+  // exists) -- opened_at to kitchen_status_updated_at across today's
+  // completed orders, as a rough "how long an order takes end to end"
+  // stand-in for a glance-at-the-board metric. SMFC computes a true
+  // prep-time from a dedicated backend summary endpoint; this avoids
+  // adding one, at the cost of precision.
+  const avgPrepSeconds = useMemo(() => {
+    const completed = visibleOrders.filter((o) => o.kitchen_status === 'completed' && o.kitchen_status_updated_at);
+    if (completed.length === 0) return null;
+    const total = completed.reduce((sum, o) => sum + elapsedSeconds(o.opened_at, new Date(o.kitchen_status_updated_at!)), 0);
+    return Math.round(total / completed.length);
+  }, [visibleOrders]);
+
+  const longestOrder = useMemo(() => {
+    const active = visibleOrders.filter((o) => o.kitchen_status !== 'completed');
+    if (active.length === 0) return null;
+    return active.reduce((longest, o) =>
+      elapsedSeconds(o.opened_at, now) > elapsedSeconds(longest.opened_at, now) ? o : longest
+    );
+  }, [visibleOrders, now]);
+
   async function handleAdvance(order: ApiTransaction) {
     const next = NEXT_STATUS[order.kitchen_status];
     if (!next) return;
@@ -192,6 +252,29 @@ export default function KitchenDisplay() {
           </Select>
         </div>
 
+        <div className="grid grid-cols-3 gap-3">
+          <Card>
+            <CardContent className="py-3">
+              <p className="text-xs text-muted-foreground">Delayed</p>
+              <p className="text-2xl font-semibold text-destructive">{delayedCount}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="py-3">
+              <p className="text-xs text-muted-foreground">Avg prep time</p>
+              <p className="text-2xl font-semibold">{avgPrepSeconds != null ? elapsedLabel(avgPrepSeconds) : '--'}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="py-3">
+              <p className="text-xs text-muted-foreground">Longest order</p>
+              <p className="text-2xl font-semibold">
+                {longestOrder ? `${longestOrder.id.slice(0, 8)} (${elapsedLabel(elapsedSeconds(longestOrder.opened_at, now))})` : '--'}
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+
         {loading && <p className="text-sm text-muted-foreground">Loading kitchen display...</p>}
 
         {!loading && (
@@ -217,8 +300,28 @@ export default function KitchenDisplay() {
                           {order.is_owner_request && <Badge variant="secondary">Owner's Request</Badge>}
                         </CardTitle>
                         <p className="text-xs text-muted-foreground">
-                          opened {new Date(order.opened_at).toLocaleTimeString()}
+                          opened {new Date(order.opened_at).toLocaleTimeString()} &middot;{' '}
+                          <span
+                            className={
+                              DELAYED_THRESHOLD_SECONDS[order.kitchen_status] != null &&
+                              elapsedSeconds(order.kitchen_status_updated_at || order.opened_at, now) >
+                                DELAYED_THRESHOLD_SECONDS[order.kitchen_status]!
+                                ? 'text-destructive font-medium'
+                                : undefined
+                            }
+                          >
+                            {elapsedLabel(elapsedSeconds(order.opened_at, now))} elapsed
+                          </span>
                         </p>
+                        {status === 'preparing' && avgPrepSeconds != null && (
+                          <Progress
+                            value={Math.min(
+                              100,
+                              (elapsedSeconds(order.kitchen_status_updated_at || order.opened_at, now) / avgPrepSeconds) * 100
+                            )}
+                            className="h-1.5"
+                          />
+                        )}
                         {digitalOrder && <DigitalOrderInfo order={digitalOrder} />}
                       </CardHeader>
                       <CardContent className="space-y-2 pb-3">
