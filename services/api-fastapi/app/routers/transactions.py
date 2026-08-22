@@ -101,6 +101,26 @@ def _adjust_ingredients_for_size(supabase, product_size_id: str, quantity: float
     return deltas
 
 
+def _bundle_fulfilled_item_ids(supabase, item_ids: list[str]) -> set[str]:
+    """Which of these transaction_item ids already have bundle_fulfillments
+    rows -- the real source of truth for "has the kitchen logged this
+    bundle's rolls yet", surfaced so the frontend doesn't have to track it
+    in local-only state (which a reload would wipe). A bundle item either
+    has 0 or the full required set of fulfillment rows (bundle_fulfillment
+    requires the submitted total to match exactly in one shot), so
+    existence alone is sufficient -- no partial-fulfillment state exists.
+    """
+    if not item_ids or not _bundle_fulfillments_supported_check(supabase):
+        return set()
+    result = (
+        supabase.table("bundle_fulfillments")
+        .select("transaction_item_id")
+        .in_("transaction_item_id", item_ids)
+        .execute()
+    )
+    return {row["transaction_item_id"] for row in result.data}
+
+
 def _fetch_transaction_with_items(supabase, transaction_id: str) -> dict | None:
     result = supabase.table("transactions").select("*").eq("id", transaction_id).maybe_single().execute()
     if not result or not result.data:
@@ -109,7 +129,11 @@ def _fetch_transaction_with_items(supabase, transaction_id: str) -> dict | None:
     items_result = (
         supabase.table("transaction_items").select("*").eq("transaction_id", transaction_id).execute()
     )
-    transaction["items"] = items_result.data
+    items = items_result.data
+    fulfilled_ids = _bundle_fulfilled_item_ids(supabase, [i["id"] for i in items])
+    for item in items:
+        item["bundle_fulfilled"] = item["id"] in fulfilled_ids
+    transaction["items"] = items
     transaction.setdefault("kitchen_status", "queued")
     return transaction
 
@@ -293,8 +317,11 @@ def list_transactions(
     items_result = (
         supabase.table("transaction_items").select("*").in_("transaction_id", transaction_ids).execute()
     )
+    all_items = items_result.data
+    fulfilled_ids = _bundle_fulfilled_item_ids(supabase, [i["id"] for i in all_items])
     items_by_transaction: dict[str, list] = defaultdict(list)
-    for item in items_result.data:
+    for item in all_items:
+        item["bundle_fulfilled"] = item["id"] in fulfilled_ids
         items_by_transaction[item["transaction_id"]].append(item)
 
     out = []

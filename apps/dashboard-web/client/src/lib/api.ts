@@ -160,6 +160,7 @@ export interface ApiTransactionItem {
   quantity: number;
   unit_price: number;
   held_ingredients: string[];
+  bundle_fulfilled: boolean;
 }
 
 export interface ApiTransaction {

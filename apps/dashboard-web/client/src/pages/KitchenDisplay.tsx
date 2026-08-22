@@ -85,6 +85,19 @@ export default function KitchenDisplay() {
         setTransactions(t.filter((x) => x.status !== 'voided'));
         setProducts(p);
         setDigitalOrderLookup(buildDigitalOrderLookup(digitalOrders));
+        // Bundle fulfillment is a real backend field now (bundle_fulfillments
+        // is the source of truth) -- re-seed from every poll so a reload (or
+        // another terminal's action) is reflected, not just this session's
+        // own optimistic updates via onFulfilled below.
+        setFulfilledItemIds((prev) => {
+          const next = new Set(prev);
+          for (const tx of t) {
+            for (const item of tx.items) {
+              if (item.bundle_fulfilled) next.add(item.id);
+            }
+          }
+          return next;
+        });
       })
       .catch((e) => toast.error(`Failed to load kitchen display: ${e instanceof Error ? e.message : 'Unknown error'}`))
       .finally(() => setLoading(false));

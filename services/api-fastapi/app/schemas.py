@@ -110,6 +110,7 @@ class TransactionItemResponse(BaseModel):
     quantity: float
     unit_price: float
     held_ingredients: list[str] = Field(default_factory=list)
+    bundle_fulfilled: bool = False
 
 
 class TransactionResponse(BaseModel):
