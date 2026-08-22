@@ -21,7 +21,7 @@ import {
   fetchTransactions,
   updateKitchenStatus,
 } from '@/lib/api';
-import { POLL_INTERVAL_MS } from '@/lib/constants';
+import { POLL_INTERVAL_MS, toIsoDatePH, todayIsoPH } from '@/lib/constants';
 import { buildDigitalOrderLookup } from '@/lib/digitalOrderLookup';
 import { DigitalOrderInfo } from '@/components/shared/DigitalOrderInfo';
 import { playNewOrderBeep } from '@/lib/orderSounds';
@@ -205,12 +205,19 @@ export default function KitchenDisplay() {
 
   // Client-side approximation (no per-order "time entered preparing" field
   // exists) -- opened_at to kitchen_status_updated_at across today's
-  // completed orders, as a rough "how long an order takes end to end"
-  // stand-in for a glance-at-the-board metric. SMFC computes a true
-  // prep-time from a dedicated backend summary endpoint; this avoids
-  // adding one, at the cost of precision.
+  // (Philippines-local calendar day, not UTC) completed orders, as a rough
+  // "how long an order takes end to end" stand-in for a glance-at-the-board
+  // metric. SMFC computes a true prep-time from a dedicated backend summary
+  // endpoint; this avoids adding one, at the cost of precision. Unlike
+  // delayedCount/longestOrder below (deliberately NOT date-scoped -- a
+  // stuck order from yesterday should still count as delayed on the live
+  // board), this metric's own label claims "today", so it has to actually
+  // filter to today or it's misleading.
   const avgPrepSeconds = useMemo(() => {
-    const completed = visibleOrders.filter((o) => o.kitchen_status === 'completed' && o.kitchen_status_updated_at);
+    const today = todayIsoPH();
+    const completed = visibleOrders.filter(
+      (o) => o.kitchen_status === 'completed' && o.kitchen_status_updated_at && toIsoDatePH(o.opened_at) === today
+    );
     if (completed.length === 0) return null;
     const total = completed.reduce((sum, o) => sum + elapsedSeconds(o.opened_at, new Date(o.kitchen_status_updated_at!)), 0);
     return Math.round(total / completed.length);
@@ -338,7 +345,7 @@ export default function KitchenDisplay() {
                             {elapsedLabel(elapsedSeconds(order.opened_at, now))} elapsed
                           </span>
                         </p>
-                        {status === 'preparing' && avgPrepSeconds != null && (
+                        {status === 'preparing' && avgPrepSeconds != null && avgPrepSeconds > 0 && (
                           <Progress
                             value={Math.min(
                               100,

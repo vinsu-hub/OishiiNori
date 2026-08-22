@@ -24,3 +24,7 @@ export function todayIsoPH(): string {
 export function daysAgoIsoPH(days: number): string {
   return new Date(Date.now() + PH_UTC_OFFSET_MS - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
+
+export function toIsoDatePH(isoTimestamp: string): string {
+  return new Date(new Date(isoTimestamp).getTime() + PH_UTC_OFFSET_MS).toISOString().slice(0, 10);
+}
