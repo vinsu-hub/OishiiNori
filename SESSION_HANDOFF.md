@@ -13,6 +13,26 @@
 
 ---
 
+## 🍽️ Menu Editing: executive-only product/recipe/image CRUD (completed 2026-08-23)
+
+The catalog (products, sizes/prices, recipes, photos) had been read-only since the original xlsx seed -- any change needed a developer touching the database directly. New executive-only **Menu Editing** tab (`/menu-editing`, Sidebar entry under the executive-only block) lets an executive edit item details, per-size prices, recipe/ingredient components, replace photos, add new menu items, and deactivate/reactivate items, entirely through the UI.
+
+**New backend router** `services/api-fastapi/app/routers/menu_admin.py` (kept separate from the read-focused `products.py`/`recipes.py`), all endpoints `require_role(user, "executive")`: `POST /products` (create + initial sizes), `PATCH /products/{id}` (field updates, and how deactivate/reactivate happens via `{"active": bool}`), `POST /products/{id}/sizes`, `PATCH`/`DELETE /product-sizes/{id}`, `POST /product-sizes/{id}/recipe-items`, `PATCH`/`DELETE /recipe-items/{id}`, and `POST /products/{id}/image` (real multipart upload).
+
+**Delete = soft delete only, by design**: `product_sizes`/`products` are referenced by `transaction_items`/`digital_order_items`/`loss_records` with restrictive FKs -- hard-deleting a sold item would fail or destroy sales history. Reused the existing `products.active` flag instead (already gated `GET /products?active_only=true`); the only real hard-deletes are `product_sizes`/`recipe_items` sub-rows (guarded: a product's last remaining size can't be removed, must deactivate the product instead).
+
+**Real image upload, finally** -- until now `image_path` was just a path string with no upload mechanism at all (the existing `PATCH /products/{id}/image` in `products.py` only ever set/cleared the string). Since the backend is a Vercel serverless function with no writable disk, added a real Supabase Storage bucket (`product-images`, public read, 5MB limit, jpeg/png/webp only) created via a new idempotent one-off script `scripts/create_product_images_bucket.py` (Storage Admin API call, not SQL DDL, so it's not a migration -- same "run manually once" pattern as this project's other disposable scripts). The new multipart endpoint uploads to `{product_id}/{uuid}.{ext}` and stores the resulting public URL in `image_path`. The 17 pre-existing products' relative `/products/xxx.jpg` paths are untouched and still work -- both path styles render fine in `<img src>`, verified directly against the DB after building this.
+
+Added `python-multipart` to `requirements.txt` (required by FastAPI's `UploadFile`, was missing).
+
+**Frontend**: new `apps/dashboard-web/client/src/pages/MenuEditing.tsx`, executive-gated (`role !== 'executive'`, same strict pattern as Command Center). Product table + a tabbed edit dialog (Details / Sizes & Prices / Recipe / Image) using the repeating-row editor pattern ported from `InventoryMovements.tsx`'s shipment rows, diffed against original state on save (new rows create, changed rows update, removed rows delete). A separate "Add menu item" dialog handles creation (name/category/station/department + at least one size); recipe and image are added afterward via Edit. New `lib/api.ts` functions: `createProduct`, `updateProduct`, `createProductSize`, `updateProductSize`, `deleteProductSize`, `createRecipeItem`, `updateRecipeItem`, `deleteRecipeItem`, `uploadProductImage` (built on a new `requestMultipart()` helper that omits the JSON `Content-Type` header so the browser sets the multipart boundary).
+
+**Verified live against the local dev backend** (port 8010, `qa.tester@oishiinori.com` executive account): created a test product with two sizes, added/edited/removed a recipe line (confirmed the `(product_size_id, ingredient_id)` unique-constraint collision correctly surfaces as 409), uploaded a real image and confirmed the resulting Storage URL is publicly fetchable, edited a size's price, deactivated (disappeared from `active_only=true`, still visible in Menu Editing) and reactivated, deleted a size (rejected with 400 when it was the last remaining one), then cleaned up the test product/size/recipe rows and the uploaded Storage object directly via the service-role client. Confirmed pre-existing products' `/products/xxx.jpg` paths are unaffected. Frontend `tsc --noEmit` clean.
+
+**Not done / deferred**: no `description` field was added (not part of the original ask -- name/category/station/department already cover item details; easy follow-up migration if wanted later). No bulk-reorder/drag-and-drop for sizes or categories. Orphaned Storage objects from repeated image replacements are not cleaned up (each upload gets a fresh UUID filename; old ones are never deleted) -- acceptable at this catalog's small scale, flagged as a known gap.
+
+---
+
 ## 🧾 Inventory: shipment receiving reactivated + unit cost + expiry tracking (completed 2026-08-22)
 
 `InventoryMovements.tsx` and its backend already fully supported logging a received shipment, but the page had **no Sidebar nav link** (it had been deliberately delisted mid-consolidation into Inventory Count in an earlier same-day commit, then never relinked) — staff could only reach it by typing the URL directly. Re-added to the Sidebar as **"Receive Shipment"**, visible to all roles (no role gate on the backend endpoint).
@@ -336,7 +356,7 @@ Plan-driven, 6 milestones, port-and-adapt from the SMFC reference (Vite+React 19
 | Migrations | `supabase/migrations/0001`–`0021`, all applied live |
 | Seed / demo-data scripts | `services/api-fastapi/scripts/seed_from_xlsx.py` (catalog), `seed_payroll_demo.py` (HR demo data), `backfill_ingredient_unit_cost.py` |
 | QA / health-check scripts | `services/api-fastapi/scripts/qa_phase2.py`, `system_health_check.py` (71/71 passing) |
-| Backend app | `services/api-fastapi/app/` (routers: products, recipes, inventory, inventory_movements, discounts, loss_records, hr, kiosk, transactions, utility_logs, digital_menu, dashboard_summary, analytics, oishi_ai) |
+| Backend app | `services/api-fastapi/app/` (routers: products, recipes, menu_admin, inventory, inventory_movements, discounts, loss_records, hr, kiosk, transactions, utility_logs, digital_menu, dashboard_summary, analytics, oishi_ai) |
 | Dashboard frontend | `apps/dashboard-web/client/src/` (pages, components, lib/api.ts) |
 | Staff Clock kiosk frontend | `apps/staff-clock/client/src/` |
 | Customer menu (QR ordering) frontend | `apps/customer-menu/client/src/` |

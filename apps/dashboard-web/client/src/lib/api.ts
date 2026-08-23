@@ -43,6 +43,29 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function requestMultipart<T>(path: string, formData: FormData, method = 'POST'): Promise<T> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  if (!session) {
+    throw new Error('Not signed in');
+  }
+
+  // Deliberately omits Content-Type -- the browser sets the multipart
+  // boundary itself when given a FormData body; setting it manually breaks
+  // the upload.
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${session.access_token}` },
+    body: formData,
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`API ${path} failed: ${response.status} ${body}`);
+  }
+  return response.json() as Promise<T>;
+}
+
 async function requestBlob(path: string): Promise<Blob> {
   const {
     data: { session },
@@ -117,6 +140,83 @@ export interface ApiRecipeItem {
 
 export function fetchRecipe(productSizeId: string): Promise<ApiRecipeItem[]> {
   return request(`/product-sizes/${productSizeId}/recipe`);
+}
+
+// --- Menu Editing (executive-only product/size/recipe CRUD + image upload) ---
+
+export interface CreateProductSizeInput {
+  size_label: string;
+  price: number;
+  scale_factor?: number;
+  sort_order?: number;
+}
+
+export interface CreateProductRequest {
+  name: string;
+  category: string;
+  station: KitchenStation;
+  department: Department;
+  sizes: CreateProductSizeInput[];
+}
+
+export function createProduct(body: CreateProductRequest): Promise<ApiProduct> {
+  return request('/products', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function updateProduct(
+  id: string,
+  body: Partial<{
+    name: string;
+    category: string;
+    station: KitchenStation;
+    department: Department;
+    active: boolean;
+  }>
+): Promise<ApiProduct> {
+  return request(`/products/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+export function createProductSize(productId: string, body: CreateProductSizeInput): Promise<ApiProductSize> {
+  return request(`/products/${productId}/sizes`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function updateProductSize(
+  sizeId: string,
+  body: Partial<{ size_label: string; price: number; scale_factor: number; sort_order: number }>
+): Promise<ApiProductSize> {
+  return request(`/product-sizes/${sizeId}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+export function deleteProductSize(sizeId: string): Promise<{ deleted: boolean }> {
+  return request(`/product-sizes/${sizeId}`, { method: 'DELETE' });
+}
+
+export interface CreateRecipeItemInput {
+  ingredient_id: string;
+  qty_per_serving: number;
+  unit: string;
+  prep_notes?: string | null;
+}
+
+export function createRecipeItem(sizeId: string, body: CreateRecipeItemInput): Promise<ApiRecipeItem> {
+  return request(`/product-sizes/${sizeId}/recipe-items`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function updateRecipeItem(
+  itemId: string,
+  body: Partial<{ ingredient_id: string; qty_per_serving: number; unit: string; prep_notes: string | null }>
+): Promise<ApiRecipeItem> {
+  return request(`/recipe-items/${itemId}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+export function deleteRecipeItem(itemId: string): Promise<{ deleted: boolean }> {
+  return request(`/recipe-items/${itemId}`, { method: 'DELETE' });
+}
+
+export function uploadProductImage(productId: string, file: File): Promise<ApiProduct> {
+  const formData = new FormData();
+  formData.append('file', file);
+  return requestMultipart(`/products/${productId}/image`, formData);
 }
 
 // ---------------------------------------------------------------------------

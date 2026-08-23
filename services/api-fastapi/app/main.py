@@ -11,6 +11,7 @@ from app.routers import (
     inventory_movements,
     kiosk,
     loss_records,
+    menu_admin,
     oishi_ai,
     products,
     recipes,
@@ -29,6 +30,7 @@ app.add_middleware(
 
 app.include_router(products.router)
 app.include_router(recipes.router)
+app.include_router(menu_admin.router)
 app.include_router(inventory.router)
 app.include_router(inventory_movements.router)
 app.include_router(discounts.router)

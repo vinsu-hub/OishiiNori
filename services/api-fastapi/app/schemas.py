@@ -82,6 +82,53 @@ class RecipeItemOut(BaseModel):
     needs_review: bool = False
 
 
+# --- Menu Editing (executive-only product/size/recipe CRUD) ---
+
+
+class ProductSizeCreate(BaseModel):
+    size_label: str
+    price: float = Field(ge=0)
+    scale_factor: float = 1.0
+    sort_order: int = 0
+
+
+class ProductSizeUpdate(BaseModel):
+    size_label: str | None = None
+    price: float | None = Field(default=None, ge=0)
+    scale_factor: float | None = None
+    sort_order: int | None = None
+
+
+class ProductCreate(BaseModel):
+    name: str
+    category: str
+    station: KitchenStation
+    department: DepartmentType
+    sizes: list[ProductSizeCreate] = Field(min_length=1)
+
+
+class ProductUpdate(BaseModel):
+    name: str | None = None
+    category: str | None = None
+    station: KitchenStation | None = None
+    department: DepartmentType | None = None
+    active: bool | None = None
+
+
+class RecipeItemCreate(BaseModel):
+    ingredient_id: str
+    qty_per_serving: float = Field(gt=0)
+    unit: str
+    prep_notes: str | None = None
+
+
+class RecipeItemUpdate(BaseModel):
+    ingredient_id: str | None = None
+    qty_per_serving: float | None = Field(default=None, gt=0)
+    unit: str | None = None
+    prep_notes: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Transactions
 # ---------------------------------------------------------------------------
