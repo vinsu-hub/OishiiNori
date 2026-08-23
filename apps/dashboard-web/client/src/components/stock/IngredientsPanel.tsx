@@ -1,7 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { useLocation } from 'wouter';
 import { toast } from 'sonner';
-import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { useDraftPersistence } from '@/hooks/useDraftPersistence';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -84,9 +82,12 @@ function computeStatus(expected: number, counted: number | null): ItemStatus {
   return variancePercent > 0 ? 'overage' : 'shortage';
 }
 
-export default function InventoryCount() {
+interface IngredientsPanelProps {
+  onViewStations: () => void;
+}
+
+export function IngredientsPanel({ onViewStations }: IngredientsPanelProps) {
   const { user } = useAuth();
-  const [, navigate] = useLocation();
   const [ingredients, setIngredients] = useState<ApiIngredient[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -393,8 +394,8 @@ export default function InventoryCount() {
   const sortedRows = [...rows].sort(compareRows);
 
   return (
-    <DashboardLayout title="Inventory Count">
-      <div className="p-6 space-y-6">
+    <>
+      <div className="space-y-6">
         {/* Progress Summary */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Card className="border-l-4 border-l-success">
@@ -547,13 +548,13 @@ export default function InventoryCount() {
         <Card className="border-l-4 border-l-primary">
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <div>
-              <CardTitle>Stock Count</CardTitle>
+              <CardTitle>Recipe Ingredients</CardTitle>
               <button
                 type="button"
                 className="text-xs text-primary underline underline-offset-2 mt-0.5"
-                onClick={() => navigate('/stock-count')}
+                onClick={onViewStations}
               >
-                View Stock Count (Stations) &rarr;
+                View Station Items &rarr;
               </button>
             </div>
             {user?.role === 'executive' && (
@@ -893,6 +894,6 @@ export default function InventoryCount() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </DashboardLayout>
+    </>
   );
 }

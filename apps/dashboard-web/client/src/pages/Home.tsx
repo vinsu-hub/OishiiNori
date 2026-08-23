@@ -60,16 +60,16 @@ export default function Home() {
                 <button
                   type="button"
                   className="text-xs text-primary underline underline-offset-2"
-                  onClick={() => navigate('/inventory-count')}
+                  onClick={() => navigate('/stock')}
                 >
-                  Inventory Count &rarr;
+                  Recipe Ingredients &rarr;
                 </button>
                 <button
                   type="button"
                   className="text-xs text-primary underline underline-offset-2"
-                  onClick={() => navigate('/stock-count')}
+                  onClick={() => navigate('/stock?tab=stations')}
                 >
-                  Stock Count (Stations) &rarr;
+                  Station Items &rarr;
                 </button>
               </div>
             </CardContent>

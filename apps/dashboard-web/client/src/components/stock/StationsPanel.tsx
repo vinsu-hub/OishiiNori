@@ -1,7 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useLocation } from 'wouter';
 import { toast } from 'sonner';
-import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -85,9 +83,12 @@ function draftFromEntry(entry: {
   };
 }
 
-export default function StockCount() {
+interface StationsPanelProps {
+  onViewIngredients: () => void;
+}
+
+export function StationsPanel({ onViewIngredients }: StationsPanelProps) {
   const { user } = useAuth();
-  const [, navigate] = useLocation();
   const isManagerOrExecutive = user?.role === 'manager' || user?.role === 'executive';
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('tako_snack');
@@ -188,62 +189,61 @@ export default function StockCount() {
   }
 
   return (
-    <DashboardLayout title="Stock Count">
-      <div className="p-6 space-y-4">
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as ActiveTab)}>
-          <TabsList className="h-auto flex-wrap">
-            {STATIONS.map((s) => (
-              <TabsTrigger key={s.value} value={s.value}>
-                {s.label}
-              </TabsTrigger>
-            ))}
-            {isManagerOrExecutive && <TabsTrigger value="catalog">Manage Catalog</TabsTrigger>}
-          </TabsList>
-        </Tabs>
+    <div className="space-y-4">
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as ActiveTab)}>
+        <TabsList className="h-auto flex-wrap">
+          {STATIONS.map((s) => (
+            <TabsTrigger key={s.value} value={s.value}>
+              {s.label}
+            </TabsTrigger>
+          ))}
+          {isManagerOrExecutive && <TabsTrigger value="catalog">Manage Catalog</TabsTrigger>}
+        </TabsList>
+      </Tabs>
 
-        {activeTab === 'catalog' ? (
-          <ManageCatalog />
-        ) : (
-          <>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Card className="border-l-4 border-l-success">
-                <CardContent className="p-4">
-                  <p className="text-sm text-muted-foreground mb-1">Items Counted</p>
-                  <p className="text-3xl font-bold text-foreground">
-                    {items.filter((i) => {
-                      const d = drafts[i.id];
-                      return !!d && (d.beginning !== '' || d.usage !== '' || d.ending !== '' || d.newStocks !== '');
-                    }).length}
-                    /{items.length}
-                  </p>
-                </CardContent>
-              </Card>
-              <Card className="border-l-4 border-l-warning">
-                <CardContent className="p-4">
-                  <p className="text-sm text-muted-foreground mb-1">Flagged for Verification</p>
-                  <p className="text-3xl font-bold text-warning">
-                    {items.filter((i) => drafts[i.id]?.needsVerification).length}
-                  </p>
-                </CardContent>
-              </Card>
-            </div>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0">
-                <div>
-                  <CardTitle>{STATIONS.find((s) => s.value === activeTab)?.label} -- today's count</CardTitle>
-                  <button
-                    type="button"
-                    className="text-xs text-primary underline underline-offset-2 mt-0.5"
-                    onClick={() => navigate('/inventory-count')}
-                  >
-                    View Inventory Count &rarr;
-                  </button>
-                </div>
-                <Button size="sm" onClick={handleSave} disabled={saving || changedItems.length === 0}>
-                  {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                  Save ({changedItems.length})
-                </Button>
-              </CardHeader>
+      {activeTab === 'catalog' ? (
+        <ManageCatalog />
+      ) : (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card className="border-l-4 border-l-success">
+              <CardContent className="p-4">
+                <p className="text-sm text-muted-foreground mb-1">Items Counted</p>
+                <p className="text-3xl font-bold text-foreground">
+                  {items.filter((i) => {
+                    const d = drafts[i.id];
+                    return !!d && (d.beginning !== '' || d.usage !== '' || d.ending !== '' || d.newStocks !== '');
+                  }).length}
+                  /{items.length}
+                </p>
+              </CardContent>
+            </Card>
+            <Card className="border-l-4 border-l-warning">
+              <CardContent className="p-4">
+                <p className="text-sm text-muted-foreground mb-1">Flagged for Verification</p>
+                <p className="text-3xl font-bold text-warning">
+                  {items.filter((i) => drafts[i.id]?.needsVerification).length}
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0">
+              <div>
+                <CardTitle>{STATIONS.find((s) => s.value === activeTab)?.label} -- today's count</CardTitle>
+                <button
+                  type="button"
+                  className="text-xs text-primary underline underline-offset-2 mt-0.5"
+                  onClick={onViewIngredients}
+                >
+                  View Recipe Ingredients &rarr;
+                </button>
+              </div>
+              <Button size="sm" onClick={handleSave} disabled={saving || changedItems.length === 0}>
+                {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                Save ({changedItems.length})
+              </Button>
+            </CardHeader>
             <CardContent>
               {loading && <p className="text-sm text-muted-foreground">Loading stock items...</p>}
               {!loading && items.length === 0 && (
@@ -335,9 +335,9 @@ export default function StockCount() {
                                 <button
                                   type="button"
                                   className="text-xs text-primary underline underline-offset-2"
-                                  onClick={() => navigate('/inventory-count')}
+                                  onClick={onViewIngredients}
                                 >
-                                  Edit in Inventory Count &rarr;
+                                  Edit in Recipe Ingredients &rarr;
                                 </button>
                               </div>
                             ) : (
@@ -371,11 +371,10 @@ export default function StockCount() {
                 </Table>
               )}
             </CardContent>
-            </Card>
-          </>
-        )}
-      </div>
-    </DashboardLayout>
+          </Card>
+        </>
+      )}
+    </div>
   );
 }
 

@@ -23,7 +23,6 @@ import {
   Truck,
   UtensilsCrossed,
   DollarSign,
-  ClipboardList,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -53,9 +52,8 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
     { icon: ListOrdered, label: 'Order Queue', href: '/order-queue' },
     { icon: QrCode, label: 'Pending Orders', href: '/pending-orders' },
     { icon: ChefHat, label: 'Kitchen Display', href: '/kitchen-display' },
-    { icon: Package, label: 'Inventory Count', href: '/inventory-count' },
+    { icon: Package, label: 'Stock', href: '/stock' },
     { icon: Truck, label: 'Receive Shipment', href: '/inventory-movements' },
-    { icon: ClipboardList, label: 'Stock Count (Stations)', href: '/stock-count' },
     { icon: AlertCircle, label: 'Loss Log', href: '/loss-log' },
     { icon: Zap, label: 'Utility Log', href: '/utility-log' },
     ...(isManagerOrExecutive
@@ -104,11 +102,13 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
         <nav className="flex-1 overflow-y-auto overflow-x-hidden p-2">
           {navItems.map((item) => {
             const Icon = item.icon;
-            const isActive = location === item.href;
+            const isActive =
+              location === item.href ||
+              (item.href === '/stock' && (location === '/inventory-count' || location === '/stock-count'));
 
             return (
               <React.Fragment key={item.href}>
-                {item.href === '/inventory-count' && !isCollapsed && (
+                {item.href === '/stock' && !isCollapsed && (
                   <div className="flex items-center gap-2 px-2 pt-2 pb-1">
                     <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                       Stock &amp; Inventory

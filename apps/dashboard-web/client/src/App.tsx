@@ -19,9 +19,8 @@ import TrendAnalysis from './pages/TrendAnalysis';
 import MenuEditing from './pages/MenuEditing';
 import PnL from './pages/PnL';
 import OishiAi from './pages/OishiAi';
-import InventoryCount from './pages/InventoryCount';
+import Stock from './pages/Stock';
 import InventoryMovements from './pages/InventoryMovements';
-import StockCount from './pages/StockCount';
 import LossLog from './pages/LossLog';
 import UtilityLog from './pages/UtilityLog';
 import HRAttendance from './pages/HRAttendance';
@@ -47,9 +46,11 @@ function Router() {
       <Route path={'/menu-editing'} component={MenuEditing} />
       <Route path={'/pnl'} component={PnL} />
       <Route path={'/oishii-ai'} component={OishiAi} />
-      <Route path={'/inventory-count'} component={InventoryCount} />
+      <Route path={'/stock'} component={Stock} />
+      {/* Legacy paths -- Stock.tsx reads the pathname to land on the right tab */}
+      <Route path={'/inventory-count'} component={Stock} />
+      <Route path={'/stock-count'} component={Stock} />
       <Route path={'/inventory-movements'} component={InventoryMovements} />
-      <Route path={'/stock-count'} component={StockCount} />
       <Route path={'/loss-log'} component={LossLog} />
       <Route path={'/utility-log'} component={UtilityLog} />
       <Route path={'/hr/attendance'} component={HRAttendance} />
