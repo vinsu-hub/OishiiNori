@@ -8,6 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Progress } from '@/components/ui/progress';
 import { Volume2, VolumeX } from 'lucide-react';
 import { BundleFulfillmentChecklist } from '@/components/kitchen/BundleFulfillmentChecklist';
+import { LogExtraUsageDialog } from '@/components/kitchen/LogExtraUsageDialog';
+import { useAuth } from '@/contexts/AuthContext';
 import {
   ApiDigitalOrder,
   ApiProduct,
@@ -92,6 +94,7 @@ interface ChecklistTarget {
 }
 
 export default function KitchenDisplay() {
+  const { user } = useAuth();
   const [transactions, setTransactions] = useState<ApiTransaction[]>([]);
   const [products, setProducts] = useState<ApiProduct[]>([]);
   const [digitalOrderLookup, setDigitalOrderLookup] = useState<Map<string, ApiDigitalOrder>>(new Map());
@@ -99,6 +102,9 @@ export default function KitchenDisplay() {
   const [stationFilter, setStationFilter] = useState<KitchenStation | 'all'>('all');
   const [fulfilledItemIds, setFulfilledItemIds] = useState<Set<string>>(new Set());
   const [checklistTarget, setChecklistTarget] = useState<ChecklistTarget | null>(null);
+  const [extraUsageTarget, setExtraUsageTarget] = useState<{ size: ApiProductSize; product: ApiProduct } | null>(
+    null
+  );
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [soundOn, setSoundOn] = useState(true);
@@ -366,20 +372,32 @@ export default function KitchenDisplay() {
                                 <span>
                                   {item.quantity}x {product.name} ({size.size_label})
                                 </span>
-                                {product.is_bundle &&
-                                  (fulfilled ? (
-                                    <Badge variant="default">Logged</Badge>
-                                  ) : (
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  {!product.is_bundle && (
                                     <Button
                                       size="sm"
-                                      variant="outline"
-                                      onClick={() =>
-                                        setChecklistTarget({ transactionId: order.id, item, product, size })
-                                      }
+                                      variant="ghost"
+                                      className="h-7 px-2 text-xs text-muted-foreground"
+                                      onClick={() => setExtraUsageTarget({ size, product })}
                                     >
-                                      Log rolls used
+                                      Log extra usage
                                     </Button>
-                                  ))}
+                                  )}
+                                  {product.is_bundle &&
+                                    (fulfilled ? (
+                                      <Badge variant="default">Logged</Badge>
+                                    ) : (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() =>
+                                          setChecklistTarget({ transactionId: order.id, item, product, size })
+                                        }
+                                      >
+                                        Log rolls used
+                                      </Button>
+                                    ))}
+                                </div>
                               </div>
                               {item.held_ingredients.length > 0 && (
                                 <p className="text-xs text-destructive">-- hold: {item.held_ingredients.join(', ')}</p>
@@ -426,6 +444,16 @@ export default function KitchenDisplay() {
           onFulfilled={() =>
             setFulfilledItemIds((prev) => new Set(prev).add(checklistTarget.item.id))
           }
+        />
+      )}
+
+      {extraUsageTarget && user && (
+        <LogExtraUsageDialog
+          open={!!extraUsageTarget}
+          onOpenChange={(open) => !open && setExtraUsageTarget(null)}
+          productSizeId={extraUsageTarget.size.id}
+          productName={`${extraUsageTarget.product.name} (${extraUsageTarget.size.size_label})`}
+          employeeId={user.id}
         />
       )}
     </DashboardLayout>

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { useLocation } from 'wouter';
 import { toast } from 'sonner';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -73,6 +74,7 @@ function draftFromEntry(entry: {
 
 export default function StockCount() {
   const { user } = useAuth();
+  const [, navigate] = useLocation();
   const isManagerOrExecutive = user?.role === 'manager' || user?.role === 'executive';
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('tako_snack');
@@ -230,12 +232,16 @@ export default function StockCount() {
                             {item.unit && <p className="text-xs text-muted-foreground">{item.unit}</p>}
                           </TableCell>
                           <TableCell className="text-right">
-                            <Input
-                              type="number"
-                              className="w-24 text-right text-sm ml-auto"
-                              value={d.newStocks}
-                              onChange={(e) => updateDraft(item.id, { newStocks: e.target.value })}
-                            />
+                            {item.ingredient_id ? (
+                              <span className="text-xs text-muted-foreground">--</span>
+                            ) : (
+                              <Input
+                                type="number"
+                                className="w-24 text-right text-sm ml-auto"
+                                value={d.newStocks}
+                                onChange={(e) => updateDraft(item.id, { newStocks: e.target.value })}
+                              />
+                            )}
                           </TableCell>
                           <TableCell className="text-right">
                             <Input
@@ -257,12 +263,27 @@ export default function StockCount() {
                             )}
                           </TableCell>
                           <TableCell className="text-right">
-                            <Input
-                              type="number"
-                              className="w-24 text-right text-sm ml-auto"
-                              value={d.ending}
-                              onChange={(e) => updateDraft(item.id, { ending: e.target.value })}
-                            />
+                            {item.ingredient_id ? (
+                              <div className="text-right">
+                                <p className="text-sm font-medium">
+                                  {item.ingredient_current_stock ?? '--'}
+                                </p>
+                                <button
+                                  type="button"
+                                  className="text-xs text-primary underline underline-offset-2"
+                                  onClick={() => navigate('/inventory-count')}
+                                >
+                                  Edit in Inventory Count &rarr;
+                                </button>
+                              </div>
+                            ) : (
+                              <Input
+                                type="number"
+                                className="w-24 text-right text-sm ml-auto"
+                                value={d.ending}
+                                onChange={(e) => updateDraft(item.id, { ending: e.target.value })}
+                              />
+                            )}
                           </TableCell>
                           <TableCell>
                             <Input

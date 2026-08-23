@@ -1,13 +1,17 @@
 """Physical stock count tool: digitizes the client's 4 handwritten daily
 station stock sheets (New Stocks / Beginning / Usage / Ending format).
 
-Deliberately reuses the existing ingredient-stock machinery for stock items
-that ARE recipe ingredients (apply_ingredient_count / apply_inventory_movement,
-factored out of inventory.py / inventory_movements.py) rather than a second,
-competing way to mutate ingredients.current_stock. Items with no ingredient
-link (packaging, supplies, resale beverages -- most of the sheet) get simple
-direct tracking on stock_items.current_stock instead, since no recipe/COGS
-system exists for them to plug into.
+For a stock item that IS a recipe ingredient, this router deliberately does
+NOT edit ingredients.current_stock at all -- that would be a second,
+competing way to mutate the same number Inventory Count (Ending, via
+apply_ingredient_count in inventory.py) and Receive Shipment (New Stocks,
+via apply_inventory_movement in inventory_movements.py) already own.
+record_count_entry rejects new_stocks/ending for a linked item outright;
+Beginning/Usage/Notes/needs_verification stay recordable as informational
+context regardless. Items with no ingredient link (packaging, supplies,
+resale beverages -- most of the sheet) get simple direct tracking on
+stock_items.current_stock instead, since no recipe/COGS system exists for
+them to plug into.
 """
 
 from datetime import date, datetime, timezone
@@ -16,8 +20,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.auth import CurrentUser, get_current_user, require_role
 from app.deps import get_supabase
-from app.routers.inventory import apply_ingredient_count
-from app.routers.inventory_movements import apply_inventory_movement
 from app.schemas import (
     StockCountEntryCreate,
     StockCountEntryOut,
@@ -144,6 +146,18 @@ def record_count_entry(
         raise HTTPException(status_code=404, detail="Stock item not found")
     stock_item = item_result.data
 
+    # A linked item's actual stock is edited exclusively through Inventory
+    # Count (Ending) / Receive Shipment (New Stocks) -- this avoids two
+    # screens both being able to write the same ingredients.current_stock
+    # number. Beginning/Usage/Notes/needs_verification are informational
+    # only (never touch current_stock) and stay recordable here regardless.
+    if stock_item["ingredient_id"] and (body.new_stocks is not None or body.ending is not None):
+        raise HTTPException(
+            status_code=400,
+            detail="This item is linked to a recipe ingredient -- edit its stock via Inventory Count "
+            "(Ending) or Receive Shipment (New Stocks), not here.",
+        )
+
     count_date = body.count_date or date.today()
 
     existing_entry = (
@@ -179,24 +193,11 @@ def record_count_entry(
     ingredient_count_result = None
     delivery_movement = None
 
-    if stock_item["ingredient_id"]:
-        if body.ending is not None:
-            ingredient_count_result = apply_ingredient_count(
-                supabase, stock_item["ingredient_id"], body.ending, body.recorded_by
-            )
-        if body.new_stocks is not None and body.new_stocks > 0:
-            # No reference_id -- that column is FK'd to transfers(id)
-            # (migration 0015), so it can't point at a stock_count_entries
-            # row; omitted, exactly like a regular delivery movement.
-            delivery_movement = apply_inventory_movement(
-                supabase,
-                stock_item["ingredient_id"],
-                "delivery",
-                body.new_stocks,
-                body.recorded_by,
-                reason=f"Physical stock count -- {stock_item['station']} station",
-            )
-    else:
+    # Only reachable for unlinked items now -- a linked item with ending/
+    # new_stocks set was already rejected above, so these two current_stock-
+    # mutation paths (apply_ingredient_count / apply_inventory_movement) stay
+    # exclusively wired to Inventory Count / Receive Shipment respectively.
+    if not stock_item["ingredient_id"]:
         item_update = {}
         if body.ending is not None:
             item_update["current_stock"] = body.ending

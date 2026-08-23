@@ -95,7 +95,13 @@ _MIGRATION_PENDING_DETAIL = (
 )
 
 
-def _adjust_ingredients_for_size(supabase, product_size_id: str, quantity: float, sign: int) -> dict[str, float]:
+def _adjust_ingredients_for_size(
+    supabase,
+    product_size_id: str,
+    quantity: float,
+    sign: int,
+    held_ingredient_names: list[str] | None = None,
+) -> dict[str, float]:
     """Applies recipe-based stock changes for one product_size sold/restored.
     sign=-1 deducts (a sale), sign=1 restores (a void). Returns the ingredient
     deltas actually applied (id -> signed delta), for logging/response use.
@@ -103,15 +109,30 @@ def _adjust_ingredients_for_size(supabase, product_size_id: str, quantity: float
     qty_per_serving is used LITERALLY, per task spec -- it is already
     pre-scaled per size tier in the seed data; scale_factor on product_sizes
     is documentation-only and must not be applied again here.
+
+    held_ingredient_names: ingredients the customer asked to hold for this
+    line (transaction_items.held_ingredients stores names, not ids -- see
+    POSTerminal.tsx's toggleHeldIngredient). A held ingredient was never
+    actually used, so it's skipped entirely here -- both on the original
+    deduct (sign=-1) and, symmetrically, on a later void's restore
+    (sign=+1), since there's nothing to restore for stock that was never
+    touched. Previously this parameter didn't exist and every recipe line
+    was deducted unconditionally regardless of what was held, silently
+    manufacturing false "shrinkage" that only surfaced later during a
+    manual count.
     """
+    held = set(held_ingredient_names or [])
     recipe_result = (
         supabase.table("recipe_items")
-        .select("ingredient_id, qty_per_serving")
+        .select("ingredient_id, qty_per_serving, ingredients(name)")
         .eq("product_size_id", product_size_id)
         .execute()
     )
     deltas: dict[str, float] = {}
     for recipe_item in recipe_result.data:
+        ingredient_name = recipe_item["ingredients"]["name"]
+        if ingredient_name in held:
+            continue
         ingredient_id = recipe_item["ingredient_id"]
         delta_qty = float(recipe_item["qty_per_serving"]) * quantity * sign
 
@@ -271,7 +292,13 @@ def _create_transaction_row(
         is_bundle = size["products"]["is_bundle"]
         if is_bundle:
             continue
-        _adjust_ingredients_for_size(supabase, item.product_size_id, item.quantity, sign=-1)
+        _adjust_ingredients_for_size(
+            supabase,
+            item.product_size_id,
+            item.quantity,
+            sign=-1,
+            held_ingredient_names=item.held_ingredients if held_ingredients_supported else None,
+        )
 
     if discount:
         discount_amount = subtotal * (discount["percentage"] / 100)
@@ -450,7 +477,13 @@ def void_transaction(
             if fulfillments.data:
                 supabase.table("bundle_fulfillments").delete().eq("transaction_item_id", row["id"]).execute()
         else:
-            _adjust_ingredients_for_size(supabase, row["product_size_id"], float(row["quantity"]), sign=1)
+            _adjust_ingredients_for_size(
+                supabase,
+                row["product_size_id"],
+                float(row["quantity"]),
+                sign=1,
+                held_ingredient_names=row.get("held_ingredients"),
+            )
 
     updated = (
         supabase.table("transactions")
