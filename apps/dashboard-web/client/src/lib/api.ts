@@ -925,6 +925,56 @@ export function fetchTopProducts(params?: { date_from?: string; date_to?: string
 }
 
 // ---------------------------------------------------------------------------
+// P&L (executive-only)
+// ---------------------------------------------------------------------------
+
+export type PnLPeriod = 'today' | 'week' | 'month';
+
+export interface ApiPnLCostBreakdown {
+  cogs: number;
+  payroll: number;
+  utilities: number;
+  losses: number;
+}
+
+export interface ApiPnLDepartmentMargin {
+  department: Department;
+  revenue: number;
+  cogs: number;
+  margin: number;
+  margin_pct: number | null;
+}
+
+export interface ApiPnLLossByReason {
+  reason: LossReason;
+  cost_impact: number;
+}
+
+export interface ApiPnL {
+  period: PnLPeriod;
+  date_from: string;
+  date_to: string;
+  revenue: number;
+  discount_total: number;
+  tax_total: number;
+  order_count: number;
+  gross_profit: number;
+  net_profit: number;
+  food_cost_pct: number | null;
+  costs: ApiPnLCostBreakdown;
+  losses_by_reason: ApiPnLLossByReason[];
+  department_margins: ApiPnLDepartmentMargin[];
+  ingredients_missing_cost: number;
+  ingredients_total: number;
+  unfulfilled_bundle_sales: number;
+  payroll_employee_count: number;
+}
+
+export function fetchPnL(period: PnLPeriod): Promise<ApiPnL> {
+  return request(`/pnl?period=${period}`);
+}
+
+// ---------------------------------------------------------------------------
 // Oishii AI
 // ---------------------------------------------------------------------------
 

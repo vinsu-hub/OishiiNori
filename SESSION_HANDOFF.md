@@ -13,6 +13,23 @@
 
 ---
 
+## 💹 P&L dashboard: automatic COGS from existing recipe/BOM data (completed 2026-08-23)
+
+New executive-only **P&L** tab (`/pnl`, Sidebar entry) with a Today/Week/Month rolling-window toggle, showing revenue, gross profit, net profit, food cost %, a cost breakdown (COGS/payroll/utilities/losses), and a margin-by-department table -- nothing computed a profit figure anywhere in this codebase before this.
+
+**Deliberately reuses the existing recipe/BOM layer instead of building new schema**: `recipe_items` (per size, already used for live stock deduction) and `bundle_fulfillments` (which maki rolls a bundle sale actually consumed, written by the kitchen's bundle-fulfillment flow) are joined against `ingredients.unit_cost` at report time -- no new `recipes`/`recipe_components`/`pnl_snapshots` tables, no scheduled job. New router `services/api-fastapi/app/routers/pnl.py`, one endpoint `GET /pnl?period=today|week|month`.
+
+**Known, accepted limitations** (all deliberate scope calls, not bugs):
+- COGS for a past period reflects **today's** ingredient costs, not what was in effect on the sale date -- `ingredients.unit_cost` is most-recent-cost only (migration `0021`), no per-sale cost snapshot exists anywhere.
+- Only 3 of 73 ingredients have a `unit_cost` set today (Salmon, Angus beef, Asparagus -- from earlier sessions' testing/backfill), so COGS/food-cost % read near-₱0 until more costs are entered via the normal Receive Shipment flow. The page surfaces a visible "N of 73 ingredients still need a cost" callout so this reads as a known data gap, not a bug.
+- A bundle sale with no kitchen bundle-fulfillment record contributes ₱0 COGS (no estimate) -- surfaced as a "N bundle sale(s) have no fulfillment record" callout.
+- No utility-cost apportionment across `days_covered` -- a multi-day bill's full cost attributes to its single logged `business_date`, matching Command Center's existing (accepted) behavior.
+- Payroll cost is gross wages only (`hr._compute_payroll_summary`, reused live -- no statutory contributions exist anywhere in this schema).
+
+**Verified live end-to-end** against the local dev backend (port 8010) and cross-checked against production data via the live Supabase project: a controlled non-bundle sale (2× an ₱450 ingredient) moved COGS by exactly ₱900, voiding it reversed the delta exactly; an unfulfilled Small Sushi Boat sale contributed ₱0 and was flagged, then after a real bundle-fulfillment call (California Maki ×34, with Nori sheet temporarily priced at ₱5) COGS moved by exactly ₱170 and the unfulfilled flag cleared; voiding that bundle sale reversed the COGS and hard-deleted the fulfillment record as expected. Payroll cost matched `/attendance/summary` exactly for the same range. All test data (product, recipe line, temporary ingredient cost, transactions) was cleaned up/reverted afterward. Also ran the existing 71/71 `system_health_check.py` (dev + prod) and a Command Center DB-relay smoke test (API figures vs. direct-DB recomputation, both environments) as a pre-deploy regression check -- both clean. Frontend `tsc --noEmit` clean.
+
+---
+
 ## 🍽️ Menu Editing: executive-only product/recipe/image CRUD (completed 2026-08-23)
 
 The catalog (products, sizes/prices, recipes, photos) had been read-only since the original xlsx seed -- any change needed a developer touching the database directly. New executive-only **Menu Editing** tab (`/menu-editing`, Sidebar entry under the executive-only block) lets an executive edit item details, per-size prices, recipe/ingredient components, replace photos, add new menu items, and deactivate/reactivate items, entirely through the UI.

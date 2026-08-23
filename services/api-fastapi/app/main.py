@@ -13,6 +13,7 @@ from app.routers import (
     loss_records,
     menu_admin,
     oishi_ai,
+    pnl,
     products,
     recipes,
     transactions,
@@ -42,6 +43,7 @@ app.include_router(utility_logs.router)
 app.include_router(digital_menu.router)
 app.include_router(dashboard_summary.router)
 app.include_router(analytics.router)
+app.include_router(pnl.router)
 app.include_router(oishi_ai.router)
 
 

@@ -16,6 +16,7 @@ import POSManagement from './pages/POSManagement';
 import CommandCenter from './pages/CommandCenter';
 import TrendAnalysis from './pages/TrendAnalysis';
 import MenuEditing from './pages/MenuEditing';
+import PnL from './pages/PnL';
 import OishiAi from './pages/OishiAi';
 import InventoryCount from './pages/InventoryCount';
 import InventoryMovements from './pages/InventoryMovements';
@@ -42,6 +43,7 @@ function Router() {
       <Route path={'/command-center'} component={CommandCenter} />
       <Route path={'/trends'} component={TrendAnalysis} />
       <Route path={'/menu-editing'} component={MenuEditing} />
+      <Route path={'/pnl'} component={PnL} />
       <Route path={'/oishii-ai'} component={OishiAi} />
       <Route path={'/inventory-count'} component={InventoryCount} />
       <Route path={'/inventory-movements'} component={InventoryMovements} />

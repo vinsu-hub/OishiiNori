@@ -748,6 +748,53 @@ class TopProductsResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# P&L (executive-only)
+# ---------------------------------------------------------------------------
+
+PnLPeriod = Literal["today", "week", "month"]
+
+
+class PnLCostBreakdown(BaseModel):
+    cogs: float
+    payroll: float
+    utilities: float
+    losses: float
+
+
+class PnLDepartmentMargin(BaseModel):
+    department: DepartmentType
+    revenue: float
+    cogs: float
+    margin: float
+    margin_pct: float | None = None
+
+
+class PnLLossByReason(BaseModel):
+    reason: LossReason
+    cost_impact: float
+
+
+class PnLResponse(BaseModel):
+    period: PnLPeriod
+    date_from: date
+    date_to: date
+    revenue: float
+    discount_total: float
+    tax_total: float
+    order_count: int
+    gross_profit: float
+    net_profit: float
+    food_cost_pct: float | None = None
+    costs: PnLCostBreakdown
+    losses_by_reason: list[PnLLossByReason] = Field(default_factory=list)
+    department_margins: list[PnLDepartmentMargin] = Field(default_factory=list)
+    ingredients_missing_cost: int
+    ingredients_total: int
+    unfulfilled_bundle_sales: int
+    payroll_employee_count: int
+
+
+# ---------------------------------------------------------------------------
 # Oishii AI
 # ---------------------------------------------------------------------------
 

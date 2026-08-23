@@ -20,6 +20,7 @@ import {
   Sparkles,
   Truck,
   UtensilsCrossed,
+  DollarSign,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -67,6 +68,7 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
           { icon: LayoutDashboard, label: 'Command Center', href: '/command-center' },
           { icon: TrendingUp, label: 'Trend Analysis', href: '/trends' },
           { icon: UtensilsCrossed, label: 'Menu Editing', href: '/menu-editing' },
+          { icon: DollarSign, label: 'P&L', href: '/pnl' },
           { icon: Sparkles, label: 'Oishii AI', href: '/oishii-ai' },
         ]
       : []),
