@@ -30,10 +30,12 @@ import {
   createLossRecord,
   fetchExpiringSoon,
   fetchInventory,
+  updateIngredient,
 } from '@/lib/api';
+import { formatCurrency } from '@/lib/utils';
 
 type ItemStatus = 'pending' | 'counted' | 'overage' | 'shortage';
-type SortKey = 'name' | 'category' | 'expected' | 'variance' | 'status';
+type SortKey = 'name' | 'category' | 'unit_cost' | 'expected' | 'variance' | 'status';
 type SortDir = 'asc' | 'desc';
 
 const STATUS_RANK: Record<ItemStatus, number> = { pending: 0, counted: 1, overage: 2, shortage: 3 };
@@ -68,6 +70,8 @@ export default function InventoryCount() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [countedValues, setCountedValues] = useState<Record<string, string>>({});
+  const [unitCostValues, setUnitCostValues] = useState<Record<string, string>>({});
+  const [savingCosts, setSavingCosts] = useState(false);
   const [shrinkageDialogOpen, setShrinkageDialogOpen] = useState(false);
   const [shrinkageItems, setShrinkageItems] = useState<ShrinkageItem[]>([]);
   const [loggingId, setLoggingId] = useState<string | null>(null);
@@ -107,6 +111,36 @@ export default function InventoryCount() {
 
   const updateCount = (id: string, value: string) => {
     setCountedValues({ ...countedValues, [id]: value });
+  };
+
+  const updateUnitCost = (id: string, value: string) => {
+    setUnitCostValues({ ...unitCostValues, [id]: value });
+  };
+
+  const handleSaveCosts = async () => {
+    const entries = Object.entries(unitCostValues).filter(([id, v]) => {
+      const ingredient = ingredients.find((i) => i.id === id);
+      const current = ingredient?.unit_cost != null ? String(ingredient.unit_cost) : '';
+      return v !== current;
+    });
+    if (entries.length === 0) {
+      toast.error('Change at least one unit cost first.');
+      return;
+    }
+    setSavingCosts(true);
+    try {
+      await Promise.all(
+        entries.map(([id, value]) => updateIngredient(id, { unit_cost: value === '' ? null : parseFloat(value) }))
+      );
+      toast.success('Unit costs saved.');
+      setUnitCostValues({});
+      loadInventory();
+    } catch (error) {
+      toast.error('Could not save unit costs. Try again.');
+      console.error(error);
+    } finally {
+      setSavingCosts(false);
+    }
   };
 
   const handleSubmit = async () => {
@@ -246,6 +280,14 @@ export default function InventoryCount() {
         if (ac === null) return 1; // uncategorized always sorts last
         if (bc === null) return -1;
         return sortDir === 'asc' ? ac.localeCompare(bc) : bc.localeCompare(ac);
+      }
+      case 'unit_cost': {
+        const ac = a.ingredient.unit_cost;
+        const bc = b.ingredient.unit_cost;
+        if (ac === null && bc === null) return 0;
+        if (ac === null) return 1; // uncosted always sorts last
+        if (bc === null) return -1;
+        return sortDir === 'asc' ? ac - bc : bc - ac;
       }
       case 'expected':
         return sortDir === 'asc'
@@ -421,8 +463,19 @@ export default function InventoryCount() {
 
         {/* Inventory Table */}
         <Card className="border-l-4 border-l-primary">
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <CardTitle>Stock Count</CardTitle>
+            {user?.role === 'executive' && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleSaveCosts}
+                disabled={savingCosts || Object.keys(unitCostValues).length === 0}
+              >
+                {savingCosts ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                Save Unit Costs
+              </Button>
+            )}
           </CardHeader>
           <CardContent>
             {loading ? (
@@ -444,6 +497,11 @@ export default function InventoryCount() {
                     <TableHead className="cursor-pointer select-none" onClick={() => handleSort('category')}>
                       <span className="inline-flex items-center gap-1">
                         Category <SortIcon column="category" />
+                      </span>
+                    </TableHead>
+                    <TableHead className="text-right cursor-pointer select-none" onClick={() => handleSort('unit_cost')}>
+                      <span className="inline-flex items-center gap-1 justify-end">
+                        Unit Cost <SortIcon column="unit_cost" />
                       </span>
                     </TableHead>
                     <TableHead className="text-right cursor-pointer select-none" onClick={() => handleSort('expected')}>
@@ -469,6 +527,21 @@ export default function InventoryCount() {
                     <TableRow key={ingredient.id}>
                       <TableCell className="font-medium">{ingredient.name}</TableCell>
                       <TableCell className="text-muted-foreground">{ingredient.category || '--'}</TableCell>
+                      <TableCell className="text-right">
+                        {user?.role === 'executive' ? (
+                          <Input
+                            type="number"
+                            placeholder="--"
+                            value={unitCostValues[ingredient.id] ?? (ingredient.unit_cost != null ? String(ingredient.unit_cost) : '')}
+                            onChange={(e) => updateUnitCost(ingredient.id, e.target.value)}
+                            className="w-24 text-right text-sm ml-auto"
+                          />
+                        ) : ingredient.unit_cost != null ? (
+                          formatCurrency(ingredient.unit_cost)
+                        ) : (
+                          <span className="text-muted-foreground">--</span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-right">
                         {ingredient.current_stock} {ingredient.base_unit}
                       </TableCell>

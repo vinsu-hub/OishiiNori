@@ -461,6 +461,10 @@ export function countStock(
   return request(`/inventory/${ingredientId}/count`, { method: 'POST', body: JSON.stringify(body) });
 }
 
+export function updateIngredient(id: string, body: { unit_cost: number | null }): Promise<ApiIngredient> {
+  return request(`/inventory/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
 export type MovementType = 'trans_in' | 'trans_out' | 'delivery' | 'transfer_in' | 'transfer_out' | 'count_adjustment';
 
 export interface CreateInventoryMovementRequest {

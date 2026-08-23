@@ -326,6 +326,10 @@ class IngredientOut(BaseModel):
     unit_cost: float | None = None
 
 
+class IngredientUpdate(BaseModel):
+    unit_cost: float | None = None
+
+
 class ExpiringIngredient(BaseModel):
     ingredient_id: str
     ingredient_name: str

@@ -1,10 +1,16 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.auth import CurrentUser, get_current_user
+from app.auth import CurrentUser, get_current_user, require_role
 from app.deps import get_supabase
-from app.schemas import ExpiringIngredient, IngredientOut, InventoryCountRequest, InventoryCountResponse
+from app.schemas import (
+    ExpiringIngredient,
+    IngredientOut,
+    IngredientUpdate,
+    InventoryCountRequest,
+    InventoryCountResponse,
+)
 
 router = APIRouter(tags=["inventory"])
 
@@ -76,6 +82,32 @@ def get_ingredient(ingredient_id: str, user: CurrentUser = Depends(get_current_u
     if not result or not result.data:
         raise HTTPException(status_code=404, detail="Ingredient not found")
     return result.data
+
+
+@router.patch("/inventory/{ingredient_id}", response_model=IngredientOut)
+def update_ingredient(
+    ingredient_id: str,
+    body: IngredientUpdate,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Direct edit of an ingredient's financial baseline (unit_cost) --
+    executive-only, since this feeds the P&L dashboard's COGS calculation.
+    Distinct from the indirect unit_cost_snapshot path on delivery/trans_in
+    movements (inventory_movements.py) -- both are plain column writes, so
+    whichever happens last wins, same as two delivery movements already
+    behave under this schema's most-recent-cost costing."""
+    require_role(user, "executive")
+    supabase = get_supabase()
+    existing = supabase.table("ingredients").select("id").eq("id", ingredient_id).maybe_single().execute()
+    if not existing or not existing.data:
+        raise HTTPException(status_code=404, detail="Ingredient not found")
+
+    update_data = body.model_dump(exclude_unset=True)
+    update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    result = supabase.table("ingredients").update(update_data).eq("id", ingredient_id).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Ingredient not found")
+    return result.data[0]
 
 
 @router.post("/inventory/{ingredient_id}/count", response_model=InventoryCountResponse)

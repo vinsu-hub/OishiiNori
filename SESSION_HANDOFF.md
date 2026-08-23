@@ -13,6 +13,18 @@
 
 ---
 
+## 💰 Editable ingredient unit cost (completed 2026-08-23)
+
+The P&L dashboard's COGS calculation depends entirely on `ingredients.unit_cost`, but the only way that field could be set was indirectly, by logging a delivery/trans_in inventory movement with a cost snapshot -- there was no way to just look at an ingredient and type in what it costs. New `PATCH /inventory/{ingredient_id}` (`IngredientUpdate{unit_cost}`, executive-only, `require_role` newly imported into `inventory.py`) plus a new "Unit Cost" column on **Inventory Count** (`InventoryCount.tsx`) -- sortable, null-last, with its own separate "Save Unit Costs" button so it doesn't interfere with the existing stock-count save/shrinkage-dialog flow. Executives get an editable input pre-filled with the current value (empty clears it back to `null`); other roles see a read-only `formatCurrency()`-formatted value with no save control.
+
+**Deliberately does not conflict with the existing delivery-movement cost path** -- both are plain column writes to `ingredients.unit_cost`, whichever happens last wins, identical to how two delivery movements already behave under this schema's "most-recent-cost" costing. Not a new hazard.
+
+**Scope note**: this only builds the editable tool -- filling in real costs for the (now down to ~69 of 73, one test ingredient temporarily costed then reverted during verification) still-uncosted ingredients is a manual step the client does themselves through this new UI; no real cost data existed to seed with.
+
+**Verified**: direct endpoint tests (set a cost, clear it back to null, 403 for a manager, 401 unauthenticated, 404 unknown ingredient) plus a real Playwright walkthrough as both executive (typed and saved a cost, confirmed the toast and DB persistence) and manager (confirmed no Save button, page otherwise unaffected) -- zero console errors either way. Also ran the existing 71/71 `system_health_check.py` (dev + prod) as a pre-deploy regression check. All test data reverted. Frontend `tsc --noEmit` clean.
+
+---
+
 ## 💹 P&L dashboard: automatic COGS from existing recipe/BOM data (completed 2026-08-23)
 
 New executive-only **P&L** tab (`/pnl`, Sidebar entry) with a Today/Week/Month rolling-window toggle, showing revenue, gross profit, net profit, food cost %, a cost breakdown (COGS/payroll/utilities/losses), and a margin-by-department table -- nothing computed a profit figure anywhere in this codebase before this.
