@@ -8,10 +8,10 @@ from app.attendance_utils import hr_table
 from app.auth import CurrentUser, get_current_user, require_role
 from app.deps import get_supabase
 from app.ph_time import ph_day_bounds_utc
+from app.routers.inventory import get_low_stock_ingredients
 from app.schemas import (
     DashboardSummaryResponse,
     DepartmentBreakdown,
-    LowStockIngredient,
     UtilityCostBreakdown,
 )
 
@@ -60,20 +60,7 @@ def get_dashboard_summary(
     )
     loss_total = sum(float(r["cost_impact"]) for r in loss_result.data)
 
-    ingredients_result = (
-        supabase.table("ingredients").select("id, name, current_stock, reorder_threshold, base_unit").execute()
-    )
-    low_stock = [
-        LowStockIngredient(
-            id=i["id"],
-            name=i["name"],
-            current_stock=float(i["current_stock"]),
-            reorder_threshold=float(i["reorder_threshold"]),
-            base_unit=i["base_unit"],
-        )
-        for i in ingredients_result.data
-        if float(i["current_stock"]) <= float(i["reorder_threshold"])
-    ]
+    low_stock = get_low_stock_ingredients(supabase)
 
     # Same consumption/cost formula as UtilityLog.tsx's client-side preview
     # (reading_end - reading_start if both given, else quantity; cost =

@@ -5,6 +5,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { AuthProvider } from './contexts/AuthContext';
 import { SyncProvider } from './contexts/SyncContext';
+import { InventoryAlertsProvider } from './contexts/InventoryAlertsContext';
 
 import Login from './pages/Login';
 import Home from './pages/Home';
@@ -69,10 +70,12 @@ function App() {
       <ThemeProvider defaultTheme="light">
         <AuthProvider>
           <SyncProvider>
-            <TooltipProvider>
-              <Toaster />
-              <Router />
-            </TooltipProvider>
+            <InventoryAlertsProvider>
+              <TooltipProvider>
+                <Toaster />
+                <Router />
+              </TooltipProvider>
+            </InventoryAlertsProvider>
           </SyncProvider>
         </AuthProvider>
       </ThemeProvider>

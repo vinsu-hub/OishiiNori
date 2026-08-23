@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { useLocation } from 'wouter';
 import { toast } from 'sonner';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
+import { useDraftPersistence } from '@/hooks/useDraftPersistence';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -37,13 +39,13 @@ import {
   CostVolatilityTier,
   LossReason,
   countStock,
-  createLossRecord,
   fetchExpiringSoon,
   fetchIngredientRecipeUsage,
   fetchInventory,
   updateIngredient,
 } from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
+import { LossRecordForm } from '@/components/shared/LossRecordForm';
 
 const COST_VOLATILITY_TIERS: { value: CostVolatilityTier; label: string }[] = [
   { value: 'low', label: 'Low' },
@@ -72,7 +74,6 @@ interface ShrinkageItem {
   ingredientName: string;
   unit: string;
   quantity: number;
-  reason: LossReason;
   logged: boolean;
 }
 
@@ -85,15 +86,29 @@ function computeStatus(expected: number, counted: number | null): ItemStatus {
 
 export default function InventoryCount() {
   const { user } = useAuth();
+  const [, navigate] = useLocation();
   const [ingredients, setIngredients] = useState<ApiIngredient[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [countedValues, setCountedValues] = useState<Record<string, string>>({});
+  const { clearDraft: clearCountDraft } = useDraftPersistence(
+    'oishii-draft-inventory-count',
+    countedValues,
+    (restored) => {
+      setCountedValues((prev) => {
+        const ingredientIds = new Set(ingredients.map((i) => i.id));
+        const merged = { ...prev };
+        for (const [id, v] of Object.entries(restored)) {
+          if (ingredientIds.size === 0 || ingredientIds.has(id)) merged[id] = v;
+        }
+        return merged;
+      });
+    }
+  );
   const [unitCostValues, setUnitCostValues] = useState<Record<string, string>>({});
   const [savingCosts, setSavingCosts] = useState(false);
   const [shrinkageDialogOpen, setShrinkageDialogOpen] = useState(false);
   const [shrinkageItems, setShrinkageItems] = useState<ShrinkageItem[]>([]);
-  const [loggingId, setLoggingId] = useState<string | null>(null);
   const [howItWorksOpen, setHowItWorksOpen] = useState(true);
   const [sortKey, setSortKey] = useState<SortKey>('name');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
@@ -261,12 +276,12 @@ export default function InventoryCount() {
             ingredientName: r.ingredient.name,
             unit: r.ingredient.base_unit,
             quantity: Math.abs(r.variance),
-            reason: 'shrinkage',
             logged: false,
           })
         );
 
       setCountedValues({});
+      clearCountDraft();
       loadInventory();
 
       if (shortages.length > 0) {
@@ -281,32 +296,9 @@ export default function InventoryCount() {
     }
   };
 
-  const handleLogShrinkage = async (item: ShrinkageItem) => {
-    if (!user?.id) return;
-    setLoggingId(item.ingredientId);
-    try {
-      await createLossRecord({
-        employee_id: user.id,
-        ingredient_id: item.ingredientId,
-        reason: item.reason,
-        quantity: item.quantity,
-        skip_stock_deduction: true,
-      });
-      toast.success(`${item.ingredientName} logged as a loss`);
-      setShrinkageItems((prev) =>
-        prev.map((i) => (i.ingredientId === item.ingredientId ? { ...i, logged: true } : i))
-      );
-    } catch (error) {
-      toast.error(`Could not log ${item.ingredientName}. Try again.`);
-      console.error(error);
-    } finally {
-      setLoggingId(null);
-    }
-  };
-
-  const updateShrinkageReason = (ingredientId: string, reason: LossReason) => {
+  const markShrinkageLogged = (ingredientId: string) => {
     setShrinkageItems((prev) =>
-      prev.map((i) => (i.ingredientId === ingredientId ? { ...i, reason } : i))
+      prev.map((i) => (i.ingredientId === ingredientId ? { ...i, logged: true } : i))
     );
   };
 
@@ -554,7 +546,16 @@ export default function InventoryCount() {
         {/* Inventory Table */}
         <Card className="border-l-4 border-l-primary">
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
-            <CardTitle>Stock Count</CardTitle>
+            <div>
+              <CardTitle>Stock Count</CardTitle>
+              <button
+                type="button"
+                className="text-xs text-primary underline underline-offset-2 mt-0.5"
+                onClick={() => navigate('/stock-count')}
+              >
+                View Stock Count (Stations) &rarr;
+              </button>
+            </div>
             {user?.role === 'executive' && (
               <Button
                 size="sm"
@@ -760,35 +761,23 @@ export default function InventoryCount() {
                     Logged
                   </Badge>
                 ) : (
-                  <div className="flex items-center gap-2 shrink-0">
-                    <Select
-                      value={item.reason}
-                      onValueChange={(v) => updateShrinkageReason(item.ingredientId, v as LossReason)}
-                    >
-                      <SelectTrigger className="w-40 h-8 text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {SHRINKAGE_REASONS.map((r) => (
-                          <SelectItem key={r.value} value={r.value}>
-                            {r.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={loggingId === item.ingredientId}
-                      onClick={() => handleLogShrinkage(item)}
-                    >
-                      {loggingId === item.ingredientId ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        'Log Loss'
-                      )}
-                    </Button>
-                  </div>
+                  user?.id && (
+                    <LossRecordForm
+                      layout="compact"
+                      employeeId={user.id}
+                      fixedIngredientId={item.ingredientId}
+                      fixedIngredientLabel={item.ingredientName}
+                      quantityEditable={false}
+                      fixedQuantity={item.quantity}
+                      quantityUnit={item.unit}
+                      reasonOptions={SHRINKAGE_REASONS}
+                      defaultReason="shrinkage"
+                      skipStockDeduction
+                      submitLabel="Log Loss"
+                      successToast={() => `${item.ingredientName} logged as a loss`}
+                      onSuccess={() => markShrinkageLogged(item.ingredientId)}
+                    />
+                  )
                 )}
               </div>
             ))}

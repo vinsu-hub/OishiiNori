@@ -7,6 +7,8 @@
  * uses a per-department theme instead.
  */
 
+import type { LossReason } from '@/lib/api';
+
 export type Department = 'kitchen' | 'cafe';
 export type Role = 'employee' | 'manager' | 'executive';
 
@@ -30,7 +32,7 @@ export interface SyncStatus {
   pendingChanges: number;
 }
 
-export const LOSS_REASONS = [
+export const LOSS_REASONS: { value: LossReason; label: string }[] = [
   { value: 'spoilage', label: 'Spoilage' },
   { value: 'breakage', label: 'Breakage' },
   { value: 'comp', label: 'Complimentary' },

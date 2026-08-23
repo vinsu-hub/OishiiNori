@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.auth import CurrentUser, get_current_user, require_role
 from app.deps import get_supabase
 from app.schemas import (
+    LowStockStockItem,
     StockCountEntryCreate,
     StockCountEntryOut,
     StockCountEntryResponse,
@@ -38,6 +39,35 @@ def _to_stock_item_out(row: dict) -> dict:
     row["ingredient_name"] = ingredient.get("name")
     row["ingredient_current_stock"] = ingredient.get("current_stock")
     return row
+
+
+def get_low_stock_stock_items(supabase) -> list[LowStockStockItem]:
+    """Unlinked stock items (packaging/supplies/resale) at or below their
+    own reorder_threshold -- a column that existed since migration 0022 but
+    was never read by any route until now. Deliberately excludes linked
+    items: a linked item's real stock lives on ingredients.current_stock
+    (get_low_stock_ingredients in inventory.py already covers it), so
+    including it here would double-count the same shortage twice."""
+    result = (
+        supabase.table("stock_items")
+        .select("id, name, station, current_stock, reorder_threshold, unit")
+        .eq("active", True)
+        .is_("ingredient_id", "null")
+        .not_.is_("reorder_threshold", "null")
+        .execute()
+    )
+    return [
+        LowStockStockItem(
+            id=i["id"],
+            name=i["name"],
+            station=i["station"],
+            current_stock=float(i["current_stock"]),
+            reorder_threshold=float(i["reorder_threshold"]),
+            unit=i["unit"],
+        )
+        for i in result.data
+        if float(i["current_stock"]) <= float(i["reorder_threshold"])
+    ]
 
 
 @router.get("/stock-items", response_model=list[StockItemOut])

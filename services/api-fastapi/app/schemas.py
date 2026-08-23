@@ -797,6 +797,22 @@ class LowStockIngredient(BaseModel):
     base_unit: str
 
 
+class LowStockStockItem(BaseModel):
+    id: str
+    name: str
+    station: StockStation
+    current_stock: float
+    reorder_threshold: float
+    unit: str | None = None
+
+
+class LowStockSummaryResponse(BaseModel):
+    ingredient_count: int
+    stock_item_count: int
+    ingredients: list[LowStockIngredient]
+    stock_items: list[LowStockStockItem]
+
+
 class UtilityCostBreakdown(BaseModel):
     utility_type: UtilityType
     cost: float

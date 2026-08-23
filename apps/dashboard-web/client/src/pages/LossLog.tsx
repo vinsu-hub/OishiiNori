@@ -4,12 +4,8 @@ import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ApiIngredient, ApiLossRecord, LossReason, createLossRecord, fetchInventory, fetchLossRecords } from '@/lib/api';
+import { LossRecordForm } from '@/components/shared/LossRecordForm';
+import { ApiIngredient, ApiLossRecord, fetchInventory, fetchLossRecords } from '@/lib/api';
 import { LOSS_REASONS } from '@/lib/types';
 
 const POLL_INTERVAL_MS = 20_000;
@@ -19,13 +15,7 @@ export default function LossLog() {
   const [ingredients, setIngredients] = useState<ApiIngredient[]>([]);
   const [records, setRecords] = useState<ApiLossRecord[]>([]);
   const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-
-  const [ingredientId, setIngredientId] = useState('');
-  const [reason, setReason] = useState<LossReason>('spoilage');
-  const [quantity, setQuantity] = useState('');
-  const [unitCost, setUnitCost] = useState('');
-  const [skipStockDeduction, setSkipStockDeduction] = useState(false);
+  const [formKey, setFormKey] = useState(0);
 
   const load = useCallback(() => {
     Promise.all([fetchInventory(), fetchLossRecords(50)])
@@ -49,105 +39,29 @@ export default function LossLog() {
     return map;
   }, [ingredients]);
 
-  function resetForm() {
-    setIngredientId('');
-    setReason('spoilage');
-    setQuantity('');
-    setUnitCost('');
-    setSkipStockDeduction(false);
-  }
-
-  async function handleSubmit() {
-    if (!user) return;
-    if (!ingredientId) {
-      toast.error('Select an ingredient');
-      return;
-    }
-    const qty = Number(quantity);
-    if (!qty || qty <= 0) {
-      toast.error('Enter a quantity greater than 0');
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const record = await createLossRecord({
-        ingredient_id: ingredientId,
-        employee_id: user.id,
-        reason,
-        quantity: qty,
-        unit_cost: unitCost.trim() ? Number(unitCost) : undefined,
-        skip_stock_deduction: skipStockDeduction,
-      });
-      toast.success(`Loss logged -- cost impact ${record.cost_impact.toFixed(2)}`);
-      resetForm();
-      load();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to log loss');
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
   return (
     <DashboardLayout title="Loss Log">
       <div className="p-6 space-y-6">
         <Card>
-          <CardContent className="pt-6 space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label>Ingredient</Label>
-                <Select value={ingredientId} onValueChange={setIngredientId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select ingredient" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {ingredients.map((ing) => (
-                      <SelectItem key={ing.id} value={ing.id}>
-                        {ing.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1">
-                <Label>Reason</Label>
-                <Select value={reason} onValueChange={(v) => setReason(v as LossReason)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {LOSS_REASONS.map((r) => (
-                      <SelectItem key={r.value} value={r.value}>
-                        {r.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1">
-                <Label>Quantity {ingredientsById.get(ingredientId) ? `(${ingredientsById.get(ingredientId)?.base_unit})` : ''}</Label>
-                <Input type="number" min={0} value={quantity} onChange={(e) => setQuantity(e.target.value)} />
-              </div>
-              <div className="space-y-1">
-                <Label>Unit cost (optional)</Label>
-                <Input type="number" min={0} step="0.01" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} />
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id="skip-deduction"
-                checked={skipStockDeduction}
-                onCheckedChange={(checked) => setSkipStockDeduction(checked === true)}
+          <CardContent className="pt-6">
+            {user && (
+              <LossRecordForm
+                key={formKey}
+                employeeId={user.id}
+                ingredientOptions={ingredients.map((ing) => ({ id: ing.id, name: ing.name, unit: ing.base_unit }))}
+                reasonOptions={LOSS_REASONS}
+                defaultReason="spoilage"
+                skipStockDeduction={false}
+                allowSkipToggle
+                allowUnitCostOverride
+                submitLabel="Log loss"
+                successToast={(record) => `Loss logged -- cost impact ${record.cost_impact.toFixed(2)}`}
+                onSuccess={() => {
+                  setFormKey((k) => k + 1);
+                  load();
+                }}
               />
-              <Label htmlFor="skip-deduction" className="text-sm font-normal">
-                Skip stock deduction (this loss was already reflected by a prior Count Stock adjustment)
-              </Label>
-            </div>
-
-            <Button disabled={submitting} onClick={handleSubmit}>
-              {submitting ? 'Logging...' : 'Log loss'}
-            </Button>
+            )}
           </CardContent>
         </Card>
 

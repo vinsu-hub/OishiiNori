@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation } from 'wouter';
 import { toast } from 'sonner';
 import { DashboardLayout } from '@/components/DashboardLayout';
@@ -30,6 +30,7 @@ import {
   recordStockCount,
   updateStockItem,
 } from '@/lib/api';
+import { useDraftPersistence } from '@/hooks/useDraftPersistence';
 
 const STATIONS: { value: StockStation; label: string }[] = [
   { value: 'tako_snack', label: 'Tako / Snack' },
@@ -51,6 +52,18 @@ interface DraftRow {
 
 function emptyDraft(): DraftRow {
   return { newStocks: '', beginning: '', usage: '', ending: '', notes: '', needsVerification: false };
+}
+
+function draftRowChanged(a: DraftRow | undefined, b: DraftRow | undefined): boolean {
+  if (!a || !b) return false;
+  return (
+    a.newStocks !== b.newStocks ||
+    a.beginning !== b.beginning ||
+    a.usage !== b.usage ||
+    a.ending !== b.ending ||
+    a.notes !== b.notes ||
+    a.needsVerification !== b.needsVerification
+  );
 }
 
 function draftFromEntry(entry: {
@@ -84,6 +97,28 @@ export default function StockCount() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  // Draft persistence: only the changed rows (vs. originalDrafts) get
+  // persisted, keyed per-station, so a lost tab doesn't lose an in-progress
+  // count. Restoration is deferred to a ref rather than applied immediately
+  // -- loadStation's own setDrafts(initial) below (server truth) would
+  // otherwise race a restore and silently wipe it out, since the restore
+  // effect fires synchronously on mount/tab-change while loadStation's data
+  // arrives later, asynchronously.
+  const pendingRestoreRef = useRef<Record<string, DraftRow> | null>(null);
+  const changedDraftsForPersistence: Record<string, DraftRow> =
+    activeTab === 'catalog'
+      ? {}
+      : Object.fromEntries(
+          items.filter((i) => draftRowChanged(drafts[i.id], originalDrafts[i.id])).map((i) => [i.id, drafts[i.id]])
+        );
+  const { clearDraft: clearStationDraft } = useDraftPersistence(
+    `oishii-draft-stock-count-${activeTab}`,
+    changedDraftsForPersistence,
+    (restored) => {
+      pendingRestoreRef.current = restored;
+    }
+  );
+
   const loadStation = useCallback((station: StockStation) => {
     setLoading(true);
     Promise.all([fetchStockItems({ station, active_only: true }), fetchStockCountEntries({ station })])
@@ -97,6 +132,11 @@ export default function StockCount() {
         setItems(sorted);
         setDrafts(initial);
         setOriginalDrafts(initial);
+        if (pendingRestoreRef.current) {
+          const restored = pendingRestoreRef.current;
+          pendingRestoreRef.current = null;
+          setDrafts((prev) => ({ ...prev, ...restored }));
+        }
       })
       .catch((e) => toast.error(`Failed to load stock items: ${e.message}`))
       .finally(() => setLoading(false));
@@ -112,21 +152,7 @@ export default function StockCount() {
     setDrafts((prev) => ({ ...prev, [itemId]: { ...(prev[itemId] || emptyDraft()), ...patch } }));
   }
 
-  function draftChanged(itemId: string): boolean {
-    const a = drafts[itemId];
-    const b = originalDrafts[itemId];
-    if (!a || !b) return false;
-    return (
-      a.newStocks !== b.newStocks ||
-      a.beginning !== b.beginning ||
-      a.usage !== b.usage ||
-      a.ending !== b.ending ||
-      a.notes !== b.notes ||
-      a.needsVerification !== b.needsVerification
-    );
-  }
-
-  const changedItems = items.filter((i) => draftChanged(i.id));
+  const changedItems = items.filter((i) => draftRowChanged(drafts[i.id], originalDrafts[i.id]));
 
   async function handleSave() {
     if (!user?.id || activeTab === 'catalog') return;
@@ -152,6 +178,7 @@ export default function StockCount() {
       );
       const stationLabel = STATIONS.find((s) => s.value === activeTab)?.label;
       toast.success(`Saved ${changedItems.length} item${changedItems.length === 1 ? '' : 's'} for ${stationLabel}`);
+      clearStationDraft();
       loadStation(activeTab);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to save stock count');
@@ -177,14 +204,46 @@ export default function StockCount() {
         {activeTab === 'catalog' ? (
           <ManageCatalog />
         ) : (
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0">
-              <CardTitle>{STATIONS.find((s) => s.value === activeTab)?.label} -- today's count</CardTitle>
-              <Button size="sm" onClick={handleSave} disabled={saving || changedItems.length === 0}>
-                {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                Save ({changedItems.length})
-              </Button>
-            </CardHeader>
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Card className="border-l-4 border-l-success">
+                <CardContent className="p-4">
+                  <p className="text-sm text-muted-foreground mb-1">Items Counted</p>
+                  <p className="text-3xl font-bold text-foreground">
+                    {items.filter((i) => {
+                      const d = drafts[i.id];
+                      return !!d && (d.beginning !== '' || d.usage !== '' || d.ending !== '' || d.newStocks !== '');
+                    }).length}
+                    /{items.length}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card className="border-l-4 border-l-warning">
+                <CardContent className="p-4">
+                  <p className="text-sm text-muted-foreground mb-1">Flagged for Verification</p>
+                  <p className="text-3xl font-bold text-warning">
+                    {items.filter((i) => drafts[i.id]?.needsVerification).length}
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0">
+                <div>
+                  <CardTitle>{STATIONS.find((s) => s.value === activeTab)?.label} -- today's count</CardTitle>
+                  <button
+                    type="button"
+                    className="text-xs text-primary underline underline-offset-2 mt-0.5"
+                    onClick={() => navigate('/inventory-count')}
+                  >
+                    View Inventory Count &rarr;
+                  </button>
+                </div>
+                <Button size="sm" onClick={handleSave} disabled={saving || changedItems.length === 0}>
+                  {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                  Save ({changedItems.length})
+                </Button>
+              </CardHeader>
             <CardContent>
               {loading && <p className="text-sm text-muted-foreground">Loading stock items...</p>}
               {!loading && items.length === 0 && (
@@ -259,7 +318,12 @@ export default function StockCount() {
                               onChange={(e) => updateDraft(item.id, { usage: e.target.value })}
                             />
                             {mismatch && (
-                              <p className="text-xs text-destructive mt-1">expected {computedUsage?.toFixed(2)}</p>
+                              <div className="mt-1 flex flex-col items-end gap-1">
+                                <Badge variant="destructive" className="text-xs">
+                                  Mismatch
+                                </Badge>
+                                <p className="text-xs text-destructive">expected {computedUsage?.toFixed(2)}</p>
+                              </div>
                             )}
                           </TableCell>
                           <TableCell className="text-right">
@@ -307,7 +371,8 @@ export default function StockCount() {
                 </Table>
               )}
             </CardContent>
-          </Card>
+            </Card>
+          </>
         )}
       </div>
     </DashboardLayout>

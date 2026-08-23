@@ -454,6 +454,26 @@ export function fetchExpiringSoon(days = 7): Promise<ApiExpiringIngredient[]> {
   return request(`/inventory/expiring-soon?days=${days}`);
 }
 
+export interface ApiLowStockStockItem {
+  id: string;
+  name: string;
+  station: StockStation;
+  current_stock: number;
+  reorder_threshold: number;
+  unit: string | null;
+}
+
+export interface ApiLowStockSummary {
+  ingredient_count: number;
+  stock_item_count: number;
+  ingredients: ApiLowStockIngredient[];
+  stock_items: ApiLowStockStockItem[];
+}
+
+export function fetchLowStockSummary(): Promise<ApiLowStockSummary> {
+  return request('/inventory/low-stock-summary');
+}
+
 export function countStock(
   ingredientId: string,
   body: { employee_id: string; counted_stock: number }

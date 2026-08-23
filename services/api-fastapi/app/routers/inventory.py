@@ -11,9 +11,33 @@ from app.schemas import (
     IngredientUpdate,
     InventoryCountRequest,
     InventoryCountResponse,
+    LowStockIngredient,
+    LowStockSummaryResponse,
 )
+from app.routers.stock_items import get_low_stock_stock_items
 
 router = APIRouter(tags=["inventory"])
+
+
+def get_low_stock_ingredients(supabase) -> list[LowStockIngredient]:
+    """Ingredients at or below their reorder threshold. Extracted so both
+    the executive-only Command Center rollup (dashboard_summary.py) and the
+    all-roles low-stock-summary endpoint below share one query/filter
+    instead of two copies drifting apart."""
+    ingredients_result = (
+        supabase.table("ingredients").select("id, name, current_stock, reorder_threshold, base_unit").execute()
+    )
+    return [
+        LowStockIngredient(
+            id=i["id"],
+            name=i["name"],
+            current_stock=float(i["current_stock"]),
+            reorder_threshold=float(i["reorder_threshold"]),
+            base_unit=i["base_unit"],
+        )
+        for i in ingredients_result.data
+        if float(i["current_stock"]) <= float(i["reorder_threshold"])
+    ]
 
 
 @router.get("/inventory", response_model=list[IngredientOut])
@@ -21,6 +45,25 @@ def list_inventory(user: CurrentUser = Depends(get_current_user)):
     supabase = get_supabase()
     result = supabase.table("ingredients").select("*").order("name").execute()
     return result.data
+
+
+@router.get("/inventory/low-stock-summary", response_model=LowStockSummaryResponse)
+def get_low_stock_summary(user: CurrentUser = Depends(get_current_user)):
+    """Proactive low-stock surfacing for the Sidebar badge / Home card --
+    no role gate, same posture as Inventory Count/Stock Count themselves
+    (every role can see stock levels, only editing catalog fields is
+    gated). Reuses the same reorder_threshold comparisons Command Center
+    already computes, plus stock_items' own reorder_threshold (previously
+    defined but never read anywhere)."""
+    supabase = get_supabase()
+    ingredients = get_low_stock_ingredients(supabase)
+    stock_items = get_low_stock_stock_items(supabase)
+    return LowStockSummaryResponse(
+        ingredient_count=len(ingredients),
+        stock_item_count=len(stock_items),
+        ingredients=ingredients[:10],
+        stock_items=stock_items[:10],
+    )
 
 
 @router.get("/inventory/expiring-soon", response_model=list[ExpiringIngredient])

@@ -1,8 +1,10 @@
 import React from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useInventoryAlerts } from '@/contexts/InventoryAlertsContext';
 import { useLocation } from 'wouter';
 import { DEPARTMENT_CONFIG } from '@/lib/types';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import {
   ShoppingCart,
   ListOrdered,
@@ -37,6 +39,7 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile }: SidebarProps) {
   const { user } = useAuth();
+  const { lowStockCount } = useInventoryAlerts();
   const [location, navigate] = useLocation();
 
   if (!user) return null;
@@ -104,18 +107,31 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
             const isActive = location === item.href;
 
             return (
-              <Button
-                key={item.href}
-                variant={isActive ? 'default' : 'ghost'}
-                title={isCollapsed ? item.label : undefined}
-                className={`w-full mb-1 ${isCollapsed ? 'justify-center px-0' : 'justify-start gap-3'} ${
-                  isActive ? '' : 'text-foreground shadow-none hover:bg-accent'
-                }`}
-                onClick={() => onNavigate(item.href)}
-              >
-                <Icon className="w-4 h-4 shrink-0" />
-                {!isCollapsed && <span className="font-corp-body text-sm">{item.label}</span>}
-              </Button>
+              <React.Fragment key={item.href}>
+                {item.href === '/inventory-count' && !isCollapsed && (
+                  <div className="flex items-center gap-2 px-2 pt-2 pb-1">
+                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                      Stock &amp; Inventory
+                    </span>
+                    {lowStockCount > 0 && (
+                      <Badge variant="destructive" className="text-xs px-1.5 py-0">
+                        {lowStockCount}
+                      </Badge>
+                    )}
+                  </div>
+                )}
+                <Button
+                  variant={isActive ? 'default' : 'ghost'}
+                  title={isCollapsed ? item.label : undefined}
+                  className={`w-full mb-1 ${isCollapsed ? 'justify-center px-0' : 'justify-start gap-3'} ${
+                    isActive ? '' : 'text-foreground shadow-none hover:bg-accent'
+                  }`}
+                  onClick={() => onNavigate(item.href)}
+                >
+                  <Icon className="w-4 h-4 shrink-0" />
+                  {!isCollapsed && <span className="font-corp-body text-sm">{item.label}</span>}
+                </Button>
+              </React.Fragment>
             );
           })}
         </nav>
