@@ -16,6 +16,8 @@ from app.routers import (
     pnl,
     products,
     recipes,
+    settings,
+    stock_items,
     transactions,
     utility_logs,
 )
@@ -34,6 +36,7 @@ app.include_router(recipes.router)
 app.include_router(menu_admin.router)
 app.include_router(inventory.router)
 app.include_router(inventory_movements.router)
+app.include_router(stock_items.router)
 app.include_router(discounts.router)
 app.include_router(loss_records.router)
 app.include_router(hr.router)
@@ -45,6 +48,7 @@ app.include_router(dashboard_summary.router)
 app.include_router(analytics.router)
 app.include_router(pnl.router)
 app.include_router(oishi_ai.router)
+app.include_router(settings.router)
 
 
 @app.get("/health")

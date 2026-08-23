@@ -19,11 +19,18 @@ from app.schemas import (
 
 router = APIRouter(tags=["transactions"])
 
-# JUDGMENT CALL: not specified by the task. 12% is the standard Philippine
-# VAT rate and matches the SMFC reference's VAT_RATE constant.
-VAT_RATE = 0.12
-
 KITCHEN_STATUS_ORDER = ["queued", "preparing", "ready", "completed"]
+
+
+def _get_vat_rate(supabase) -> float:
+    """Admin-editable VAT rate (settings.py) -- previously a hardcoded 0.12
+    constant duplicated here and in the frontend's VAT_RATE_PREVIEW, with a
+    comment admitting the two "must be kept in sync" by hand. Read fresh
+    each call (a single-row lookup) rather than cached, same as hr.py's
+    _get_pay_multiplier_rules() re-reads its own configurable-rules table
+    on every use."""
+    result = supabase.table("business_settings").select("vat_rate").eq("id", 1).single().execute()
+    return float(result.data["vat_rate"])
 
 # --------------------------------------------------------------------------
 # Feature detection for migration 0014 (kitchen_status / bundle_fulfillments)
@@ -269,7 +276,7 @@ def _create_transaction_row(
     if discount:
         discount_amount = subtotal * (discount["percentage"] / 100)
     discounted_subtotal = subtotal - discount_amount
-    tax_amount = 0.0 if vat_exempt else discounted_subtotal * VAT_RATE
+    tax_amount = 0.0 if vat_exempt else discounted_subtotal * _get_vat_rate(supabase)
 
     updated = (
         supabase.table("transactions")

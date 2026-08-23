@@ -5,9 +5,17 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
@@ -25,14 +33,25 @@ import {
 import {
   ApiExpiringIngredient,
   ApiIngredient,
+  ApiIngredientRecipeUsage,
+  CostVolatilityTier,
   LossReason,
   countStock,
   createLossRecord,
   fetchExpiringSoon,
+  fetchIngredientRecipeUsage,
   fetchInventory,
   updateIngredient,
 } from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
+
+const COST_VOLATILITY_TIERS: { value: CostVolatilityTier; label: string }[] = [
+  { value: 'low', label: 'Low' },
+  { value: 'low_medium', label: 'Low-medium' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'medium_high', label: 'Medium-high' },
+  { value: 'high', label: 'High' },
+];
 
 type ItemStatus = 'pending' | 'counted' | 'overage' | 'shortage';
 type SortKey = 'name' | 'category' | 'unit_cost' | 'expected' | 'variance' | 'status';
@@ -79,6 +98,21 @@ export default function InventoryCount() {
   const [sortKey, setSortKey] = useState<SortKey>('name');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [expiringSoon, setExpiringSoon] = useState<ApiExpiringIngredient[]>([]);
+
+  // --- Edit ingredient (full catalog fields) ---
+  const [editingIngredient, setEditingIngredient] = useState<ApiIngredient | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editCategory, setEditCategory] = useState('');
+  const [editBaseUnit, setEditBaseUnit] = useState('');
+  const [editSuggestedReorderUnit, setEditSuggestedReorderUnit] = useState('');
+  const [editReorderThreshold, setEditReorderThreshold] = useState('');
+  const [editCostVolatilityTier, setEditCostVolatilityTier] = useState<CostVolatilityTier | 'none'>('none');
+  const [editShelfLifeNote, setEditShelfLifeNote] = useState('');
+  const [editUsedInNote, setEditUsedInNote] = useState('');
+  const [recipeUsage, setRecipeUsage] = useState<ApiIngredientRecipeUsage[]>([]);
+  const [loadingUsage, setLoadingUsage] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   function handleSort(key: SortKey) {
     if (key === sortKey) {
@@ -142,6 +176,62 @@ export default function InventoryCount() {
       setSavingCosts(false);
     }
   };
+
+  function openEdit(ingredient: ApiIngredient) {
+    setEditingIngredient(ingredient);
+    setEditName(ingredient.name);
+    setEditCategory(ingredient.category || '');
+    setEditBaseUnit(ingredient.base_unit);
+    setEditSuggestedReorderUnit(ingredient.suggested_reorder_unit || '');
+    setEditReorderThreshold(String(ingredient.reorder_threshold));
+    setEditCostVolatilityTier((ingredient.cost_volatility_tier as CostVolatilityTier | null) || 'none');
+    setEditShelfLifeNote(ingredient.shelf_life_note || '');
+    setEditUsedInNote(ingredient.used_in_note || '');
+    setRecipeUsage([]);
+    setEditOpen(true);
+    setLoadingUsage(true);
+    fetchIngredientRecipeUsage(ingredient.id)
+      .then(setRecipeUsage)
+      .catch(() => {
+        // Non-critical -- the edit dialog still works without the usage list.
+      })
+      .finally(() => setLoadingUsage(false));
+  }
+
+  const unitChanged = editingIngredient != null && editBaseUnit.trim() !== editingIngredient.base_unit;
+
+  async function handleSaveIngredient() {
+    if (!editingIngredient) return;
+    if (!editName.trim() || !editBaseUnit.trim()) {
+      toast.error('Name and base unit are required');
+      return;
+    }
+    const threshold = Number(editReorderThreshold);
+    if (!Number.isFinite(threshold) || threshold < 0) {
+      toast.error('Reorder threshold must be 0 or more');
+      return;
+    }
+    setSavingEdit(true);
+    try {
+      await updateIngredient(editingIngredient.id, {
+        name: editName.trim(),
+        category: editCategory.trim() || null,
+        base_unit: editBaseUnit.trim(),
+        suggested_reorder_unit: editSuggestedReorderUnit.trim() || null,
+        reorder_threshold: threshold,
+        cost_volatility_tier: editCostVolatilityTier === 'none' ? null : editCostVolatilityTier,
+        shelf_life_note: editShelfLifeNote.trim() || null,
+        used_in_note: editUsedInNote.trim() || null,
+      });
+      toast.success(`${editName.trim()} saved`);
+      setEditOpen(false);
+      loadInventory();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to save ingredient');
+    } finally {
+      setSavingEdit(false);
+    }
+  }
 
   const handleSubmit = async () => {
     const entries = Object.entries(countedValues).filter(([, v]) => v !== '' && !isNaN(parseFloat(v)));
@@ -520,6 +610,7 @@ export default function InventoryCount() {
                         Status <SortIcon column="status" />
                       </span>
                     </TableHead>
+                    {user?.role === 'executive' && <TableHead />}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -576,6 +667,13 @@ export default function InventoryCount() {
                           )}
                         </div>
                       </TableCell>
+                      {user?.role === 'executive' && (
+                        <TableCell>
+                          <Button size="sm" variant="outline" onClick={() => openEdit(ingredient)}>
+                            Edit
+                          </Button>
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))}
                 </TableBody>
@@ -698,6 +796,112 @@ export default function InventoryCount() {
           <Button variant="ghost" onClick={() => setShrinkageDialogOpen(false)} className="w-full">
             Done
           </Button>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit ingredient (full catalog fields) */}
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit {editingIngredient?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label>Name</Label>
+                <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label>Category</Label>
+                <Input value={editCategory} onChange={(e) => setEditCategory(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label>Base unit</Label>
+                <Input
+                  value={editBaseUnit}
+                  onChange={(e) => setEditBaseUnit(e.target.value)}
+                  placeholder="e.g. g, ml, pcs, pack"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Suggested reorder unit</Label>
+                <Input
+                  value={editSuggestedReorderUnit}
+                  onChange={(e) => setEditSuggestedReorderUnit(e.target.value)}
+                  placeholder="e.g. kg sack, case of 24"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Reorder threshold ({editBaseUnit || 'unit'})</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={editReorderThreshold}
+                  onChange={(e) => setEditReorderThreshold(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Cost volatility</Label>
+                <Select
+                  value={editCostVolatilityTier}
+                  onValueChange={(v) => setEditCostVolatilityTier(v as CostVolatilityTier | 'none')}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Not set</SelectItem>
+                    {COST_VOLATILITY_TIERS.map((t) => (
+                      <SelectItem key={t.value} value={t.value}>
+                        {t.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label>Shelf life note</Label>
+              <Input value={editShelfLifeNote} onChange={(e) => setEditShelfLifeNote(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label>Used in (note)</Label>
+              <Input value={editUsedInNote} onChange={(e) => setEditUsedInNote(e.target.value)} />
+            </div>
+
+            {unitChanged && editingIngredient && (
+              <div className="rounded-md border border-amber-400 bg-amber-50 p-3 space-y-2">
+                <p className="text-sm font-medium text-amber-900">
+                  Changing the unit from "{editingIngredient.base_unit}" to "{editBaseUnit.trim()}" does not convert
+                  any existing numbers -- current stock ({editingIngredient.current_stock}{' '}
+                  {editingIngredient.base_unit}) and reorder threshold ({editingIngredient.reorder_threshold}{' '}
+                  {editingIngredient.base_unit}) will keep their old values, now mislabeled. You'll need to update
+                  those, and every recipe below, to the new unit's scale yourself.
+                </p>
+                {loadingUsage ? (
+                  <p className="text-xs text-amber-900">Checking recipe usage...</p>
+                ) : recipeUsage.length > 0 ? (
+                  <div className="text-xs text-amber-900 space-y-1">
+                    <p className="font-medium">Used in {recipeUsage.length} recipe line(s):</p>
+                    <ul className="list-disc list-inside">
+                      {recipeUsage.map((u, i) => (
+                        <li key={i}>
+                          {u.product_name} ({u.size_label}) -- {u.qty_per_serving} {u.unit}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  <p className="text-xs text-amber-900">Not currently used in any recipe.</p>
+                )}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button disabled={savingEdit} onClick={handleSaveIngredient}>
+              {savingEdit ? 'Saving...' : 'Save changes'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </DashboardLayout>

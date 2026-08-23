@@ -25,12 +25,12 @@ import {
   ApiProductSize,
   ApiRecipeItem,
   createTransaction,
+  fetchBusinessSettings,
   fetchDiscountTypes,
   fetchProducts,
   fetchRecipe,
 } from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
-import { VAT_RATE_PREVIEW } from '@/lib/constants';
 
 interface CartLine {
   key: string;
@@ -92,6 +92,10 @@ export default function POSTerminal() {
   const { user } = useAuth();
   const [products, setProducts] = useState<ApiProduct[]>([]);
   const [discountTypes, setDiscountTypes] = useState<ApiDiscountType[]>([]);
+  // Default matches the DB seed default (business_settings.vat_rate) --
+  // overwritten as soon as the real fetch below resolves, just avoids a
+  // flash of "0% tax" in the cart preview before that completes.
+  const [vatRate, setVatRate] = useState(0.12);
   const [loading, setLoading] = useState(true);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [discountTypeId, setDiscountTypeId] = useState<string>('none');
@@ -122,10 +126,11 @@ export default function POSTerminal() {
   }, [heldCarts]);
 
   useEffect(() => {
-    Promise.all([fetchProducts(true), fetchDiscountTypes(true)])
-      .then(([p, d]) => {
+    Promise.all([fetchProducts(true), fetchDiscountTypes(true), fetchBusinessSettings()])
+      .then(([p, d, settings]) => {
         setProducts(p);
         setDiscountTypes(d);
+        setVatRate(settings.vat_rate);
       })
       .catch((e) => toast.error(`Failed to load menu: ${e.message}`))
       .finally(() => setLoading(false));
@@ -181,7 +186,7 @@ export default function POSTerminal() {
   // display before charging, never sent as-is to the API.
   const previewDiscountAmount = selectedDiscount ? subtotal * (selectedDiscount.percentage / 100) : 0;
   const previewTaxable = subtotal - previewDiscountAmount;
-  const previewTax = selectedDiscount?.vat_exempt ? 0 : previewTaxable * VAT_RATE_PREVIEW;
+  const previewTax = selectedDiscount?.vat_exempt ? 0 : previewTaxable * vatRate;
   const previewTotal = previewTaxable + previewTax;
 
   function addToCart(product: ApiProduct, size: ApiProductSize) {

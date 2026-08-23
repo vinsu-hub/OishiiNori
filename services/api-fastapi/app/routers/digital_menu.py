@@ -26,7 +26,7 @@ from app.auth import CurrentUser, get_current_user
 from app.deps import get_supabase
 from app.routers.products import _list_products_data
 from app.routers.recipes import _get_recipe_data
-from app.routers.transactions import VAT_RATE, _create_transaction_row
+from app.routers.transactions import _create_transaction_row, _get_vat_rate
 from app.schemas import (
     CreateDigitalOrderRequest,
     DigitalOrderResponse,
@@ -247,7 +247,7 @@ def approve_digital_order(order_id: str, user: CurrentUser = Depends(get_current
         supabase.table("transactions").update(
             {
                 "total_amount": transaction.total_amount + addons_subtotal,
-                "tax_amount": transaction.tax_amount + addons_subtotal * VAT_RATE,
+                "tax_amount": transaction.tax_amount + addons_subtotal * _get_vat_rate(supabase),
             }
         ).eq("id", transaction.id).execute()
 

@@ -20,6 +20,7 @@ import PnL from './pages/PnL';
 import OishiAi from './pages/OishiAi';
 import InventoryCount from './pages/InventoryCount';
 import InventoryMovements from './pages/InventoryMovements';
+import StockCount from './pages/StockCount';
 import LossLog from './pages/LossLog';
 import UtilityLog from './pages/UtilityLog';
 import HRAttendance from './pages/HRAttendance';
@@ -47,6 +48,7 @@ function Router() {
       <Route path={'/oishii-ai'} component={OishiAi} />
       <Route path={'/inventory-count'} component={InventoryCount} />
       <Route path={'/inventory-movements'} component={InventoryMovements} />
+      <Route path={'/stock-count'} component={StockCount} />
       <Route path={'/loss-log'} component={LossLog} />
       <Route path={'/utility-log'} component={UtilityLog} />
       <Route path={'/hr/attendance'} component={HRAttendance} />

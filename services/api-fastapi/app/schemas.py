@@ -33,6 +33,7 @@ DayScenario = Literal[
 HolidayType = Literal["regular_holiday", "special_non_working", "special_working"]
 AttendanceStatus = Literal["working", "completed"]
 PayrollOverrideField = Literal["regular_hours", "overtime_hours", "night_diff_hours", "day_scenario"]
+CostVolatilityTier = Literal["low", "low_medium", "medium", "medium_high", "high"]
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +328,21 @@ class IngredientOut(BaseModel):
 
 
 class IngredientUpdate(BaseModel):
+    name: str | None = None
+    category: str | None = None
+    # Free-text on purpose, same as recipe_items.unit -- this system has no
+    # unit-conversion table anywhere; base_unit is just the label current_
+    # stock/reorder_threshold/recipe qty_per_serving are already expressed
+    # in. Changing it does NOT rescale those numbers -- the frontend is
+    # responsible for warning the admin to update them (see GET .../
+    # recipe-usage below), this endpoint just writes the label.
+    base_unit: str | None = None
+    suggested_reorder_unit: str | None = None
+    reorder_threshold: float | None = Field(default=None, ge=0)
+    cost_volatility: str | None = None
+    cost_volatility_tier: CostVolatilityTier | None = None
+    shelf_life_note: str | None = None
+    used_in_note: str | None = None
     unit_cost: float | None = None
 
 
@@ -336,6 +352,13 @@ class ExpiringIngredient(BaseModel):
     base_unit: str
     expiry_date: date
     days_until_expiry: int
+
+
+class IngredientRecipeUsage(BaseModel):
+    product_name: str
+    size_label: str
+    qty_per_serving: float
+    unit: str
 
 
 class InventoryCountRequest(BaseModel):
@@ -379,6 +402,86 @@ class InventoryMovementResponse(BaseModel):
     unit_cost_snapshot: float | None = None
     expiry_date: date | None = None
     created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Physical stock count tool (4 physical stations, digitizing the client's
+# daily New Stocks/Beginning/Usage/Ending paper sheets)
+# ---------------------------------------------------------------------------
+
+StockStation = Literal["tako_snack", "cafe_drinks", "sushi_kitchen_main", "ramen_hot_line"]
+
+
+class StockItemOut(BaseModel):
+    id: str
+    name: str
+    station: StockStation
+    category: str | None = None
+    unit: str | None = None
+    ingredient_id: str | None = None
+    ingredient_name: str | None = None
+    ingredient_current_stock: float | None = None
+    # Meaningful only when ingredient_id is None -- once linked,
+    # ingredients.current_stock is the sole source of truth (see 0022's
+    # migration comment).
+    current_stock: float
+    reorder_threshold: float | None = None
+    active: bool
+    needs_review: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class StockItemCreate(BaseModel):
+    name: str
+    station: StockStation
+    category: str | None = None
+    unit: str | None = None
+    ingredient_id: str | None = None
+    reorder_threshold: float | None = None
+
+
+class StockItemUpdate(BaseModel):
+    name: str | None = None
+    category: str | None = None
+    unit: str | None = None
+    ingredient_id: str | None = None
+    reorder_threshold: float | None = None
+    active: bool | None = None
+    needs_review: bool | None = None
+
+
+class StockCountEntryCreate(BaseModel):
+    recorded_by: str
+    count_date: date | None = None
+    new_stocks: float | None = None
+    beginning: float | None = None
+    usage: float | None = None
+    ending: float | None = None
+    notes: str | None = None
+    needs_verification: bool | None = None
+
+
+class StockCountEntryOut(BaseModel):
+    id: str
+    stock_item_id: str
+    count_date: date
+    new_stocks: float | None = None
+    beginning: float | None = None
+    usage: float | None = None
+    ending: float | None = None
+    notes: str | None = None
+    needs_verification: bool
+    recorded_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class StockCountEntryResponse(BaseModel):
+    entry: StockCountEntryOut
+    stock_item: StockItemOut
+    ingredient_count_result: InventoryCountResponse | None = None
+    delivery_movement: InventoryMovementResponse | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -826,3 +929,18 @@ class OishiAiChartSpec(BaseModel):
 class OishiAiQueryResponse(BaseModel):
     answer: str
     chart: OishiAiChartSpec | None = None
+
+
+# ---------------------------------------------------------------------------
+# Business settings (singleton row -- starts with VAT rate)
+# ---------------------------------------------------------------------------
+
+
+class BusinessSettingsOut(BaseModel):
+    vat_rate: float
+    updated_at: datetime
+    updated_by: str | None = None
+
+
+class BusinessSettingsUpdate(BaseModel):
+    vat_rate: float = Field(ge=0, le=1)

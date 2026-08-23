@@ -461,8 +461,34 @@ export function countStock(
   return request(`/inventory/${ingredientId}/count`, { method: 'POST', body: JSON.stringify(body) });
 }
 
-export function updateIngredient(id: string, body: { unit_cost: number | null }): Promise<ApiIngredient> {
+export type CostVolatilityTier = 'low' | 'low_medium' | 'medium' | 'medium_high' | 'high';
+
+export interface UpdateIngredientRequest {
+  name?: string;
+  category?: string | null;
+  base_unit?: string;
+  suggested_reorder_unit?: string | null;
+  reorder_threshold?: number;
+  cost_volatility?: string | null;
+  cost_volatility_tier?: CostVolatilityTier | null;
+  shelf_life_note?: string | null;
+  used_in_note?: string | null;
+  unit_cost?: number | null;
+}
+
+export function updateIngredient(id: string, body: UpdateIngredientRequest): Promise<ApiIngredient> {
   return request(`/inventory/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+export interface ApiIngredientRecipeUsage {
+  product_name: string;
+  size_label: string;
+  qty_per_serving: number;
+  unit: string;
+}
+
+export function fetchIngredientRecipeUsage(id: string): Promise<ApiIngredientRecipeUsage[]> {
+  return request(`/inventory/${id}/recipe-usage`);
 }
 
 export type MovementType = 'trans_in' | 'trans_out' | 'delivery' | 'transfer_in' | 'transfer_out' | 'count_adjustment';
@@ -504,6 +530,106 @@ export function fetchInventoryMovements(params?: { ingredient_id?: string; type?
   if (params?.limit) qs.set('limit', String(params.limit));
   const query = qs.toString();
   return request(`/inventory-movements${query ? `?${query}` : ''}`);
+}
+
+// ---------------------------------------------------------------------------
+// Physical stock count tool (4 stations)
+// ---------------------------------------------------------------------------
+
+export type StockStation = 'tako_snack' | 'cafe_drinks' | 'sushi_kitchen_main' | 'ramen_hot_line';
+
+export interface ApiStockItem {
+  id: string;
+  name: string;
+  station: StockStation;
+  category: string | null;
+  unit: string | null;
+  ingredient_id: string | null;
+  ingredient_name: string | null;
+  ingredient_current_stock: number | null;
+  current_stock: number;
+  reorder_threshold: number | null;
+  active: boolean;
+  needs_review: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApiStockCountEntry {
+  id: string;
+  stock_item_id: string;
+  count_date: string;
+  new_stocks: number | null;
+  beginning: number | null;
+  usage: number | null;
+  ending: number | null;
+  notes: string | null;
+  needs_verification: boolean;
+  recorded_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateStockCountEntryRequest {
+  recorded_by: string;
+  count_date?: string;
+  new_stocks?: number | null;
+  beginning?: number | null;
+  usage?: number | null;
+  ending?: number | null;
+  notes?: string | null;
+  needs_verification?: boolean;
+}
+
+export interface StockCountEntryResult {
+  entry: ApiStockCountEntry;
+  stock_item: ApiStockItem;
+  ingredient_count_result: unknown | null;
+  delivery_movement: unknown | null;
+}
+
+export function fetchStockItems(params?: { station?: StockStation; active_only?: boolean }): Promise<ApiStockItem[]> {
+  const qs = new URLSearchParams();
+  if (params?.station) qs.set('station', params.station);
+  if (params?.active_only !== undefined) qs.set('active_only', String(params.active_only));
+  const query = qs.toString();
+  return request(`/stock-items${query ? `?${query}` : ''}`);
+}
+
+export function createStockItem(body: {
+  name: string;
+  station: StockStation;
+  category?: string | null;
+  unit?: string | null;
+  ingredient_id?: string | null;
+  reorder_threshold?: number | null;
+}): Promise<ApiStockItem> {
+  return request('/stock-items', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function updateStockItem(
+  id: string,
+  body: Partial<{
+    name: string;
+    category: string | null;
+    unit: string | null;
+    ingredient_id: string | null;
+    reorder_threshold: number | null;
+    active: boolean;
+    needs_review: boolean;
+  }>
+): Promise<ApiStockItem> {
+  return request(`/stock-items/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+export function fetchStockCountEntries(params: { station: StockStation; date?: string }): Promise<ApiStockCountEntry[]> {
+  const qs = new URLSearchParams({ station: params.station });
+  if (params.date) qs.set('date', params.date);
+  return request(`/stock-items/count-entries?${qs.toString()}`);
+}
+
+export function recordStockCount(stockItemId: string, body: CreateStockCountEntryRequest): Promise<StockCountEntryResult> {
+  return request(`/stock-items/${stockItemId}/count-entries`, { method: 'POST', body: JSON.stringify(body) });
 }
 
 // ---------------------------------------------------------------------------
@@ -1005,4 +1131,22 @@ export interface ApiOishiAiQueryResponse {
 
 export function queryOishiAi(question: string): Promise<ApiOishiAiQueryResponse> {
   return request('/ai/query', { method: 'POST', body: JSON.stringify({ question }) });
+}
+
+// ---------------------------------------------------------------------------
+// Business settings (VAT rate)
+// ---------------------------------------------------------------------------
+
+export interface ApiBusinessSettings {
+  vat_rate: number;
+  updated_at: string;
+  updated_by: string | null;
+}
+
+export function fetchBusinessSettings(): Promise<ApiBusinessSettings> {
+  return request('/settings/business');
+}
+
+export function updateBusinessSettings(body: { vat_rate: number }): Promise<ApiBusinessSettings> {
+  return request('/settings/business', { method: 'PATCH', body: JSON.stringify(body) });
 }
