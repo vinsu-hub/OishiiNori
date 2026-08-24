@@ -24,6 +24,7 @@ import {
   UtensilsCrossed,
   DollarSign,
   Settings,
+  HelpCircle,
   ChevronLeft,
   ChevronRight,
   X,
@@ -73,6 +74,7 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
           { icon: UtensilsCrossed, label: 'Menu Editing', href: '/menu-editing' },
           { icon: DollarSign, label: 'P&L', href: '/pnl' },
           { icon: Sparkles, label: 'Oishii AI', href: '/oishii-ai' },
+          { icon: HelpCircle, label: 'Help', href: '/help' },
         ]
       : []),
     { icon: Settings, label: 'Settings', href: '/settings' },
