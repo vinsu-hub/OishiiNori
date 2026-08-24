@@ -19,14 +19,12 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
-  CheckCircle,
   ChevronDown,
   ChevronUp,
   ChevronsUpDown,
   Clock,
   HelpCircle,
   Loader2,
-  Package,
   TrendingDown,
   TrendingUp,
 } from 'lucide-react';
@@ -44,6 +42,8 @@ import {
 } from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
 import { LossRecordForm } from '@/components/shared/LossRecordForm';
+import { StockStatusBadge } from '@/components/stock/StockStatusBadge';
+import { STOCK_TABLE_CELL_CLASS, STOCK_TABLE_HEAD_CLASS, STOCK_TABLE_ROW_CLASS } from '@/components/stock/stockTableStyle';
 
 const COST_VOLATILITY_TIERS: { value: CostVolatilityTier; label: string }[] = [
   { value: 'low', label: 'Low' },
@@ -58,6 +58,13 @@ type SortKey = 'name' | 'category' | 'unit_cost' | 'expected' | 'variance' | 'st
 type SortDir = 'asc' | 'desc';
 
 const STATUS_RANK: Record<ItemStatus, number> = { pending: 0, counted: 1, overage: 2, shortage: 3 };
+
+const STATUS_BADGE: Record<ItemStatus, { variant: 'ok' | 'warning' | 'critical' | 'neutral'; label: string }> = {
+  pending: { variant: 'neutral', label: 'Pending' },
+  counted: { variant: 'ok', label: 'Counted' },
+  overage: { variant: 'warning', label: 'Overage' },
+  shortage: { variant: 'critical', label: 'Shortage' },
+};
 
 const SHRINKAGE_REASONS: { value: LossReason; label: string }[] = [
   { value: 'shrinkage', label: 'Shrinkage (unexplained)' },
@@ -301,30 +308,6 @@ export function IngredientsPanel({ onViewStations }: IngredientsPanelProps) {
     setShrinkageItems((prev) =>
       prev.map((i) => (i.ingredientId === ingredientId ? { ...i, logged: true } : i))
     );
-  };
-
-  const getStatusIcon = (status: ItemStatus) => {
-    switch (status) {
-      case 'counted':
-        return <CheckCircle className="w-4 h-4 text-success" />;
-      case 'overage':
-        return <TrendingUp className="w-4 h-4 text-warning" />;
-      case 'shortage':
-        return <TrendingDown className="w-4 h-4 text-destructive" />;
-      default:
-        return <Package className="w-4 h-4 text-muted-foreground" />;
-    }
-  };
-
-  const getStatusLabel = (status: ItemStatus) => {
-    switch (status) {
-      case 'overage':
-        return 'Overage';
-      case 'shortage':
-        return 'Shortage';
-      default:
-        return null;
-    }
   };
 
   const getVarianceColor = (variancePercent: number | null) => {
@@ -580,47 +563,47 @@ export function IngredientsPanel({ onViewStations }: IngredientsPanelProps) {
             ) : (
               <Table>
                 <TableHeader>
-                  <TableRow>
-                    <TableHead className="cursor-pointer select-none" onClick={() => handleSort('name')}>
+                  <TableRow className={STOCK_TABLE_ROW_CLASS}>
+                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} cursor-pointer select-none`} onClick={() => handleSort('name')}>
                       <span className="inline-flex items-center gap-1">
                         Item <SortIcon column="name" />
                       </span>
                     </TableHead>
-                    <TableHead className="cursor-pointer select-none" onClick={() => handleSort('category')}>
+                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} cursor-pointer select-none`} onClick={() => handleSort('category')}>
                       <span className="inline-flex items-center gap-1">
                         Category <SortIcon column="category" />
                       </span>
                     </TableHead>
-                    <TableHead className="text-right cursor-pointer select-none" onClick={() => handleSort('unit_cost')}>
+                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right cursor-pointer select-none`} onClick={() => handleSort('unit_cost')}>
                       <span className="inline-flex items-center gap-1 justify-end">
                         Unit Cost <SortIcon column="unit_cost" />
                       </span>
                     </TableHead>
-                    <TableHead className="text-right cursor-pointer select-none" onClick={() => handleSort('expected')}>
+                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right cursor-pointer select-none`} onClick={() => handleSort('expected')}>
                       <span className="inline-flex items-center gap-1 justify-end">
                         Expected <SortIcon column="expected" />
                       </span>
                     </TableHead>
-                    <TableHead className="text-right">Counted</TableHead>
-                    <TableHead className="text-right cursor-pointer select-none" onClick={() => handleSort('variance')}>
+                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Counted</TableHead>
+                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right cursor-pointer select-none`} onClick={() => handleSort('variance')}>
                       <span className="inline-flex items-center gap-1 justify-end">
                         Variance <SortIcon column="variance" />
                       </span>
                     </TableHead>
-                    <TableHead className="text-center cursor-pointer select-none" onClick={() => handleSort('status')}>
+                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-center cursor-pointer select-none`} onClick={() => handleSort('status')}>
                       <span className="inline-flex items-center gap-1 justify-center">
                         Status <SortIcon column="status" />
                       </span>
                     </TableHead>
-                    {user?.role === 'executive' && <TableHead />}
+                    {user?.role === 'executive' && <TableHead className={STOCK_TABLE_HEAD_CLASS} />}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {sortedRows.map(({ ingredient, counted, variance, variancePercent, status }) => (
-                    <TableRow key={ingredient.id}>
-                      <TableCell className="font-medium">{ingredient.name}</TableCell>
-                      <TableCell className="text-muted-foreground">{ingredient.category || '--'}</TableCell>
-                      <TableCell className="text-right">
+                    <TableRow key={ingredient.id} className={STOCK_TABLE_ROW_CLASS}>
+                      <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-medium`}>{ingredient.name}</TableCell>
+                      <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-muted-foreground`}>{ingredient.category || '--'}</TableCell>
+                      <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>
                         {user?.role === 'executive' ? (
                           <Input
                             type="number"
@@ -635,10 +618,10 @@ export function IngredientsPanel({ onViewStations }: IngredientsPanelProps) {
                           <span className="text-muted-foreground">--</span>
                         )}
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>
                         {ingredient.current_stock} {ingredient.base_unit}
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>
                         <Input
                           type="number"
                           placeholder="0"
@@ -647,7 +630,7 @@ export function IngredientsPanel({ onViewStations }: IngredientsPanelProps) {
                           className="w-24 text-right text-sm ml-auto"
                         />
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>
                         {variance !== null ? (
                           <span className={`font-semibold ${getVarianceColor(variancePercent)}`}>
                             {variance > 0 ? '+' : ''}
@@ -657,20 +640,15 @@ export function IngredientsPanel({ onViewStations }: IngredientsPanelProps) {
                           <span className="text-muted-foreground">--</span>
                         )}
                       </TableCell>
-                      <TableCell className="text-center">
-                        <div className="flex items-center justify-center gap-1.5">
-                          {getStatusIcon(status)}
-                          {getStatusLabel(status) && (
-                            <span
-                              className={`text-xs ${status === 'overage' ? 'text-warning' : 'text-destructive'}`}
-                            >
-                              {getStatusLabel(status)}
-                            </span>
-                          )}
+                      <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-center`}>
+                        <div className="flex items-center justify-center">
+                          <StockStatusBadge variant={STATUS_BADGE[status].variant}>
+                            {STATUS_BADGE[status].label}
+                          </StockStatusBadge>
                         </div>
                       </TableCell>
                       {user?.role === 'executive' && (
-                        <TableCell>
+                        <TableCell className={STOCK_TABLE_CELL_CLASS}>
                           <Button size="sm" variant="outline" onClick={() => openEdit(ingredient)}>
                             Edit
                           </Button>
@@ -706,9 +684,9 @@ export function IngredientsPanel({ onViewStations }: IngredientsPanelProps) {
                           {ingredient.base_unit}
                         </p>
                       </div>
-                      <Badge variant={status === 'overage' ? 'secondary' : 'destructive'} className="text-sm">
-                        {getStatusLabel(status)} - {variancePercent?.toFixed(1)}%
-                      </Badge>
+                      <StockStatusBadge variant={status === 'overage' ? 'warning' : 'critical'}>
+                        {STATUS_BADGE[status].label} - {variancePercent?.toFixed(1)}%
+                      </StockStatusBadge>
                     </div>
                   ))}
               </div>

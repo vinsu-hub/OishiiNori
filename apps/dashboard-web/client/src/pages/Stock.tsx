@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useLocation, useSearch } from 'wouter';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { IngredientsPanel } from '@/components/stock/IngredientsPanel';
@@ -7,17 +8,26 @@ import { StationsPanel } from '@/components/stock/StationsPanel';
 type StockTab = 'ingredients' | 'stations';
 
 // Reads the legacy /inventory-count and /stock-count paths (and a ?tab=
-// query param) so existing bookmarks/links still land on the right tab of
-// this merged page instead of a 404 -- see App.tsx's route registration.
-function getInitialTab(): StockTab {
-  if (typeof window === 'undefined') return 'ingredients';
-  if (window.location.pathname === '/stock-count') return 'stations';
-  if (new URLSearchParams(window.location.search).get('tab') === 'stations') return 'stations';
+// query param) so existing bookmarks/links -- and the Sidebar's Stock group
+// sub-links -- land on the right tab of this merged page instead of a 404.
+// Re-evaluated on every location/search change (not just on mount), since
+// wouter keeps this component instance mounted when only the query string
+// changes (e.g. clicking "Station Items" while already on "Recipe
+// Ingredients") -- a mount-only read would silently no-op on that click.
+function resolveTab(pathname: string, search: string): StockTab {
+  if (pathname === '/stock-count') return 'stations';
+  if (new URLSearchParams(search).get('tab') === 'stations') return 'stations';
   return 'ingredients';
 }
 
 export default function Stock() {
-  const [activeTab, setActiveTab] = useState<StockTab>(getInitialTab);
+  const [location] = useLocation();
+  const search = useSearch();
+  const [activeTab, setActiveTab] = useState<StockTab>(() => resolveTab(location, search));
+
+  useEffect(() => {
+    setActiveTab(resolveTab(location, search));
+  }, [location, search]);
 
   return (
     <DashboardLayout title="Stock">

@@ -81,28 +81,33 @@ A station board (5 real kitchen stations: Sushi Bar, Sushi Bar/Oven, Hot Line, S
 - **"Log extra usage"** — next to any non-bundle item, opens a dialog to record using more of an ingredient than the recipe calls for (an extra egg, more mayo). Pick the ingredient, the extra quantity, a reason (defaults to Prep error), submit — stock is deducted immediately and it shows up on Loss Log with your name attached. This is the same underlying mechanism as Loss Log, just one click closer to where the mistake happens.
 - A "QR order · Table N" badge and any add-ons appear automatically on tickets that originated from the Digital Menu.
 
-### 3.4 Stock — inventory (Recipe Ingredients + Station Items)
+### 3.4 Stock — the sidebar group (Overview, Recipe Ingredients, Station Items, Receive Shipment, Alerts, Variance Log)
 
-**Who:** everyone can log counts; manager/executive edit catalog fields. **Page:** `/stock` (legacy links `/inventory-count` and `/stock-count` still work and land on the correct tab).
+**Who:** Recipe Ingredients/Station Items/Receive Shipment are open to all roles (counting/receiving is everyone's job); Overview/Alerts/Variance Log are manager+executive only (oversight views, same tier as Command Center/Trend Analysis). Ingredient/catalog **editing** stays executive/manager-gated as noted below. **Pages:** all under one collapsible sidebar group, "Stock & Inventory" — `/stock/overview`, `/stock` (Recipe Ingredients), `/stock?tab=stations` (Station Items), `/inventory-movements` (Receive Shipment), `/stock/alerts`, `/stock/variance-log`. Legacy links `/inventory-count` and `/stock-count` still work and land on the correct tab. The group stays visually consistent with the rest of the app (same red/black/gold palette, no separate design language) but uses a denser "stamp"-badge/ruled-table look for status columns across all six pages.
 
 **The core idea:** you mostly don't need to count anything by hand anymore. Every POS/QR sale already knows its recipe and deducts the exact ingredients the moment the sale happens — including correctly skipping anything a customer held. Physical counting is now a periodic accuracy check, not the primary tracking method.
 
-**Tab 1 — Recipe Ingredients:** the source of truth for ingredients that go into recipes and drive food cost.
+**Overview** (manager/executive) — the group's landing page: four stat tiles (Low Stock Items, Expiring Soon, Items Needing Verification, Recipe Ingredients Tracked), a by-station breakdown, an Expiring Soon list, and a Recent Movements table. Every number is real and aggregated from existing endpoints — no new backend data, no fabricated figures. Each tile/section links straight to the page that can act on it.
+
+**Recipe Ingredients** (all roles count; manager/executive edit): the source of truth for ingredients that go into recipes and drive food cost.
 - Log a count any time to reconcile the system's running total against what's physically on the shelf — everyone can do this.
 - **Edit** (manager/executive only) opens a full-field dialog: name, category, base unit, suggested reorder unit, reorder threshold, cost volatility tier, notes. If you change the base unit away from its original value, a warning lists every recipe that references the ingredient plus its current stock/threshold in the *old* unit — there's deliberately **no auto-conversion**, since this schema has no unit-conversion table; nothing gets silently corrupted.
 - Shows Expiring Soon (advisory, based on the most recent delivery's expiry date — not true per-batch FIFO) and cost-volatility nudges.
 
-**Tab 2 — Station Items:** everything on the client's real paper stock sheets that has *no* recipe at all — packaging, supplies, resale beverages (~200 items) — organized by physical station (Tako-Snack, Cafe-Drinks, Sushi-Kitchen Main, Ramen-Hot Line) in the same New Stocks/Beginning/Usage/Ending format as the old paper sheets. Rows flagged from the original paper transcription as ambiguous carry a **VERIFY** flag until confirmed. A 5th **Manage Catalog** sub-tab (manager/executive) adds/edits items and links them to a real ingredient where applicable. If an item is *also* a recipe ingredient, its stock figure shows read-only here with an "Edit in Recipe Ingredients →" link — there is exactly one place that ever mutates that number.
+**Station Items** (all roles count; manager/executive manage the catalog): everything on the client's real paper stock sheets that has *no* recipe at all — packaging, supplies, resale beverages (~200 items) — organized by physical station (Tako-Snack, Cafe-Drinks, Sushi-Kitchen Main, Ramen-Hot Line) in the same New Stocks/Beginning/Usage/Ending format as the old paper sheets. Rows flagged from the original paper transcription as ambiguous carry a **VERIFY** flag until confirmed. A 5th **Manage Catalog** sub-tab (manager/executive) adds/edits items and links them to a real ingredient where applicable. If an item is *also* a recipe ingredient, its stock figure shows read-only here with an "Edit in Recipe Ingredients →" link — there is exactly one place that ever mutates that number.
 
-**Everywhere on Stock:** a live client-side consistency check flags Beginning+NewStocks−Ending mismatches against reported Usage; typing in either tab autosaves your in-progress entries to the browser (nothing hits the server until you hit Save), so a closed tab or dead device doesn't lose a count.
+**Alerts** (manager/executive) — every real low-stock, expiring, and verify-needed item combined into one filterable/sortable table (filter by type, source, or an adjustable expiring-soon window; search by name). A "Count now" action deep-links straight to the right tab — and, for a station item, the right station. Deliberately has **no snooze/acknowledge** in this build: a shared alert list dismissed from one browser could hide a real shortage from other shifts/terminals, so nothing here is ever hidden, only filtered.
 
-**Low stock:** anything at or below its reorder threshold — recipe ingredient or station item — shows as a red badge next to Stock in the sidebar and a card on Home (executives see the full breakdown on Command Center instead). You don't need to go looking for it.
+**Variance Log** (manager/executive) — a chronological, filterable reconciliation table combining real loss records and count-adjustment movements: signed variance (+overage/−shortage), real cost impact where known, reason, and a real "Recorded by" name (not a raw ID). No server-side date range exists yet, so this reflects the most recent 50 of each kind, not a full history search — the page says so rather than implying otherwise.
 
-### 3.5 Receive Shipment, Loss Log, Utility Log
+**Everywhere on Recipe Ingredients / Station Items:** a live client-side consistency check flags Beginning+NewStocks−Ending mismatches against reported Usage; typing in either tab autosaves your in-progress entries to the browser (nothing hits the server until you hit Save), so a closed tab or dead device doesn't lose a count.
 
-**Who:** all roles. **Pages:** `/inventory-movements` (sidebar label "Receive Shipment"), `/loss-log`, `/utility-log`.
+**Low stock:** anything at or below its reorder threshold — recipe ingredient or station item — shows as a red badge next to the Stock group header (and again next to Alerts) in the sidebar, and a card on Home (executives see the full breakdown on Command Center instead). You don't need to go looking for it.
 
-- **Receive Shipment** — a repeating-row batch form: add a row per ingredient (quantity, unit cost, optional expiry date) under one shared supplier/invoice note, submitted together. This is the same mechanism that drives a linked Station Item's "New Stocks" field under the hood. A second tab, **Log Other Movement**, handles non-delivery adjustments (transfers, write-offs). A third, **History**, lists past movements including expiry.
+### 3.5 Loss Log, Utility Log
+
+**Who:** all roles. **Pages:** `/loss-log`, `/utility-log`. (Receive Shipment is covered above in 3.4 — it now lives inside the Stock sidebar group at `/inventory-movements`, a repeating-row batch delivery form plus **Log Other Movement** and **History** tabs, same as before.)
+
 - **Loss Log** — records spoilage, breakage, comps, or shrinkage that isn't tied to a specific kitchen-board order (for order-tied prep overages, use Kitchen Display's "Log extra usage" instead — same underlying endpoint). If no cost is supplied, it falls back to the ingredient's own unit cost automatically.
 - **Utility Log** — log electricity/water/gas meter readings or quantities; the system computes consumption and cost per entry.
 
@@ -143,7 +148,13 @@ Every role sees their account info and a logout control. Executives additionally
 
 A chat assistant grounded in real, live business data (not a generic chatbot) — it can answer questions about revenue, best sellers, loss drivers (including by reason, e.g. spoilage), individual employee pay rates, current ingredient stock, payroll history, and more, with optional generated bar/line charts for comparison/trend questions. Example questions it can answer correctly: "What's my revenue today?", "What's driving my losses?", "What's Liza Fernandez's pay rate?", "What's my current stock of Sushi rice (raw)?" Responses take roughly 10–55 seconds (free-tier LLM queueing). Note: employee pay rates are included in the data sent to the LLM provider on every query — this endpoint is executive-only specifically because of that.
 
-### 3.12 HR & Payroll suite (manager+/executive)
+### 3.12 Help (executive)
+
+**Who:** executive only. **Page:** `/help` (sidebar, positioned right after Oishii AI).
+
+An in-app FAQ — accordion sections mirroring this guide's own structure (Overview, Customer ordering, Front of house, Stock & inventory, Menu/pricing, Money & reports, Staff/payroll/clock, Oishii AI) — for a client or executive who wants a plain-language answer without leaving the app or reading this file. Kept in sync with this guide whenever a subsystem changes.
+
+### 3.13 HR & Payroll suite (manager+/executive)
 
 **Who:** manager, executive (holiday and pay-rule *edits* are executive-only within these pages). **Pages:** `/employees`, `/hr/attendance`, `/hr/payroll`, `/hr/holiday-calendar`, `/hr/payroll-settings`.
 
@@ -153,7 +164,7 @@ A chat assistant grounded in real, live business data (not a generic chatbot) �
 - **Holiday Calendar** — CRUD of holidays by year and type (regular / special non-working / special working) — these feed the pay-multiplier logic for payroll generation.
 - **Payroll Settings** — the actual pay-rule percentages per work-day scenario (regular day, holiday combinations, rest day, etc.) — this is what "generate payroll" computes against.
 
-### 3.13 Staff Clock kiosk
+### 3.14 Staff Clock kiosk
 
 **Who:** any employee, at a shared physical device. **App:** `staff-clock` (separate app, no login screen — PIN only).
 
@@ -171,15 +182,15 @@ Every screen after PIN entry auto-resets to idle after 30 seconds of no activity
 Sidebar sections on the dashboard, exactly as gated:
 
 **All roles:**
-POS Terminal (`/pos`) · Order Queue (`/order-queue`) · Pending Orders (`/pending-orders`) · Kitchen Display (`/kitchen-display`) · Stock (`/stock`) · Receive Shipment (`/inventory-movements`) · Loss Log (`/loss-log`) · Utility Log (`/utility-log`) · Settings (`/settings`)
+POS Terminal (`/pos`) · Order Queue (`/order-queue`) · Pending Orders (`/pending-orders`) · Kitchen Display (`/kitchen-display`) · **Stock group:** Recipe Ingredients (`/stock`) · Station Items (`/stock?tab=stations`) · Receive Shipment (`/inventory-movements`) · Loss Log (`/loss-log`) · Utility Log (`/utility-log`) · Settings (`/settings`)
 
 **Manager + Executive:**
-POS Management (`/pos-management`) · Employees (`/employees`) · HR Attendance (`/hr/attendance`) · Payroll (`/hr/payroll`) · Holiday Calendar (`/hr/holiday-calendar`) · Payroll Settings (`/hr/payroll-settings`)
+**Stock group:** Overview (`/stock/overview`) · Alerts (`/stock/alerts`) · Variance Log (`/stock/variance-log`) · POS Management (`/pos-management`) · Employees (`/employees`) · HR Attendance (`/hr/attendance`) · Payroll (`/hr/payroll`) · Holiday Calendar (`/hr/holiday-calendar`) · Payroll Settings (`/hr/payroll-settings`)
 
 **Executive only:**
-Command Center (`/command-center`) · Trend Analysis (`/trends`) · Menu Editing (`/menu-editing`) · P&L (`/pnl`) · Oishii AI (`/oishii-ai`)
+Command Center (`/command-center`) · Trend Analysis (`/trends`) · Menu Editing (`/menu-editing`) · P&L (`/pnl`) · Oishii AI (`/oishii-ai`) · Help (`/help`)
 
-Executives are auto-redirected to Command Center on login rather than landing on Home.
+Executives are auto-redirected to Command Center on login rather than landing on Home. The Stock group is one collapsible sidebar entry (persists open/closed per browser, always force-opens when you're on one of its pages); its final order is Overview → Recipe Ingredients → Station Items → Receive Shipment → Alerts → Variance Log, with Overview/Alerts/Variance Log only appearing for manager/executive.
 
 ---
 

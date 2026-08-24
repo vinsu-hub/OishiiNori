@@ -16,6 +16,7 @@ export interface KioskVerifyResult {
   department: 'kitchen' | 'cafe' | null;
   today_status: TodayStatus;
   attendance_log_id: string | null;
+  log: AttendanceLog | null;
 }
 
 export interface AttendanceLog {

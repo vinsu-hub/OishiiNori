@@ -97,6 +97,10 @@ def kiosk_verify(body: KioskVerifyRequest):
         "department": profile.get("department"),
         "today_status": today_status,
         "attendance_log_id": attendance_log_id,
+        # The kiosk UI's Active Work screen (elapsed timer, End Today's Work)
+        # needs the actual clock_in time and log id, not just the id string --
+        # already fetched above via _get_open_attendance, no extra query.
+        "log": open_row,
     }
 
 

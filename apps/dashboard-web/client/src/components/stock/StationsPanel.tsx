@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearch } from 'wouter';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -29,6 +29,8 @@ import {
   updateStockItem,
 } from '@/lib/api';
 import { useDraftPersistence } from '@/hooks/useDraftPersistence';
+import { StockStatusBadge } from '@/components/stock/StockStatusBadge';
+import { STOCK_TABLE_CELL_CLASS, STOCK_TABLE_HEAD_CLASS, STOCK_TABLE_ROW_CLASS } from '@/components/stock/stockTableStyle';
 
 const STATIONS: { value: StockStation; label: string }[] = [
   { value: 'tako_snack', label: 'Tako / Snack' },
@@ -91,7 +93,17 @@ export function StationsPanel({ onViewIngredients }: StationsPanelProps) {
   const { user } = useAuth();
   const isManagerOrExecutive = user?.role === 'manager' || user?.role === 'executive';
 
-  const [activeTab, setActiveTab] = useState<ActiveTab>('tako_snack');
+  // Deep-link support: Stock Alerts' "Count now" action links here with
+  // ?station=<value> so the right station tab opens directly instead of
+  // always landing on the default. Read once on mount only (this panel
+  // stays mounted persistently once Stock.tsx renders it), matching the
+  // rest of this app's URL-param-on-mount convention.
+  const search = useSearch();
+  const initialStation = (): ActiveTab => {
+    const requested = new URLSearchParams(search).get('station');
+    return STATIONS.some((s) => s.value === requested) ? (requested as StockStation) : 'tako_snack';
+  };
+  const [activeTab, setActiveTab] = useState<ActiveTab>(initialStation);
   const [items, setItems] = useState<ApiStockItem[]>([]);
   const [drafts, setDrafts] = useState<Record<string, DraftRow>>({});
   const [originalDrafts, setOriginalDrafts] = useState<Record<string, DraftRow>>({});
@@ -252,14 +264,14 @@ export function StationsPanel({ onViewIngredients }: StationsPanelProps) {
               {!loading && items.length > 0 && (
                 <Table>
                   <TableHeader>
-                    <TableRow>
-                      <TableHead>Item</TableHead>
-                      <TableHead className="text-right">New Stocks</TableHead>
-                      <TableHead className="text-right">Beginning</TableHead>
-                      <TableHead className="text-right">Usage</TableHead>
-                      <TableHead className="text-right">Ending</TableHead>
-                      <TableHead>Notes</TableHead>
-                      <TableHead className="text-center">Flag</TableHead>
+                    <TableRow className={STOCK_TABLE_ROW_CLASS}>
+                      <TableHead className={STOCK_TABLE_HEAD_CLASS}>Item</TableHead>
+                      <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>New Stocks</TableHead>
+                      <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Beginning</TableHead>
+                      <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Usage</TableHead>
+                      <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Ending</TableHead>
+                      <TableHead className={STOCK_TABLE_HEAD_CLASS}>Notes</TableHead>
+                      <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-center`}>Flag</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -273,24 +285,21 @@ export function StationsPanel({ onViewIngredients }: StationsPanelProps) {
                       const computedUsage = canCheck ? beginning + (isNaN(newStocks) ? 0 : newStocks) - ending : null;
                       const mismatch = canCheck && computedUsage !== null && Math.abs(computedUsage - usage) > 0.01;
                       return (
-                        <TableRow key={item.id} className={item.needs_review ? 'bg-amber-50' : undefined}>
-                          <TableCell className="font-medium">
+                        <TableRow
+                          key={item.id}
+                          className={`${STOCK_TABLE_ROW_CLASS} ${item.needs_review ? 'bg-warning-bg' : ''}`}
+                        >
+                          <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-medium`}>
                             <div className="flex items-center gap-1.5 flex-wrap">
                               {item.name}
-                              {item.needs_review && (
-                                <Badge variant="destructive" className="text-xs">
-                                  VERIFY
-                                </Badge>
-                              )}
+                              {item.needs_review && <StockStatusBadge variant="critical">Verify</StockStatusBadge>}
                               {item.ingredient_id && (
-                                <Badge variant="outline" className="text-xs">
-                                  linked -- {item.ingredient_name}
-                                </Badge>
+                                <StockStatusBadge variant="neutral">Linked -- {item.ingredient_name}</StockStatusBadge>
                               )}
                             </div>
                             {item.unit && <p className="text-xs text-muted-foreground">{item.unit}</p>}
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>
                             {item.ingredient_id ? (
                               <span className="text-xs text-muted-foreground">--</span>
                             ) : (
@@ -302,7 +311,7 @@ export function StationsPanel({ onViewIngredients }: StationsPanelProps) {
                               />
                             )}
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>
                             <Input
                               type="number"
                               className="w-24 text-right text-sm ml-auto"
@@ -310,7 +319,7 @@ export function StationsPanel({ onViewIngredients }: StationsPanelProps) {
                               onChange={(e) => updateDraft(item.id, { beginning: e.target.value })}
                             />
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>
                             <Input
                               type="number"
                               className={`w-24 text-right text-sm ml-auto ${mismatch ? 'border-destructive' : ''}`}
@@ -319,14 +328,12 @@ export function StationsPanel({ onViewIngredients }: StationsPanelProps) {
                             />
                             {mismatch && (
                               <div className="mt-1 flex flex-col items-end gap-1">
-                                <Badge variant="destructive" className="text-xs">
-                                  Mismatch
-                                </Badge>
+                                <StockStatusBadge variant="critical">Mismatch</StockStatusBadge>
                                 <p className="text-xs text-destructive">expected {computedUsage?.toFixed(2)}</p>
                               </div>
                             )}
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>
                             {item.ingredient_id ? (
                               <div className="text-right">
                                 <p className="text-sm font-medium">
@@ -349,14 +356,14 @@ export function StationsPanel({ onViewIngredients }: StationsPanelProps) {
                               />
                             )}
                           </TableCell>
-                          <TableCell>
+                          <TableCell className={STOCK_TABLE_CELL_CLASS}>
                             <Input
                               className="text-sm min-w-[140px]"
                               value={d.notes}
                               onChange={(e) => updateDraft(item.id, { notes: e.target.value })}
                             />
                           </TableCell>
-                          <TableCell className="text-center">
+                          <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-center`}>
                             <input
                               type="checkbox"
                               checked={d.needsVerification}
@@ -455,40 +462,46 @@ function ManageCatalog() {
         {!loading && (
           <Table>
             <TableHeader>
-              <TableRow>
-                <TableHead>Station</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Unit</TableHead>
-                <TableHead>Linked Ingredient</TableHead>
-                <TableHead>Active</TableHead>
-                <TableHead>Verify</TableHead>
-                <TableHead />
+              <TableRow className={STOCK_TABLE_ROW_CLASS}>
+                <TableHead className={STOCK_TABLE_HEAD_CLASS}>Station</TableHead>
+                <TableHead className={STOCK_TABLE_HEAD_CLASS}>Name</TableHead>
+                <TableHead className={STOCK_TABLE_HEAD_CLASS}>Category</TableHead>
+                <TableHead className={STOCK_TABLE_HEAD_CLASS}>Unit</TableHead>
+                <TableHead className={STOCK_TABLE_HEAD_CLASS}>Linked Ingredient</TableHead>
+                <TableHead className={STOCK_TABLE_HEAD_CLASS}>Active</TableHead>
+                <TableHead className={STOCK_TABLE_HEAD_CLASS}>Verify</TableHead>
+                <TableHead className={STOCK_TABLE_HEAD_CLASS} />
               </TableRow>
             </TableHeader>
             <TableBody>
               {items.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell className="text-muted-foreground">
+                <TableRow key={item.id} className={STOCK_TABLE_ROW_CLASS}>
+                  <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-muted-foreground`}>
                     {STATIONS.find((s) => s.value === item.station)?.label}
                   </TableCell>
-                  <TableCell className="font-medium">{item.name}</TableCell>
-                  <TableCell className="text-muted-foreground">{item.category || '--'}</TableCell>
-                  <TableCell className="text-muted-foreground">{item.unit || '--'}</TableCell>
-                  <TableCell>
+                  <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-medium`}>{item.name}</TableCell>
+                  <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-muted-foreground`}>{item.category || '--'}</TableCell>
+                  <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-muted-foreground`}>{item.unit || '--'}</TableCell>
+                  <TableCell className={STOCK_TABLE_CELL_CLASS}>
                     {item.ingredient_name ? (
-                      <Badge variant="outline">{item.ingredient_name}</Badge>
+                      <StockStatusBadge variant="neutral">{item.ingredient_name}</StockStatusBadge>
                     ) : (
                       <span className="text-muted-foreground">--</span>
                     )}
                   </TableCell>
-                  <TableCell>
-                    <Badge variant={item.active ? 'outline' : 'secondary'}>{item.active ? 'Active' : 'Inactive'}</Badge>
+                  <TableCell className={STOCK_TABLE_CELL_CLASS}>
+                    <StockStatusBadge variant={item.active ? 'ok' : 'neutral'}>
+                      {item.active ? 'Active' : 'Inactive'}
+                    </StockStatusBadge>
                   </TableCell>
-                  <TableCell>
-                    {item.needs_review ? <Badge variant="destructive">VERIFY</Badge> : <span className="text-muted-foreground">--</span>}
+                  <TableCell className={STOCK_TABLE_CELL_CLASS}>
+                    {item.needs_review ? (
+                      <StockStatusBadge variant="critical">Verify</StockStatusBadge>
+                    ) : (
+                      <span className="text-muted-foreground">--</span>
+                    )}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className={STOCK_TABLE_CELL_CLASS}>
                     <Button size="sm" variant="outline" onClick={() => openEdit(item)}>
                       Edit
                     </Button>
@@ -496,7 +509,7 @@ function ManageCatalog() {
                 </TableRow>
               ))}
               {items.length === 0 && (
-                <TableRow>
+                <TableRow className={STOCK_TABLE_ROW_CLASS}>
                   <TableCell colSpan={8} className="text-center text-sm text-muted-foreground">
                     No stock items yet.
                   </TableCell>

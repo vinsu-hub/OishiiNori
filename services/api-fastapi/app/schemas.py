@@ -597,6 +597,7 @@ class KioskVerifyResponse(BaseModel):
     photo_url: str | None = None
     today_status: Literal["not_started", "working", "completed"]
     attendance_log_id: str | None = None
+    log: AttendanceLogResponse | None = None
 
 
 class KioskClockInRequest(BaseModel):

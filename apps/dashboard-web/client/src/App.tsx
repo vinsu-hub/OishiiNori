@@ -21,6 +21,9 @@ import PnL from './pages/PnL';
 import OishiAi from './pages/OishiAi';
 import Help from './pages/Help';
 import Stock from './pages/Stock';
+import StockOverview from './pages/StockOverview';
+import StockAlerts from './pages/StockAlerts';
+import StockVarianceLog from './pages/StockVarianceLog';
 import InventoryMovements from './pages/InventoryMovements';
 import LossLog from './pages/LossLog';
 import UtilityLog from './pages/UtilityLog';
@@ -48,6 +51,9 @@ function Router() {
       <Route path={'/pnl'} component={PnL} />
       <Route path={'/oishii-ai'} component={OishiAi} />
       <Route path={'/help'} component={Help} />
+      <Route path={'/stock/overview'} component={StockOverview} />
+      <Route path={'/stock/alerts'} component={StockAlerts} />
+      <Route path={'/stock/variance-log'} component={StockVarianceLog} />
       <Route path={'/stock'} component={Stock} />
       {/* Legacy paths -- Stock.tsx reads the pathname to land on the right tab */}
       <Route path={'/inventory-count'} component={Stock} />

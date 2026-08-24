@@ -37,9 +37,9 @@ const HELP_GROUPS: HelpGroup[] = [
           <>
             <p>Every account has one role, shown in the sidebar footer:</p>
             <ul className="list-disc pl-5 space-y-1 mt-1">
-              <li><strong>Employee</strong> — POS, Order Queue, Pending Orders, Kitchen Display, Stock, Receive Shipment, Loss Log, Utility Log, Settings.</li>
-              <li><strong>Manager</strong> — everything above, plus POS Management, Employees, HR Attendance, Payroll, Holiday Calendar, and Payroll Settings.</li>
-              <li><strong>Executive</strong> — everything above, plus Command Center, Trend Analysis, Menu Editing, P&amp;L, and Oishii AI. Executives land on Command Center after logging in instead of Home.</li>
+              <li><strong>Employee</strong> — POS, Order Queue, Pending Orders, Kitchen Display, the Stock group's Recipe Ingredients/Station Items/Receive Shipment, Loss Log, Utility Log, Settings.</li>
+              <li><strong>Manager</strong> — everything above, plus the Stock group's Overview/Alerts/Variance Log, POS Management, Employees, HR Attendance, Payroll, Holiday Calendar, and Payroll Settings.</li>
+              <li><strong>Executive</strong> — everything above, plus Command Center, Trend Analysis, Menu Editing, P&amp;L, Oishii AI, and this Help page. Executives land on Command Center after logging in instead of Home.</li>
             </ul>
             <p className="mt-1">The sidebar only shows what a role can use — if something isn't listed here, that section is not relevant to your role.</p>
           </>
@@ -128,10 +128,18 @@ const HELP_GROUPS: HelpGroup[] = [
         ),
       },
       {
-        question: 'What are the two tabs on the Stock page?',
+        question: 'What are the pages inside the Stock group?',
         answer: (
           <>
             <p>
+              The sidebar's <strong>Stock &amp; Inventory</strong> group holds six pages, in order:
+            </p>
+            <p className="mt-1">
+              <strong>Overview</strong> (manager/executive) — a landing dashboard: low-stock count, expiring-soon
+              items, a per-station breakdown, and recent movements, each linking straight to the page that can act
+              on it.
+            </p>
+            <p className="mt-1">
               <strong>Recipe Ingredients</strong> — the source of truth for anything used in a recipe and driving
               food cost. Anyone can log a count here to correct the system's running total; managers/executives can
               also edit an ingredient's details (base unit, category, reorder threshold).
@@ -141,6 +149,17 @@ const HELP_GROUPS: HelpGroup[] = [
               (packaging, supplies, resale drinks), organized by physical station. If an item is also a recipe
               ingredient, its stock number is read-only here and links to the Recipe Ingredients tab, so there's
               only ever one place that actually changes that figure.
+            </p>
+            <p className="mt-1">
+              <strong>Receive Shipment</strong> — log what came in from a supplier.
+            </p>
+            <p className="mt-1">
+              <strong>Alerts</strong> (manager/executive) — every real low-stock/expiring/verify-needed item in one
+              filterable table, with a "Count now" button that jumps straight to the right tab (and station).
+            </p>
+            <p className="mt-1">
+              <strong>Variance Log</strong> (manager/executive) — a chronological history of real loss records and
+              count adjustments, with signed variance, cost impact, and who recorded it.
             </p>
           </>
         ),
@@ -159,9 +178,10 @@ const HELP_GROUPS: HelpGroup[] = [
         question: "How do I know when something's running low?",
         answer: (
           <p>
-            A red badge appears next to <strong>Stock</strong> in the sidebar (and a card on Home) the moment
-            anything hits its reorder threshold — you don't need to go looking for it. Executives also see the full
-            breakdown on Command Center.
+            A red badge appears next to the <strong>Stock &amp; Inventory</strong> group (and again next to
+            <strong> Alerts</strong>) in the sidebar, and a card on Home, the moment anything hits its reorder
+            threshold — you don't need to go looking for it. Managers/executives can see the full list on
+            <strong> Alerts</strong> or <strong>Overview</strong>; executives also see it on Command Center.
           </p>
         ),
       },
