@@ -1,6 +1,6 @@
 /* OIshiinori style reminder: reference-faithful Japanese editorial menu, warm ivory paper, charcoal ink, OIshiinori Vermilion, asymmetric poster rhythm. */
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, ChevronDown, Clock3, Instagram, Loader2, MapPin, Menu as MenuIcon, Minus, Phone, Plus, Send, X } from "lucide-react";
+import { ArrowRight, Clock3, Instagram, Loader2, MapPin, Menu as MenuIcon, Minus, Phone, Plus, Send, X } from "lucide-react";
 import { MapView } from "@/components/Map";
 import {
   ApiProduct,
@@ -55,7 +55,6 @@ export default function Home() {
   // --- Live menu catalog ---
   const [products, setProducts] = useState<ApiProduct[]>([]);
   const [loadingMenu, setLoadingMenu] = useState(true);
-  const [activeCategory, setActiveCategory] = useState("All");
   const [menuOpen, setMenuOpen] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
   const [sent, setSent] = useState(false);
@@ -68,16 +67,21 @@ export default function Home() {
       .finally(() => setLoadingMenu(false));
   }, []);
 
-  const categories = useMemo(() => {
-    const seen = new Set<string>();
-    for (const p of products) seen.add(p.category);
-    return ["All", ...Array.from(seen)];
+  // Curated showcase, not the full catalog: up to 3 photographed items per
+  // category (an unphotographed item can't be a visual "best seller" pick),
+  // in the API's existing category-then-name order.
+  const bestSellers = useMemo(() => {
+    const byCategory = new Map<string, ApiProduct[]>();
+    for (const p of products) {
+      if (!p.image_path) continue;
+      const list = byCategory.get(p.category) ?? [];
+      if (list.length < 3) {
+        list.push(p);
+        byCategory.set(p.category, list);
+      }
+    }
+    return Array.from(byCategory.values()).flat();
   }, [products]);
-
-  const filteredProducts = useMemo(
-    () => (activeCategory === "All" ? products : products.filter((p) => p.category === activeCategory)),
-    [products, activeCategory]
-  );
 
   // --- Business hours (real, from Settings -- see GET /public/business-hours) ---
   const [hours, setHours] = useState<BusinessHours | null>(null);
@@ -219,19 +223,13 @@ export default function Home() {
             <p className="eyebrow">ON THE TABLE</p>
             <h2>Fresh picks,<br /><span>made daily.</span></h2>
           </div>
-          <p className="heading-aside">Our real menu, straight<br />from the kitchen.</p>
-        </div>
-        <div className="category-bar" role="tablist" aria-label="Menu categories">
-          {categories.map((category) => (
-            <button key={category} className={activeCategory === category ? "active" : ""} onClick={() => setActiveCategory(category)} role="tab" aria-selected={activeCategory === category}>{category}</button>
-          ))}
-          <ChevronDown size={15} className="category-arrow" />
+          <p className="heading-aside">Our best sellers, straight<br />from the kitchen.</p>
         </div>
         {loadingMenu ? (
           <p style={{ textAlign: "center", fontSize: 12, color: "var(--muted-foreground)" }}>Loading menu...</p>
         ) : (
           <div className="menu-grid">
-            {filteredProducts.map((product, index) => (
+            {bestSellers.map((product, index) => (
               <article className="menu-card" key={product.id}>
                 <div className="menu-image-wrap">
                   {product.image_path ? (
