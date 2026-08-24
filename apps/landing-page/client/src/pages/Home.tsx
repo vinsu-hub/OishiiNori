@@ -1,18 +1,8 @@
 /* OIshiinori style reminder: reference-faithful Japanese editorial menu, warm ivory paper, charcoal ink, OIshiinori Vermilion, asymmetric poster rhythm. */
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, Clock3, Instagram, Loader2, MapPin, Menu as MenuIcon, Minus, Phone, Plus, Send, X } from "lucide-react";
+import { ArrowRight, Clock3, Instagram, MapPin, Menu as MenuIcon, Phone, Send, X } from "lucide-react";
 import { MapView } from "@/components/Map";
-import {
-  ApiProduct,
-  BusinessHours,
-  ReservationSlot,
-  ReservationStatus,
-  fetchBusinessHours,
-  fetchMenu,
-  fetchReservationAvailability,
-  submitReservation,
-  fetchReservationStatus,
-} from "@/lib/api";
+import { ApiProduct, BusinessHours, fetchBusinessHours, fetchMenu } from "@/lib/api";
 
 const logo = "/logo.jpg";
 const heroImage = "/products/oishii-baked-sushi.jpg";
@@ -20,7 +10,9 @@ const aboutImage = "/products/tonkatsu-ramen.jpg";
 const visitImage = "/products/spicy-tuna-baked-sushi.jpg";
 
 const shopLocation = { lat: 14.278476, lng: 121.4158777 };
-const PARTY_SIZE_OPTIONS = Array.from({ length: 12 }, (_, i) => i + 1);
+// Canonical reservation portal -- customer-menu, not a second copy of the
+// form here. ?reserve=1 skips its welcome screen straight to the form.
+const CUSTOMER_MENU_URL = "https://oishii-nori-menu.vercel.app";
 
 function scrollToId(id: string) {
   document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
@@ -33,7 +25,7 @@ function peso(value: number) {
 function priceLabel(product: ApiProduct): string {
   if (product.sizes.length === 0) return "";
   const cheapest = [...product.sizes].sort((a, b) => a.price - b.price)[0];
-  return product.sizes.length > 1 ? `from ${peso(cheapest.price)}` : peso(cheapest.price);
+  return peso(cheapest.price);
 }
 
 function formatTime12h(hhmm: string): string {
@@ -41,10 +33,6 @@ function formatTime12h(hhmm: string): string {
   const period = h >= 12 ? "PM" : "AM";
   const hour12 = h % 12 === 0 ? 12 : h % 12;
   return `${hour12}:${String(m).padStart(2, "0")} ${period}`;
-}
-
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
 }
 
 function toast(message: string, type: "success" | "error" | "info" = "info") {
@@ -96,75 +84,10 @@ export default function Home() {
 
   const hoursLabel = hours ? `${formatTime12h(hours.open_time.slice(0, 5))} — ${formatTime12h(hours.close_time.slice(0, 5))}` : "11:00 AM — 10:00 PM";
 
-  // --- Reservation form ---
-  const [partySize, setPartySize] = useState(2);
-  const [resDate, setResDate] = useState(todayIso());
-  const [slots, setSlots] = useState<ReservationSlot[]>([]);
-  const [slotsClosed, setSlotsClosed] = useState(false);
-  const [loadingSlots, setLoadingSlots] = useState(false);
-  const [selectedTime, setSelectedTime] = useState("");
-  const [guestName, setGuestName] = useState("");
-  const [contact, setContact] = useState("");
-  const [reservationSubmitting, setReservationSubmitting] = useState(false);
-  const [reservation, setReservation] = useState<ReservationStatus | null>(null);
-
-  function loadAvailability() {
-    setLoadingSlots(true);
-    setSelectedTime("");
-    fetchReservationAvailability(resDate, partySize)
-      .then((res) => {
-        setSlots(res.slots);
-        setSlotsClosed(res.closed);
-      })
-      .catch((e) => toast(e instanceof Error ? e.message : "Failed to load availability", "error"))
-      .finally(() => setLoadingSlots(false));
-  }
-
-  useEffect(() => {
-    loadAvailability();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resDate, partySize]);
-
-  useEffect(() => {
-    if (!reservation || reservation.status !== "pending") return;
-    const interval = setInterval(() => {
-      fetchReservationStatus(reservation.id).then(setReservation).catch(() => {});
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [reservation]);
-
   const handleContact = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSent(true);
   };
-
-  async function handleReservation(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selectedTime || !guestName.trim() || !contact.trim()) return;
-    setReservationSubmitting(true);
-    try {
-      const result = await submitReservation({
-        party_size: partySize,
-        reservation_date: resDate,
-        start_time: `${selectedTime}:00`,
-        customer_name: guestName.trim(),
-        customer_phone: contact.trim(),
-      });
-      setReservation(result);
-    } catch (e) {
-      toast(e instanceof Error ? e.message : "Failed to submit reservation", "error");
-      loadAvailability();
-    } finally {
-      setReservationSubmitting(false);
-    }
-  }
-
-  function resetReservation() {
-    setReservation(null);
-    setGuestName("");
-    setContact("");
-    loadAvailability();
-  }
 
   return (
     <main className="site-shell">
@@ -286,82 +209,11 @@ export default function Home() {
           <p>Make room for good food, cold drinks, and the people you want around. We’ll save you a seat.</p>
           <div className="reserve-note"><span>ご予約</span><small>Reservations are held for 15 minutes.</small></div>
         </div>
-        {reservation ? (
-          <div className="reserve-form" style={{ justifyContent: "center" }}>
-            <div className="reserve-status">
-              <b>Request #{reservation.reservation_number}</b>
-              <span>
-                Party of {reservation.party_size} · {reservation.reservation_date} · {formatTime12h(reservation.start_time.slice(0, 5))}
-              </span>
-              <small>
-                {reservation.status === "pending" && "PENDING — sit tight, staff are reviewing your request. This updates automatically."}
-                {reservation.status === "confirmed" && "CONFIRMED — we'll see you then!"}
-                {reservation.status === "declined" && `DECLINED — ${reservation.declined_reason || "please call the kitchen for help."}`}
-                {reservation.status === "cancelled" && "CANCELLED"}
-              </small>
-              {(reservation.status === "declined" || reservation.status === "cancelled") && (
-                <button className="dark-button" type="button" style={{ marginTop: 8, width: "fit-content" }} onClick={resetReservation}>
-                  Book another table <ArrowRight size={13} />
-                </button>
-              )}
-            </div>
-          </div>
-        ) : (
-          <form className="reserve-form" onSubmit={handleReservation}>
-            <div className="reserve-form-row">
-              <label>
-                Date
-                <input required type="date" name="date" min={todayIso()} value={resDate} onChange={(e) => setResDate(e.target.value)} />
-              </label>
-              <label>
-                Party size
-                <select required name="party" value={partySize} onChange={(e) => setPartySize(Number(e.target.value))}>
-                  {PARTY_SIZE_OPTIONS.map((n) => (
-                    <option key={n} value={n}>
-                      {n} guest{n > 1 ? "s" : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <label>
-              Time
-              {slotsClosed ? (
-                <select disabled><option>We're closed this day</option></select>
-              ) : (
-                <select
-                  required
-                  name="time"
-                  disabled={loadingSlots}
-                  value={selectedTime}
-                  onChange={(e) => setSelectedTime(e.target.value)}
-                >
-                  <option value="" disabled>
-                    {loadingSlots ? "Checking availability..." : "Select time"}
-                  </option>
-                  {slots.map((slot) => (
-                    <option key={slot.time} value={slot.time} disabled={!slot.available}>
-                      {formatTime12h(slot.time)} {!slot.available ? "(full)" : ""}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </label>
-            <label>Name<input required name="guest" placeholder="Your name" value={guestName} onChange={(e) => setGuestName(e.target.value)} /></label>
-            <label>Phone or email<input required name="contact" placeholder="How can we reach you?" value={contact} onChange={(e) => setContact(e.target.value)} /></label>
-            <button className="dark-button submit-button" type="submit" disabled={!selectedTime || reservationSubmitting}>
-              {reservationSubmitting ? (
-                <>
-                  <Loader2 size={13} className="animate-spin" /> Sending...
-                </>
-              ) : (
-                <>
-                  Reserve now <ArrowRight size={13} />
-                </>
-              )}
-            </button>
-          </form>
-        )}
+        <div className="reserve-form" style={{ justifyContent: "center" }}>
+          <a className="dark-button submit-button" href={`${CUSTOMER_MENU_URL}/?reserve=1`}>
+            Reserve now <ArrowRight size={13} />
+          </a>
+        </div>
       </section>
 
       <section id="contact" className="contact-section section-pad">

@@ -95,7 +95,12 @@ export default function App() {
     const n = raw ? parseInt(raw, 10) : NaN;
     return Number.isFinite(n) && n > 0 ? n : null;
   });
-  const [landingMode, setLandingMode] = useState<'choice' | 'reserve'>('choice');
+  // ?reserve=1 is the landing page's deep-link into the reservation flow --
+  // skips this welcome/choice screen entirely so "Reserve now" there is a
+  // true one-click portal, not a redirect-then-click-again.
+  const [landingMode, setLandingMode] = useState<'choice' | 'reserve'>(() =>
+    new URLSearchParams(window.location.search).get('reserve') === '1' ? 'reserve' : 'choice'
+  );
 
   const [products, setProducts] = useState<ApiProduct[]>([]);
   const [addonCatalog, setAddonCatalog] = useState<ApiAddon[]>([]);
