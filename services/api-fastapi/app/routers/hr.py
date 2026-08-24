@@ -62,19 +62,24 @@ def list_attendance(
     date_from: date | None = Query(None),
     date_to: date | None = Query(None),
     employee_id: str | None = Query(None),
+    limit: int = Query(100, le=500),
     user: CurrentUser = Depends(get_current_user),
 ):
     require_role(user, "manager", "executive")
     auto_close_stale_attendance()
 
-    query = hr_table("attendance_logs").select("*")
+    query = hr_table("attendance_logs").select(
+        "id, employee_id, kiosk_id, clock_in, clock_out, date, hours_worked, regular_hours, "
+        "overtime_hours, night_diff_hours, is_rest_day, holiday_id, day_scenario, status, "
+        "auto_closed, created_at, updated_at"
+    )
     if date_from:
         query = query.gte("date", date_from.isoformat())
     if date_to:
         query = query.lte("date", date_to.isoformat())
     if employee_id:
         query = query.eq("employee_id", employee_id)
-    result = query.order("clock_in", desc=True).execute()
+    result = query.order("clock_in", desc=True).limit(limit).execute()
     return result.data
 
 

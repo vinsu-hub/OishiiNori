@@ -23,6 +23,7 @@ import {
 } from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
 import { POLL_INTERVAL_MS } from '@/lib/constants';
+import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 
 export default function PendingOrders() {
   const [orders, setOrders] = useState<ApiDigitalOrder[]>([]);
@@ -33,21 +34,22 @@ export default function PendingOrders() {
   const [rejectReason, setRejectReason] = useState('');
   const [busy, setBusy] = useState(false);
 
+  // The product catalog only changes via an executive/manager action (Menu
+  // Editing) -- fetch it once on mount instead of on every 20s poll tick.
+  useEffect(() => {
+    fetchProducts(true)
+      .then(setProducts)
+      .catch((e) => toast.error(`Failed to load products: ${e instanceof Error ? e.message : 'Unknown error'}`));
+  }, []);
+
   const load = useCallback(() => {
-    Promise.all([fetchDigitalOrders('pending'), fetchProducts(true)])
-      .then(([o, p]) => {
-        setOrders([...o].sort((a, b) => a.order_number - b.order_number));
-        setProducts(p);
-      })
+    fetchDigitalOrders('pending')
+      .then((o) => setOrders([...o].sort((a, b) => a.order_number - b.order_number)))
       .catch((e) => toast.error(`Failed to load pending orders: ${e instanceof Error ? e.message : 'Unknown error'}`))
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => {
-    load();
-    const interval = setInterval(load, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [load]);
+  useVisiblePolling(load, POLL_INTERVAL_MS);
 
   const sizeIndex = useMemo(() => {
     const map = new Map<string, { product: ApiProduct; size: ApiProduct['sizes'][number] }>();

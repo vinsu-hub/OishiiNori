@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ApiUtilityLog, UtilityType, createUtilityLog, fetchUtilityLogs } from '@/lib/api';
+import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 
 const POLL_INTERVAL_MS = 20_000;
 
@@ -55,11 +56,7 @@ export default function UtilityLog() {
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => {
-    load();
-    const interval = setInterval(load, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [load]);
+  useVisiblePolling(load, POLL_INTERVAL_MS);
 
   function resetForm() {
     setUtilityType('electricity');

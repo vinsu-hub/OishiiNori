@@ -77,7 +77,10 @@ def list_stock_items(
     user: CurrentUser = Depends(get_current_user),
 ):
     supabase = get_supabase()
-    query = supabase.table("stock_items").select("*, ingredients(name, current_stock)")
+    query = supabase.table("stock_items").select(
+        "id, name, station, category, unit, ingredient_id, current_stock, reorder_threshold, "
+        "active, needs_review, created_at, updated_at, ingredients(name, current_stock)"
+    )
     if station:
         query = query.eq("station", station)
     if active_only:
@@ -126,7 +129,10 @@ def create_stock_item(body: StockItemCreate, user: CurrentUser = Depends(get_cur
                 "reorder_threshold": body.reorder_threshold,
             }
         )
-        .select("*, ingredients(name, current_stock)")
+        .select(
+            "id, name, station, category, unit, ingredient_id, current_stock, reorder_threshold, "
+            "active, needs_review, created_at, updated_at, ingredients(name, current_stock)"
+        )
         .execute()
     )
     return _to_stock_item_out(result.data[0])
@@ -146,7 +152,10 @@ def update_stock_item(stock_item_id: str, body: StockItemUpdate, user: CurrentUs
         supabase.table("stock_items")
         .update(update_data)
         .eq("id", stock_item_id)
-        .select("*, ingredients(name, current_stock)")
+        .select(
+            "id, name, station, category, unit, ingredient_id, current_stock, reorder_threshold, "
+            "active, needs_review, created_at, updated_at, ingredients(name, current_stock)"
+        )
         .execute()
     )
     if not result.data:

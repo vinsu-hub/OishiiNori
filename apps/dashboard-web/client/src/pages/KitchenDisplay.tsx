@@ -24,6 +24,7 @@ import {
   updateKitchenStatus,
 } from '@/lib/api';
 import { POLL_INTERVAL_MS, toIsoDatePH, todayIsoPH } from '@/lib/constants';
+import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 import { buildDigitalOrderLookup } from '@/lib/digitalOrderLookup';
 import { DigitalOrderInfo } from '@/components/shared/DigitalOrderInfo';
 import { playNewOrderBeep } from '@/lib/orderSounds';
@@ -117,11 +118,18 @@ export default function KitchenDisplay() {
     return () => clearInterval(tick);
   }, []);
 
+  // The product catalog only changes via an executive/manager action (Menu
+  // Editing) -- fetch it once on mount instead of on every 20s poll tick.
+  useEffect(() => {
+    fetchProducts(true)
+      .then(setProducts)
+      .catch((e) => toast.error(`Failed to load products: ${e instanceof Error ? e.message : 'Unknown error'}`));
+  }, []);
+
   const load = useCallback(() => {
-    Promise.all([fetchTransactions(), fetchProducts(true), fetchDigitalOrders('approved')])
-      .then(([t, p, digitalOrders]) => {
+    Promise.all([fetchTransactions(), fetchDigitalOrders('approved')])
+      .then(([t, digitalOrders]) => {
         setTransactions(t.filter((x) => x.status !== 'voided'));
-        setProducts(p);
         setDigitalOrderLookup(buildDigitalOrderLookup(digitalOrders));
         // Bundle fulfillment is a real backend field now (bundle_fulfillments
         // is the source of truth) -- re-seed from every poll so a reload (or
@@ -152,11 +160,7 @@ export default function KitchenDisplay() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [soundOn]);
 
-  useEffect(() => {
-    load();
-    const interval = setInterval(load, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [load]);
+  useVisiblePolling(load, POLL_INTERVAL_MS);
 
   const sizeIndex = useMemo(() => {
     const map = new Map<string, { product: ApiProduct; size: ApiProductSize }>();

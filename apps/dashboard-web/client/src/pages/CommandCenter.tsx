@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { toast } from 'sonner';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { ApiDashboardSummary, fetchDashboardSummary } from '@/lib/api';
 import { DEPARTMENT_CONFIG } from '@/lib/types';
 import { todayIsoPH } from '@/lib/constants';
+import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 
 // Polling, not websockets/Supabase realtime -- matches this app's established
 // pattern (OrderQueue.tsx/KitchenDisplay.tsx), even though the SMFC
@@ -26,11 +27,7 @@ export default function CommandCenter() {
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => {
-    load();
-    const interval = setInterval(load, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [load]);
+  useVisiblePolling(load, POLL_INTERVAL_MS);
 
   if (user && user.role !== 'executive') {
     return (

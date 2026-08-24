@@ -43,7 +43,16 @@ def get_low_stock_ingredients(supabase) -> list[LowStockIngredient]:
 @router.get("/inventory", response_model=list[IngredientOut])
 def list_inventory(user: CurrentUser = Depends(get_current_user)):
     supabase = get_supabase()
-    result = supabase.table("ingredients").select("*").order("name").execute()
+    result = (
+        supabase.table("ingredients")
+        .select(
+            "id, name, category, base_unit, suggested_reorder_unit, cost_volatility, "
+            "cost_volatility_tier, shelf_life_note, used_in_note, current_stock, "
+            "reorder_threshold, needs_review, unit_cost"
+        )
+        .order("name")
+        .execute()
+    )
     return result.data
 
 

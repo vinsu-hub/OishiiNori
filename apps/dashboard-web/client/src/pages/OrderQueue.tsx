@@ -27,6 +27,7 @@ import {
 } from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
 import { POLL_INTERVAL_MS, todayIsoPH } from '@/lib/constants';
+import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 import { buildDigitalOrderLookup } from '@/lib/digitalOrderLookup';
 import { DigitalOrderInfo } from '@/components/shared/DigitalOrderInfo';
 import { playOrderReadyBeep } from '@/lib/orderSounds';
@@ -109,11 +110,7 @@ export default function OrderQueue() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dateFilter, statusFilter, soundOn]);
 
-  useEffect(() => {
-    load();
-    const interval = setInterval(load, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [load]);
+  useVisiblePolling(load, POLL_INTERVAL_MS);
 
   useEffect(() => {
     setPage(1);

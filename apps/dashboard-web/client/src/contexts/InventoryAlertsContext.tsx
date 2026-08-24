@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useState } from 'react';
 import { ApiLowStockIngredient, ApiLowStockStockItem, fetchLowStockSummary } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
+import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 
 const POLL_INTERVAL_MS = 90_000; // low stock doesn't change minute to minute -- deliberately slower than any page's own poll.
 
@@ -26,34 +27,24 @@ export function InventoryAlertsProvider({ children }: { children: React.ReactNod
   const [lowStockCount, setLowStockCount] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!user) {
       setLoading(false);
       return;
     }
-    let cancelled = false;
-    const load = () => {
-      fetchLowStockSummary()
-        .then((data) => {
-          if (cancelled) return;
-          setIngredients(data.ingredients);
-          setStockItems(data.stock_items);
-          setLowStockCount(data.ingredient_count + data.stock_item_count);
-        })
-        .catch(() => {
-          // Non-critical -- the badge/card just stays at its last known value.
-        })
-        .finally(() => {
-          if (!cancelled) setLoading(false);
-        });
-    };
-    load();
-    const interval = setInterval(load, POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
+    fetchLowStockSummary()
+      .then((data) => {
+        setIngredients(data.ingredients);
+        setStockItems(data.stock_items);
+        setLowStockCount(data.ingredient_count + data.stock_item_count);
+      })
+      .catch(() => {
+        // Non-critical -- the badge/card just stays at its last known value.
+      })
+      .finally(() => setLoading(false));
   }, [user]);
+
+  useVisiblePolling(load, POLL_INTERVAL_MS);
 
   return (
     <InventoryAlertsContext.Provider value={{ lowStockCount, ingredients, stockItems, loading }}>

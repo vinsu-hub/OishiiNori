@@ -7,6 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { LossRecordForm } from '@/components/shared/LossRecordForm';
 import { ApiIngredient, ApiLossRecord, fetchInventory, fetchLossRecords } from '@/lib/api';
 import { LOSS_REASONS } from '@/lib/types';
+import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 
 const POLL_INTERVAL_MS = 20_000;
 
@@ -27,11 +28,7 @@ export default function LossLog() {
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => {
-    load();
-    const interval = setInterval(load, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [load]);
+  useVisiblePolling(load, POLL_INTERVAL_MS);
 
   const ingredientsById = useMemo(() => {
     const map = new Map<string, ApiIngredient>();

@@ -1,5 +1,6 @@
 from collections import defaultdict
 
+from cachetools import TTLCache
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.auth import CurrentUser, get_current_user, require_role
@@ -7,6 +8,12 @@ from app.deps import get_supabase
 from app.schemas import ProductOut, UpdateProductImageRequest
 
 router = APIRouter(tags=["products"])
+
+# Catalog changes rarely (menu editing is an occasional admin action) but is
+# read by every 20s-polling dashboard page plus the public digital menu --
+# a short TTL cuts repeat DB round-trips without meaningfully changing
+# staleness (already bounded by the 20s poll interval itself).
+_products_cache: TTLCache = TTLCache(maxsize=16, ttl=5)
 
 
 def _compute_size_availability(supabase, product_size_ids: list[str]) -> dict[str, str]:
@@ -78,6 +85,11 @@ def _list_products_data(supabase, active_only: bool, department: str | None) -> 
     the public digital-menu route -- no branch scoping (single-branch
     build), every caller sees the full catalog. `department` is an optional
     display filter (kitchen/cafe), not an access boundary."""
+    cache_key = (active_only, department)
+    cached = _products_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     query = supabase.table("products").select("*")
     if active_only:
         query = query.eq("active", True)
@@ -121,6 +133,7 @@ def _list_products_data(supabase, active_only: bool, department: str | None) -> 
             s["total_pieces"] = total_pieces_by_size.get(s["id"])
         p["sizes"] = sizes
         out.append(p)
+    _products_cache[cache_key] = out
     return out
 
 

@@ -128,18 +128,28 @@ def _adjust_ingredients_for_size(
         .eq("product_size_id", product_size_id)
         .execute()
     )
+    recipe_rows = [r for r in recipe_result.data if r["ingredients"]["name"] not in held]
+    if not recipe_rows:
+        return {}
+
+    # Batch the read: one query for every ingredient's current stock instead
+    # of one query per recipe line -- this function runs on every sale,
+    # void, and bundle-fulfillment, so the per-line query used to fire on
+    # the checkout hot path once per recipe ingredient (see
+    # OPTIMIZATION_PLAN.md item 1). recipe_items has a unique constraint on
+    # (product_size_id, ingredient_id), so ingredient_id can't repeat within
+    # recipe_rows -- no stale-read risk from batching this read. The write
+    # stays per-row: PostgREST has no batched "add a different delta to
+    # each row" primitive without a raw SQL RPC.
+    ingredient_ids = [r["ingredient_id"] for r in recipe_rows]
+    stock_result = supabase.table("ingredients").select("id, current_stock").in_("id", ingredient_ids).execute()
+    current_stock_by_id = {row["id"]: float(row["current_stock"]) for row in stock_result.data}
+
     deltas: dict[str, float] = {}
-    for recipe_item in recipe_result.data:
-        ingredient_name = recipe_item["ingredients"]["name"]
-        if ingredient_name in held:
-            continue
+    for recipe_item in recipe_rows:
         ingredient_id = recipe_item["ingredient_id"]
         delta_qty = float(recipe_item["qty_per_serving"]) * quantity * sign
-
-        ingredient_result = (
-            supabase.table("ingredients").select("current_stock").eq("id", ingredient_id).single().execute()
-        )
-        current_stock = float(ingredient_result.data["current_stock"])
+        current_stock = current_stock_by_id.get(ingredient_id, 0.0)
         new_stock = current_stock + delta_qty
         supabase.table("ingredients").update({"current_stock": new_stock}).eq("id", ingredient_id).execute()
         deltas[ingredient_id] = delta_qty
@@ -363,7 +373,11 @@ def list_transactions(
     user: CurrentUser = Depends(get_current_user),
 ):
     supabase = get_supabase()
-    query = supabase.table("transactions").select("*")
+    query = supabase.table("transactions").select(
+        "id, employee_id, status, opened_at, closed_at, total_amount, discount_type_id, "
+        "discount_amount, tax_amount, is_owner_request, owner_request_by, owner_request_note, "
+        "voided_by, voided_at, void_reason, kitchen_status, kitchen_status_updated_at"
+    )
     if on_date:
         start, end = ph_day_bounds_utc(on_date)
         query = query.gte("opened_at", start).lte("opened_at", end)
@@ -376,7 +390,10 @@ def list_transactions(
 
     transaction_ids = [t["id"] for t in transactions]
     items_result = (
-        supabase.table("transaction_items").select("*").in_("transaction_id", transaction_ids).execute()
+        supabase.table("transaction_items")
+        .select("id, transaction_id, product_size_id, quantity, unit_price, held_ingredients")
+        .in_("transaction_id", transaction_ids)
+        .execute()
     )
     all_items = items_result.data
     fulfilled_ids = _bundle_fulfilled_item_ids(supabase, [i["id"] for i in all_items])

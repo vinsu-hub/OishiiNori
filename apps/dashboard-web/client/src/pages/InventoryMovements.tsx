@@ -20,6 +20,7 @@ import {
   fetchInventory,
   fetchInventoryMovements,
 } from '@/lib/api';
+import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 
 const POLL_INTERVAL_MS = 20_000;
 
@@ -67,11 +68,7 @@ export default function InventoryMovements() {
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => {
-    load();
-    const interval = setInterval(load, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [load]);
+  useVisiblePolling(load, POLL_INTERVAL_MS);
 
   const ingredientsById = useMemo(() => {
     const map = new Map<string, ApiIngredient>();
