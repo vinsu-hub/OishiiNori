@@ -33,6 +33,7 @@ import {
   fetchRecipe,
   submitOrder,
 } from '@/lib/api';
+import ReservationView from '@/components/ReservationView';
 
 declare global {
   interface Window {
@@ -94,6 +95,7 @@ export default function App() {
     const n = raw ? parseInt(raw, 10) : NaN;
     return Number.isFinite(n) && n > 0 ? n : null;
   });
+  const [landingMode, setLandingMode] = useState<'choice' | 'reserve'>('choice');
 
   const [products, setProducts] = useState<ApiProduct[]>([]);
   const [addonCatalog, setAddonCatalog] = useState<ApiAddon[]>([]);
@@ -282,13 +284,24 @@ export default function App() {
   }
 
   if (!tableNumber) {
+    if (landingMode === 'reserve') {
+      return <ReservationView onBack={() => setLandingMode('choice')} />;
+    }
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
         <div className="item-modal" style={{ position: 'static', maxWidth: 380 }}>
           <div className="modal-body" style={{ textAlign: 'center' }}>
             <img src="/logo.jpg" alt="Oishii Nori" className="brand-logo" style={{ width: 64, height: 64, margin: '0 auto 14px' }} />
-            <h2>No table detected</h2>
-            <p>Please scan the QR code on your table to start ordering.</p>
+            <h2>Welcome to Oishii Nori</h2>
+            <p>Scan the QR code on your table to order, or reserve a table for later.</p>
+            <button
+              className="primary-button"
+              type="button"
+              style={{ width: '100%', marginTop: 16 }}
+              onClick={() => setLandingMode('reserve')}
+            >
+              Reserve a Table <ArrowRight size={16} />
+            </button>
           </div>
         </div>
       </div>

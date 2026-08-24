@@ -16,6 +16,7 @@ from app.routers import (
     pnl,
     products,
     recipes,
+    reservations,
     settings,
     stock_items,
     transactions,
@@ -49,6 +50,7 @@ app.include_router(analytics.router)
 app.include_router(pnl.router)
 app.include_router(oishi_ai.router)
 app.include_router(settings.router)
+app.include_router(reservations.router)
 
 
 @app.get("/health")

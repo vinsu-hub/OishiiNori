@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -955,9 +955,109 @@ class OishiAiQueryResponse(BaseModel):
 
 class BusinessSettingsOut(BaseModel):
     vat_rate: float
+    open_time: time
+    close_time: time
+    closed_weekdays: list[int]
     updated_at: datetime
     updated_by: str | None = None
 
 
 class BusinessSettingsUpdate(BaseModel):
-    vat_rate: float = Field(ge=0, le=1)
+    vat_rate: float | None = Field(default=None, ge=0, le=1)
+    open_time: time | None = None
+    close_time: time | None = None
+    closed_weekdays: list[int] | None = None
+
+
+# ---------------------------------------------------------------------------
+# Table reservations
+# ---------------------------------------------------------------------------
+
+ReservationStatus = Literal["pending", "confirmed", "declined", "cancelled"]
+
+
+class TableCreate(BaseModel):
+    label: str
+    capacity: int = Field(gt=0)
+
+
+class TableUpdate(BaseModel):
+    label: str | None = None
+    capacity: int | None = Field(default=None, gt=0)
+    active: bool | None = None
+
+
+class TableOut(BaseModel):
+    id: str
+    label: str
+    capacity: int
+    active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class CreateReservationRequest(BaseModel):
+    party_size: int = Field(gt=0)
+    reservation_date: date
+    start_time: time
+    customer_name: str = Field(min_length=1)
+    customer_phone: str = Field(min_length=1)
+    customer_note: str | None = None
+
+
+class ReservationOut(BaseModel):
+    id: str
+    reservation_number: int
+    table_id: str
+    table_label: str | None = None
+    party_size: int
+    reservation_date: date
+    start_time: time
+    end_time: time
+    status: ReservationStatus
+    customer_name: str
+    customer_phone: str
+    customer_note: str | None = None
+    declined_reason: str | None = None
+    created_at: datetime
+
+
+class ReservationStatusResponse(BaseModel):
+    """Minimal shape returned to the customer's own unauthenticated polling
+    page -- keyed by the unguessable reservation id, same reasoning as
+    DigitalOrderStatusResponse."""
+
+    id: str
+    reservation_number: int
+    party_size: int
+    reservation_date: date
+    start_time: time
+    end_time: time
+    status: ReservationStatus
+    declined_reason: str | None = None
+
+
+class DeclineReservationRequest(BaseModel):
+    reason: str | None = None
+
+
+class ReservationSlotOut(BaseModel):
+    time: str
+    available: bool
+
+
+class ReservationAvailabilityResponse(BaseModel):
+    date: date
+    party_size: int
+    closed: bool
+    slots: list[ReservationSlotOut]
+
+
+class PublicBusinessHoursResponse(BaseModel):
+    """Unauthenticated subset of BusinessSettingsOut -- just enough for a
+    public site (landing page, reservation forms) to render real hours and
+    grey out closed days, without exposing vat_rate or audit fields."""
+
+    open_time: time
+    close_time: time
+    closed_weekdays: list[int]

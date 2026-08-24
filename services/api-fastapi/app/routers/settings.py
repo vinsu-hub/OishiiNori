@@ -27,16 +27,12 @@ def get_business_settings(user: CurrentUser = Depends(get_current_user)):
 def update_business_settings(body: BusinessSettingsUpdate, user: CurrentUser = Depends(get_current_user)):
     require_role(user, "executive")
     supabase = get_supabase()
-    result = (
-        supabase.table("business_settings")
-        .update(
-            {
-                "vat_rate": body.vat_rate,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-                "updated_by": user.id,
-            }
-        )
-        .eq("id", 1)
-        .execute()
-    )
+    update_data = body.model_dump(exclude_unset=True, exclude_none=True)
+    if "open_time" in update_data:
+        update_data["open_time"] = update_data["open_time"].isoformat()
+    if "close_time" in update_data:
+        update_data["close_time"] = update_data["close_time"].isoformat()
+    update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    update_data["updated_by"] = user.id
+    result = supabase.table("business_settings").update(update_data).eq("id", 1).execute()
     return result.data[0]

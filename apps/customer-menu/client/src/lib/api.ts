@@ -128,3 +128,51 @@ export function submitOrder(payload: SubmitOrderPayload): Promise<DigitalOrderSt
 export function fetchOrderStatus(orderId: string): Promise<DigitalOrderStatus> {
   return request(`/public/orders/${orderId}`);
 }
+
+// ---------------------------------------------------------------------------
+// Table reservations
+// ---------------------------------------------------------------------------
+
+export interface ReservationSlot {
+  time: string;
+  available: boolean;
+}
+
+export interface ReservationAvailability {
+  date: string;
+  party_size: number;
+  closed: boolean;
+  slots: ReservationSlot[];
+}
+
+export function fetchReservationAvailability(date: string, partySize: number): Promise<ReservationAvailability> {
+  return request(`/public/tables/availability?date=${date}&party_size=${partySize}`);
+}
+
+export interface SubmitReservationPayload {
+  party_size: number;
+  reservation_date: string;
+  start_time: string;
+  customer_name: string;
+  customer_phone: string;
+  customer_note?: string;
+}
+
+export interface ReservationStatus {
+  id: string;
+  reservation_number: number;
+  party_size: number;
+  reservation_date: string;
+  start_time: string;
+  end_time: string;
+  status: 'pending' | 'confirmed' | 'declined' | 'cancelled';
+  declined_reason: string | null;
+}
+
+export function submitReservation(payload: SubmitReservationPayload): Promise<ReservationStatus> {
+  return request('/public/reservations', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export function fetchReservationStatus(id: string): Promise<ReservationStatus> {
+  return request(`/public/reservations/${id}`);
+}

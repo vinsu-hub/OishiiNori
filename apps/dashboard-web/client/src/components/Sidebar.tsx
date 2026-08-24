@@ -10,6 +10,7 @@ import {
   ShoppingCart,
   ListOrdered,
   QrCode,
+  CalendarCheck,
   ChefHat,
   Package,
   Boxes,
@@ -115,6 +116,7 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
     { icon: ListOrdered, label: 'Order Queue', href: '/order-queue' },
     { icon: QrCode, label: 'Pending Orders', href: '/pending-orders' },
     { icon: ChefHat, label: 'Kitchen Display', href: '/kitchen-display' },
+    { icon: CalendarCheck, label: 'Reservations', href: '/reservations' },
   ];
 
   const afterStockItems: NavItem[] = [
