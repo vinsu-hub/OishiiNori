@@ -11,8 +11,21 @@
  * (app/schemas.py), so later milestones mostly just consume what's here.
  */
 import { supabase } from '@/lib/supabaseClient';
+import { enqueue, isNetworkError, registerExecutor } from '@/lib/offlineQueue';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string;
+
+// Thrown by createTransaction() in place of the raw network error when a
+// sale is queued locally instead of failing outright -- POSTerminal's
+// handleCharge() catches this specifically to clear the cart and show a
+// "queued" toast, distinct from a real rejection (e.g. insufficient stock)
+// which must surface immediately, unqueued.
+export class QueuedOfflineError extends Error {
+  constructor() {
+    super('Offline -- order queued, will sync automatically');
+    this.name = 'QueuedOfflineError';
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Core request helper
@@ -302,8 +315,22 @@ export interface ApiTransaction {
   items: ApiTransactionItem[];
 }
 
-export function createTransaction(body: CreateTransactionRequest): Promise<ApiTransaction> {
+function _createTransactionRequest(body: CreateTransactionRequest): Promise<ApiTransaction> {
   return request('/transactions', { method: 'POST', body: JSON.stringify(body) });
+}
+
+registerExecutor((payload) => _createTransactionRequest(payload as unknown as CreateTransactionRequest));
+
+export async function createTransaction(body: CreateTransactionRequest): Promise<ApiTransaction> {
+  try {
+    return await _createTransactionRequest(body);
+  } catch (err) {
+    if (isNetworkError(err)) {
+      enqueue(body as unknown as Record<string, unknown>);
+      throw new QueuedOfflineError();
+    }
+    throw err;
+  }
 }
 
 export function fetchTransactions(params?: { date?: string; status?: TransactionStatus }): Promise<ApiTransaction[]> {
@@ -1159,6 +1186,9 @@ export function queryOishiAi(question: string): Promise<ApiOishiAiQueryResponse>
 
 export interface ApiBusinessSettings {
   vat_rate: number;
+  open_time: string;
+  close_time: string;
+  closed_weekdays: number[];
   updated_at: string;
   updated_by: string | null;
 }
@@ -1167,6 +1197,75 @@ export function fetchBusinessSettings(): Promise<ApiBusinessSettings> {
   return request('/settings/business');
 }
 
-export function updateBusinessSettings(body: { vat_rate: number }): Promise<ApiBusinessSettings> {
+export function updateBusinessSettings(
+  body: Partial<{ vat_rate: number; open_time: string; close_time: string; closed_weekdays: number[] }>
+): Promise<ApiBusinessSettings> {
   return request('/settings/business', { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+// ---------------------------------------------------------------------------
+// Table reservations
+// ---------------------------------------------------------------------------
+
+export interface ApiTable {
+  id: string;
+  label: string;
+  capacity: number;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export function fetchTables(): Promise<ApiTable[]> {
+  return request('/tables');
+}
+
+export function createTable(body: { label: string; capacity: number }): Promise<ApiTable> {
+  return request('/tables', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function updateTable(
+  id: string,
+  body: Partial<{ label: string; capacity: number; active: boolean }>
+): Promise<ApiTable> {
+  return request(`/tables/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+export type ReservationStatus = 'pending' | 'confirmed' | 'declined' | 'cancelled';
+
+export interface ApiReservation {
+  id: string;
+  reservation_number: number;
+  table_id: string;
+  table_label: string | null;
+  party_size: number;
+  reservation_date: string;
+  start_time: string;
+  end_time: string;
+  status: ReservationStatus;
+  customer_name: string;
+  customer_phone: string;
+  customer_note: string | null;
+  declined_reason: string | null;
+  created_at: string;
+}
+
+export function fetchReservations(status?: ReservationStatus, date?: string): Promise<ApiReservation[]> {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (date) params.set('date', date);
+  const query = params.toString();
+  return request(`/reservations${query ? `?${query}` : ''}`);
+}
+
+export function confirmReservation(id: string): Promise<ApiReservation> {
+  return request(`/reservations/${id}/confirm`, { method: 'POST' });
+}
+
+export function declineReservation(id: string, reason: string): Promise<ApiReservation> {
+  return request(`/reservations/${id}/decline`, { method: 'POST', body: JSON.stringify({ reason }) });
+}
+
+export function cancelReservation(id: string): Promise<ApiReservation> {
+  return request(`/reservations/${id}/cancel`, { method: 'POST' });
 }

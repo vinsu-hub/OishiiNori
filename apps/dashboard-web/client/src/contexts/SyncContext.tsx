@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { SyncStatus } from '@/lib/types';
+import { initOfflineQueue, onQueueChange, queueLength } from '@/lib/offlineQueue';
 
 interface SyncContextType {
   syncStatus: SyncStatus;
@@ -25,6 +26,26 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     }, 30000); // Sync every 30 seconds
 
     return () => clearInterval(interval);
+  }, []);
+
+  // Mounted once at the App root (SyncProvider wraps the whole app) so a
+  // queued POS sale keeps trying to flush even if the cashier navigates away
+  // from POS Terminal. Makes Header.tsx's offline badge -- previously always
+  // 'synced' since nothing ever set it otherwise -- real.
+  useEffect(() => {
+    initOfflineQueue();
+    const initialLength = queueLength();
+    if (initialLength > 0) {
+      setSyncStatus((prev) => ({ ...prev, status: 'offline-queued', pendingChanges: initialLength }));
+    }
+    return onQueueChange((length) => {
+      setSyncStatus((prev) => ({
+        ...prev,
+        status: length > 0 ? 'offline-queued' : 'synced',
+        pendingChanges: length,
+        lastSyncTime: length === 0 ? new Date() : prev.lastSyncTime,
+      }));
+    });
   }, []);
 
   return (

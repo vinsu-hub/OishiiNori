@@ -25,6 +25,7 @@ import {
   ApiProductSize,
   ApiRecipeItem,
   createTransaction,
+  QueuedOfflineError,
   fetchBusinessSettings,
   fetchDiscountTypes,
   fetchProducts,
@@ -355,11 +356,23 @@ export default function POSTerminal() {
       );
       clearOrder();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to create transaction');
-      // A failed charge invalidates whatever was staged for Owner's Request --
-      // force re-confirmation on retry rather than silently letting a stale
-      // (possibly since-invalid) PIN confirmation be reused.
-      clearOwnerRequest();
+      if (e instanceof QueuedOfflineError) {
+        // A real network failure, not a rejection -- the sale is safely
+        // queued in localStorage and will replay automatically once the
+        // connection returns (see SyncContext/offlineQueue.ts). The
+        // cashier's mental model is "this sale happened," so clear the cart
+        // like a normal charge -- but skip clearOwnerRequest()'s PIN-reset:
+        // a transient WiFi blip shouldn't force PIN re-entry.
+        toast.warning(e.message);
+        setCart([]);
+        setDiscountTypeId('none');
+      } else {
+        toast.error(e instanceof Error ? e.message : 'Failed to create transaction');
+        // A failed charge invalidates whatever was staged for Owner's Request --
+        // force re-confirmation on retry rather than silently letting a stale
+        // (possibly since-invalid) PIN confirmation be reused.
+        clearOwnerRequest();
+      }
     } finally {
       setSubmitting(false);
     }
