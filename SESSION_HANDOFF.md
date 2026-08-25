@@ -1,15 +1,32 @@
 # Oishii Nori Command Suite — Session Handoff
 
-**Date:** 2026-08-20 (build session) · **Updated:** 2026-08-24 (this update adds five new pieces on top of the 2026-08-22 close-out, all **deployed and production-verified**: Menu Editing (executive product/recipe/image CRUD), the P&L dashboard (automatic COGS from existing recipe/BOM data), editable ingredient unit cost, the physical stock count tool (4-station digitization of the client's real handwritten stock sheets), and admin-editable measurements (full ingredient-field editing incl. base_unit, plus a configurable VAT rate replacing two hardcoded duplicates). See each feature's own section below for full detail.)
-**Repo:** `D:\ioshinori\oishii-nori-command-suite` — pushed to GitHub: `https://github.com/vinsu-hub/OishiiNori` (private, `main` branch), commit `01fc9f8`. Everything described in this document is committed and pushed as of this write-up — nothing is sitting as local-only changes.
+**Date:** 2026-08-20 (build session) · **Updated:** 2026-08-25 (this update: connection/data-processing optimization pass, POS Terminal offline order queueing, a full table-reservation system with automatic conflict prevention, a new 5th app — the public Landing Page — and a full SEO/AI-search optimization pass on it. All **deployed and production-verified**. See `SYSTEM_GUIDE.md` sections 3.15/3.16 for the reservation system and Landing Page, and `LAUNCH_CHECKLIST.md` for what real-world data still needs filling in before go-live.)
+**Repo:** `D:\ioshinori\oishii-nori-command-suite` — pushed to GitHub: `https://github.com/vinsu-hub/OishiiNori` (private, `main` branch), commit `6a7c732`. Everything described in this document is committed and pushed as of this write-up — nothing is sitting as local-only changes.
 **Live deployments (Vercel, team `vince-tamis`, Git-integration auto-deploy on push to `main`):**
 - Dashboard: `https://oishii-nori-dashboard.vercel.app`
 - Staff Clock kiosk: `https://oishii-nori-staff-clock.vercel.app`
 - Backend API: `https://oishii-nori-api.vercel.app` (`/health` → `{"status":"ok"}`)
-- Customer menu (QR table ordering, `apps/customer-menu`): `https://oishii-nori-menu.vercel.app`
+- Customer menu (QR table ordering + reservation form, `apps/customer-menu`): `https://oishii-nori-menu.vercel.app`
+- Landing Page (public marketing site, `apps/landing-page`): `https://oishii-nori-landing.vercel.app` (also `https://oishii-nori-landing-vince-tamis.vercel.app`, which auto-tracks deploys more reliably right now — see `LAUNCH_CHECKLIST.md` item 10)
 **Reference spec:** `D:\ioshinori\Oishii_Nori_Menu_Ingredients.xlsx`; real physical stock transcription (2026-08-24): `D:\ioshinori\Oishii_Nori_Physical_Stock_Transcription.xlsx`
 **Structural reference (read-only, different client, never push/pull):** `D:\SMFC_POS\saint_michael_pos\saint_michael_pos` — used throughout this project as a structural cross-compare/port source (executive-tier pages, POS Terminal richness, Inventory Count, HR Payroll, Malaya AI → Oishii AI).
-**Build status: functionally complete, everything verified live.** All 4 apps deployed to production, including all five 2026-08-24 features — each re-verified against the live API/dashboard after deploy (not just local dev). The two long-standing blockers from this project's earlier history — the Supabase `hr` schema not being exposed to PostgREST, and Oishii AI's LLM provider having no working billing — were both resolved on 2026-08-22 and remain resolved (confirmed again this update: `GET /hr/holidays`, `/attendance`, `/payroll`, `/employees` all 200 live; Oishii AI answers real questions correctly through the live chat UI on production). No open items remain.
+**Build status: functionally complete, everything verified live.** All 5 apps deployed to production — each re-verified against the live API/dashboard after deploy (not just local dev). The two long-standing blockers from this project's earlier history — the Supabase `hr` schema not being exposed to PostgREST, and Oishii AI's LLM provider having no working billing — were both resolved on 2026-08-22 and remain resolved. **The system is feature-complete but not yet ready for real customers** — see `LAUNCH_CHECKLIST.md` for the real-business-data gaps (menu photos, ingredient costs, table setup, placeholder contact info, leftover QA accounts) that need addressing first.
+
+---
+
+## 🌐 Public Landing Page (5th app) + full SEO/AI-search optimization (completed 2026-08-25)
+
+Added `apps/landing-page`, a public marketing site ported from an external Manus-generated template (`vinsu-hub/oishiinori-landing-page`), stripped of all Manus-platform-specific plumbing and rewired to this project's real backend: its menu section now shows a live "best sellers" pull from the real catalog (not fake hardcoded items), and its reservation form was replaced entirely by a link into Customer Menu's canonical reservation flow (`?reserve=1` deep-link skips straight to the form) rather than maintaining a second copy of it.
+
+Installed the `claude-seo` Claude Code plugin (core only, no paid extensions) and used it to guide a full SEO/AI-search pass: the page was a pure client-side SPA shipping an empty `<div id="root">` to any crawler that doesn't execute JavaScript (most AI crawlers don't) — fixed with a build-time prerender step (`scripts/prerender.mjs`, Vite's own SSR module loader + `react-dom/server`, no new dependencies) that bakes the real live menu/hours into the shipped HTML. Also added `Restaurant`+`FAQPage` JSON-LD, real `robots.txt`/`sitemap.xml`/`llms.txt`, Open Graph/Twitter tags, a visible FAQ section, and `noindex` + full-disallow `robots.txt` on the other 3 apps (only the Landing Page should ever be indexed).
+
+## 🪑 Table reservations with full automatic conflict prevention (completed 2026-08-24/25)
+
+New `tables`/`reservations` schema (migration `0025`) backs a public request-a-table flow with real double-booking prevention — a `pending` reservation holds its slot exactly like `confirmed` does, so a second overlapping request is rejected (or auto-routed to a different table) the instant it's submitted, not at staff-review time. Business hours (open/close/closed-days) became a real, admin-editable setting (`business_settings` extended) enforced on every request. Staff manage requests and the table roster from a new dashboard-web page, `/reservations`.
+
+## ⚡ Connection & data-processing optimization + POS offline queueing (completed 2026-08-24)
+
+Backend: capped previously-unbounded queries, narrowed several `select("*")` calls to only the columns each response model uses, added a short-TTL cache for `products`/`discount_types`, added missing indexes on hot poll-cycle columns. Frontend: replaced per-page polling `useEffect`s with a shared `useVisiblePolling` hook, converted dashboard-web's routes to `React.lazy()`. POS Terminal now queues a sale locally (same pattern as Staff Clock's offline queue) if Charge fails due to a genuine network error, auto-flushing on reconnect — the header's sync badge (previously dead code, always "synced") now reflects real pending-sync count.
 
 ---
 
@@ -411,8 +428,8 @@ Plan-driven, 6 milestones, port-and-adapt from the SMFC reference (Vite+React 19
 ## Key file locations
 | What | Where |
 |---|---|
-| Live DB credentials | `services/api-fastapi/.env.local` (+ same pattern in the other 3 apps) — gitignored |
-| Migrations | `supabase/migrations/0001`–`0021`, all applied live |
+| Live DB credentials | `services/api-fastapi/.env.local` (+ same pattern in the other 4 apps) — gitignored |
+| Migrations | `supabase/migrations/0001`–`0025`, all applied live |
 | Seed / demo-data scripts | `services/api-fastapi/scripts/seed_from_xlsx.py` (catalog), `seed_payroll_demo.py` (HR demo data), `backfill_ingredient_unit_cost.py` |
 | QA / health-check scripts | `services/api-fastapi/scripts/qa_phase2.py`, `system_health_check.py` (71/71 passing) |
 | Backend app | `services/api-fastapi/app/` (routers: products, recipes, menu_admin, inventory, inventory_movements, discounts, loss_records, hr, kiosk, transactions, utility_logs, digital_menu, dashboard_summary, analytics, oishi_ai) |

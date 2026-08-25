@@ -2,21 +2,22 @@
 
 **Audience:** anyone who needs a top-to-bottom map of the system — new staff, the client, or a developer picking this up cold.
 **Scope:** every app, every page, every role, and how to actually use each one. For chronological build history see `SESSION_HANDOFF.md`/`PROGRESS.md`; for inventory-specific depth see `INVENTORY_SYSTEM_GUIDE.md`.
-**Status:** functionally complete, all 4 apps live in production (see [Deployment & local dev](#6-deployment--local-dev) for URLs).
+**Status:** functionally complete, all 5 apps live in production (see [Deployment & local dev](#6-deployment--local-dev) for URLs). Before opening for real business, see `LAUNCH_CHECKLIST.md` — several real operational values (menu photos, ingredient costs, table setup) are still placeholder/incomplete.
 
 ---
 
 ## 1. Overview
 
-Oishii Nori Command Suite is the full digital operations system for a single-location sushi/ramen restaurant (kitchen + cafe departments). It replaces paper-based ordering, inventory counting, and payroll with four connected web apps sharing one backend and one database.
+Oishii Nori Command Suite is the full digital operations system for a single-location sushi/ramen restaurant (kitchen + cafe departments). It replaces paper-based ordering, inventory counting, and payroll with five connected web apps sharing one backend and one database.
 
-**The four apps:**
-- **Dashboard / Command Suite** (`dashboard-web`) — the internal app staff/managers/executives log into: POS, kitchen display, inventory, HR/payroll, executive analytics, AI assistant. This is "the command suite" referenced throughout this doc.
+**The five apps:**
+- **Dashboard / Command Suite** (`dashboard-web`) — the internal app staff/managers/executives log into: POS, kitchen display, inventory, HR/payroll, executive analytics, AI assistant, table-reservation management. This is "the command suite" referenced throughout this doc.
 - **Staff Clock** (`staff-clock`) — a shared kiosk device for PIN-based clock-in/clock-out.
-- **Customer Menu** (`customer-menu`) — a QR-code table-ordering menu customers use on their own phones, no login.
-- **Backend API** (`api-fastapi`) — one FastAPI service all three frontends talk to.
+- **Customer Menu** (`customer-menu`) — a QR-code table-ordering menu customers use on their own phones, no login. Also hosts the canonical table-reservation form for visitors without a table (see 3.15).
+- **Landing Page** (`landing-page`) — the public marketing site (`oishii-nori-landing.vercel.app`): hero, live menu highlights, about, hours/map, FAQ, and a "Reserve now" link into Customer Menu's reservation form. Server-prerendered at build time (real menu/hours baked into the shipped HTML) so search engines and AI crawlers see real content without executing JavaScript. The only one of the five apps meant to be publicly indexed — see 3.16.
+- **Backend API** (`api-fastapi`) — one FastAPI service all frontends talk to.
 
-**Tech stack:** React 19 + Vite + TypeScript + Tailwind + shadcn/ui on the frontend (wouter for routing on dashboard-web; staff-clock and customer-menu are single-screen state machines with no router). FastAPI + Supabase/Postgres on the backend. All 4 apps deploy to Vercel automatically on push to `main`. No websockets — everything that needs to feel "live" polls on an interval by design.
+**Tech stack:** React 19 + Vite + TypeScript + Tailwind + shadcn/ui on the frontend (wouter for routing on dashboard-web; staff-clock, customer-menu, and landing-page are single-screen state machines with no client-side router, though landing-page uses `wouter` for its 404 fallback). FastAPI + Supabase/Postgres on the backend. All 5 apps deploy to Vercel automatically on push to `main`. No websockets — everything that needs to feel "live" polls on an interval by design.
 
 **Roles:** every staff account has exactly one role — `employee`, `manager`, or `executive` — stored in the `profiles` table and checked on login. There's no branch/location dimension (single-location by design); `department` (kitchen/cafe) is just a display/filter tag, never an access boundary.
 
@@ -31,10 +32,11 @@ Oishii Nori Command Suite is the full digital operations system for a single-loc
 
 | App | Purpose | Who uses it | Live URL | Local dev |
 |---|---|---|---|---|
-| Dashboard (Command Suite) | POS, kitchen, inventory, HR, executive tools | Staff, managers, executives | `oishii-nori-dashboard.vercel.app` | `npm run dev` in `apps/dashboard-web`, port 3000 |
+| Dashboard (Command Suite) | POS, kitchen, inventory, HR, executive tools, reservations | Staff, managers, executives | `oishii-nori-dashboard.vercel.app` | `npm run dev` in `apps/dashboard-web`, port 3000 |
 | Staff Clock | Clock in/out kiosk | All employees, at a shared device | `oishii-nori-staff-clock.vercel.app` | `npm run dev` in `apps/staff-clock`, port 5174 |
-| Customer Menu | QR table ordering | Customers, own phone, no login | `oishii-nori-menu.vercel.app` | `npm run dev` in `apps/customer-menu`, port 5175 |
-| Backend API | Serves all 3 apps above | (infrastructure) | `oishii-nori-api.vercel.app` (`/health`) | uvicorn in `services/api-fastapi`, port 8010 |
+| Customer Menu | QR table ordering + reservation form | Customers, own phone, no login | `oishii-nori-menu.vercel.app` | `npm run dev` in `apps/customer-menu`, port 5175 |
+| Landing Page | Public marketing site | Anyone, no login (public/indexed) | `oishii-nori-landing.vercel.app` | `npm run dev` in `apps/landing-page`, port 5176 |
+| Backend API | Serves all 4 apps above | (infrastructure) | `oishii-nori-api.vercel.app` (`/health`) | uvicorn in `services/api-fastapi`, port 8010 |
 
 ---
 
@@ -64,7 +66,7 @@ Prices are always recomputed server-side from the live catalog — never trusted
 
 **Who:** all roles. **Pages:** `/pos`, `/order-queue`, `/pending-orders`.
 
-**POS Terminal** is the checkout screen: a product/size grid, a cart, discount selection, and a Charge button. To hold an ingredient on a line ("no cucumber"), open the order editor and check the box for it — that ingredient is excluded from automatic stock deduction entirely, not deducted-then-restored. Other POS Terminal features: **Held Orders** (park a cart mid-sale, F4, resumes later from the same shift, sessionStorage-scoped), **Favorites** (star items, persists across sessions), an **upsell rail** suggesting up to 6 not-in-cart drinks/dessert/light-side items, and an **Owner's Request** flow (a manager/executive PIN re-verification for actions like a manual discount override).
+**POS Terminal** is the checkout screen: a product/size grid, a cart, discount selection, and a Charge button. To hold an ingredient on a line ("no cucumber"), open the order editor and check the box for it — that ingredient is excluded from automatic stock deduction entirely, not deducted-then-restored. Other POS Terminal features: **Held Orders** (park a cart mid-sale, F4, resumes later from the same shift, sessionStorage-scoped), **Favorites** (star items, persists across sessions), an **upsell rail** suggesting up to 6 not-in-cart drinks/dessert/light-side items, an **Owner's Request** flow (a manager/executive PIN re-verification for actions like a manual discount override), and **offline resilience** — if a Charge fails because the device genuinely lost network (not a real rejection like insufficient stock), the sale queues locally in the browser and shows "Offline — order queued, will sync automatically," auto-flushing once the connection returns; the header's sync badge reflects real pending-sync count.
 
 **Order Queue** (`/order-queue`) is the live list of transactions: status + kitchen-status badges, search by order id/item, date/status filters, and a sound alert (mutable) when an order reaches "ready." Voiding a transaction here restores exactly the stock it deducted — no more, no less — and never restores anything that was held (since holds were never deducted).
 
@@ -175,6 +177,34 @@ An in-app FAQ — accordion sections mirroring this guide's own structure (Overv
 
 Every screen after PIN entry auto-resets to idle after 30 seconds of no activity, since this is a shared device that must always be ready for the next person. If the device loses network mid clock-in/out, the action queues locally and shows "Offline — queued, will sync automatically," auto-flushing once the connection returns (a genuinely rejected request, like a wrong PIN, is never queued — that fails immediately). Each physical kiosk has its own persistent device id so clock events can be traced to which device was used.
 
+### 3.15 Table Reservations
+
+**Who:** any visitor (public, no login) to submit a request; any staff role to confirm/decline; manager/executive to manage the table roster. **Public entry points:** the Landing Page's "Reserve now" link, or Customer Menu with no `?table=` in the URL (or `?reserve=1` to skip straight to the form). **Staff page:** `/reservations` (dashboard-web).
+
+A real `tables` entity (label, capacity, active flag) backs full automatic conflict prevention — this isn't just a request form:
+1. Customer picks a party size, a date, and a real available time slot (fetched live — full/closed slots are never offered).
+2. On submit, the system auto-assigns the smallest table that fits the party and has no conflicting reservation for that window, and the request is created as **PENDING**. A `pending` reservation holds its slot exactly like a `confirmed` one — a second overlapping request is rejected (or routed to a different table) the instant it's submitted, not later at staff-review time.
+3. The confirmation screen polls automatically and updates in place to **CONFIRMED** or **DECLINED** the moment staff act — no reload needed.
+4. Staff work the queue from dashboard-web's **Reservations** page (two tabs): **Requests** — status-filtered list, Confirm/Decline (reason required)/Cancel actions; **Tables** — manager/executive-gated CRUD for the restaurant's real table roster (read-only for employees).
+
+Business hours (open/close time, closed weekdays — `/settings` → Business Hours, executive-only) are enforced on every request, both client- and server-side, and also drive the Landing Page's live hours display and the reservation slot picker.
+
+**Known gap, by design:** cancelling an already-submitted request is staff-initiated only — there's no customer self-service cancel/edit (matches the same limitation Digital Menu orders already have).
+
+### 3.16 Landing Page & public SEO
+
+**Who:** the public, no login. **App:** `landing-page`, `oishii-nori-landing.vercel.app`.
+
+A single-page marketing site: hero, a curated "best sellers" menu grid (up to 3 photographed items per category, pulled live from the real catalog — not the full ~50-item catalog, and not hardcoded), about, hours/location/map, a visible FAQ, a "Reserve now" link into Customer Menu's reservation form (3.15), and a general-inquiry contact form (local-only, not wired to the backend).
+
+**Why it's architecturally different from the other 4 apps:** it's the only one meant to be found by search engines and AI answer engines (GPTBot, ClaudeBot, PerplexityBot, etc.), so it carries real SEO infrastructure the others deliberately don't:
+- **Build-time prerendering** (`scripts/prerender.mjs`, runs after `vite build`): fetches the real live menu and business hours and server-renders the page (via Vite's own SSR module loader + `react-dom/server`) into the shipped `index.html`, so a crawler that never executes JavaScript still sees the real page — not an empty `<div id="root">`. The real browser bundle is unaffected; it still fetches fresh data client-side on top.
+- Real `robots.txt` (explicitly allows the major AI crawlers), `sitemap.xml`, and `llms.txt`.
+- `Restaurant` + `FAQPage` JSON-LD structured data, generated from the same live data as the page itself.
+- The other 4 apps (`dashboard-web`, `staff-clock`, `customer-menu`) all carry `<meta name="robots" content="noindex, nofollow">` plus a full-disallow `robots.txt` — none of them should ever appear in search results.
+
+See `LAUNCH_CHECKLIST.md` for what's still placeholder here (footer phone number, Instagram link) before this goes live for real.
+
 ---
 
 ## 4. Role & navigation reference
@@ -182,7 +212,7 @@ Every screen after PIN entry auto-resets to idle after 30 seconds of no activity
 Sidebar sections on the dashboard, exactly as gated:
 
 **All roles:**
-POS Terminal (`/pos`) · Order Queue (`/order-queue`) · Pending Orders (`/pending-orders`) · Kitchen Display (`/kitchen-display`) · **Stock group:** Recipe Ingredients (`/stock`) · Station Items (`/stock?tab=stations`) · Receive Shipment (`/inventory-movements`) · Loss Log (`/loss-log`) · Utility Log (`/utility-log`) · Settings (`/settings`)
+POS Terminal (`/pos`) · Order Queue (`/order-queue`) · Pending Orders (`/pending-orders`) · Kitchen Display (`/kitchen-display`) · Reservations (`/reservations`) · **Stock group:** Recipe Ingredients (`/stock`) · Station Items (`/stock?tab=stations`) · Receive Shipment (`/inventory-movements`) · Loss Log (`/loss-log`) · Utility Log (`/utility-log`) · Settings (`/settings`)
 
 **Manager + Executive:**
 **Stock group:** Overview (`/stock/overview`) · Alerts (`/stock/alerts`) · Variance Log (`/stock/variance-log`) · POS Management (`/pos-management`) · Employees (`/employees`) · HR Attendance (`/hr/attendance`) · Payroll (`/hr/payroll`) · Holiday Calendar (`/hr/holiday-calendar`) · Payroll Settings (`/hr/payroll-settings`)
@@ -196,7 +226,7 @@ Executives are auto-redirected to Command Center on login rather than landing on
 
 ## 5. Backend API reference
 
-One FastAPI service (`services/api-fastapi`), 18 routers, all registered in `app/main.py`. `require_role` is a manual in-handler check, not middleware — every meaningful write is gated server-side regardless of what the frontend shows.
+One FastAPI service (`services/api-fastapi`), 19 routers, all registered in `app/main.py`. `require_role` is a manual in-handler check, not middleware — every meaningful write is gated server-side regardless of what the frontend shows.
 
 | Router | Covers | Gating |
 |---|---|---|
@@ -213,6 +243,7 @@ One FastAPI service (`services/api-fastapi`), 18 routers, all registered in `app
 | `transactions.py` | POS sale create/list/void/kitchen-status/bundle-fulfillment | Mostly open; void/status gated by ownership or manager+ |
 | `utility_logs.py` | Log/list utility readings | Open |
 | `digital_menu.py` | QR menu, add-ons, order submit/poll, staff approve/reject | `/public/*` open; staff endpoints authenticated, no extra role gate |
+| `reservations.py` | Table roster, availability, reservation submit/poll, staff confirm/decline/cancel | `/public/*` open; `/tables` write manager+; `/reservations` actions authenticated, no extra role gate |
 | `dashboard_summary.py` | Command Center daily rollup | Executive only |
 | `analytics.py` | Sales trend, top products | Executive only |
 | `pnl.py` | P&L rollup | Executive only |
@@ -223,7 +254,7 @@ Plus `GET /health` (liveness, no auth).
 
 **Auth model:** a Bearer token is validated via Supabase Auth (`get_current_user`), then role/department/name is loaded from `profiles`. The backend uses a service-role Supabase client for every query — authorization lives entirely in FastAPI, not in Postgres row-level-security policies.
 
-**Database:** Supabase/Postgres, 23 applied migrations. Core tables: `profiles`, `products`/`product_sizes`/`bundle_components`, `ingredients`/`recipe_items`, `inventory_movements`, `transactions`/`transaction_items`/`bundle_fulfillments`, `discount_types`, `loss_records`, `utility_logs`, `stock_items`/`stock_count_entries`, `digital_orders`/`digital_order_items`/`digital_order_addons`, `menu_addons`, `attendance_logs`, `kiosks`, `holidays`, `pay_multiplier_rules`, `payroll_records`/`payroll_items`/`payroll_overrides`/`payroll_audit_log`, `ai_query_log`, `business_settings`.
+**Database:** Supabase/Postgres, 25 applied migrations. Core tables: `profiles`, `products`/`product_sizes`/`bundle_components`, `ingredients`/`recipe_items`, `inventory_movements`, `transactions`/`transaction_items`/`bundle_fulfillments`, `discount_types`, `loss_records`, `utility_logs`, `stock_items`/`stock_count_entries`, `digital_orders`/`digital_order_items`/`digital_order_addons`, `menu_addons`, `attendance_logs`, `kiosks`, `holidays`, `pay_multiplier_rules`, `payroll_records`/`payroll_items`/`payroll_overrides`/`payroll_audit_log`, `ai_query_log`, `business_settings` (now also carries `open_time`/`close_time`/`closed_weekdays`), `tables`, `reservations`.
 
 ---
 
@@ -234,6 +265,7 @@ Plus `GET /health` (liveness, no auth).
 - Staff Clock: `https://oishii-nori-staff-clock.vercel.app`
 - Backend API: `https://oishii-nori-api.vercel.app`
 - Customer Menu: `https://oishii-nori-menu.vercel.app`
+- Landing Page: `https://oishii-nori-landing.vercel.app`
 
 **Local dev:**
 ```bash
@@ -248,7 +280,12 @@ npm install && npm run dev
 
 # Customer Menu (from apps/customer-menu), port 5175
 npm install && npm run dev
+
+# Landing Page (from apps/landing-page), port 5176
+npm install && npm run dev
 ```
+
+**Landing Page's build is different from the other 3 frontends**: `npm run build` runs `vite build && node scripts/prerender.mjs` — the second step needs a real `VITE_API_BASE_URL` to fetch live data from (reads `.env.local` locally; Vercel's Production env var in CI) and will fail the build if it can't reach the API, by design (a build that silently shipped an empty prerender would defeat its whole purpose).
 
 **Locked scope decisions** (established, don't re-litigate without the client):
 - Single branch, two departments (kitchen, cafe) — no multi-location/branch model.
@@ -266,3 +303,8 @@ Non-blocking backlog, not required for day-to-day operation:
 - `CORSMiddleware` still allows `allow_origins=["*"]`.
 - No audit trail for unlinked Station Items' count history (only the current running total).
 - Groq (the AI provider)'s free tier has a real per-organization token-per-minute cap — the context payload was trimmed to fit comfortably, but may need revisiting if the business scales up significantly (more ingredients/employees/history).
+- No customer self-service cancel/edit for a submitted reservation (staff-initiated only — see 3.15).
+- Landing Page's general Contact form is local-only (not wired to the backend) and its footer phone number/Instagram link are still placeholders — see `LAUNCH_CHECKLIST.md`.
+- `oishii-nori-landing.vercel.app`'s custom alias currently needs re-pointing after each deploy unless it's added as a proper Domain in the Vercel dashboard (Settings → Domains) — `oishii-nori-landing-vince-tamis.vercel.app` always auto-tracks correctly in the meantime.
+
+**Before this goes live for real business use, see `LAUNCH_CHECKLIST.md`** — several fields (menu photos, ingredient unit costs, table setup, real business contact info) are still placeholder/incomplete, and the current database has leftover QA/test accounts and data from development.
