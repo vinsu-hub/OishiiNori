@@ -356,29 +356,33 @@ If you change the **base unit** away from its original value (e.g. an ingredient
 
 ### 7.2 Station Items — everything without a recipe
 
-The second tab covers the ~200 items on the client's original paper stock sheets that have *no* recipe at all — packaging, supplies, resale beverages — organized by physical station in the same New Stocks / Beginning / Usage / Ending format the paper sheets used:
+The second tab covers the ~200 items on the client's original paper stock sheets that have *no* recipe at all — packaging, supplies, resale beverages — organized by physical station. As of this update, its four numbers are computed automatically — New Stocks/Beginning/Usage/Ending are no longer typed by hand, they're auto-filled from sales, deliveries, and logged losses, the same way Recipe Ingredients already worked. Staff review an already-completed list instead of a blank form:
 
 ![Station Items grid](walkthrough-screenshots/05-stock/09-station-items-grid.png)
 
 Rows carried over from the original paper-sheet transcription as ambiguous are flagged **VERIFY** until a human confirms the mapping (none are currently flagged live in this data — every original flag from the 215-row seed has since been resolved through Manage Catalog, described below — but the mechanism is still active for any future ambiguous entry).
 
-For the subset of station items that are *also* real recipe ingredients (tracked in both places), the live stock figure shown here is **read-only**, with a direct link to the one real place that edits it:
+For the subset of station items that are *also* real recipe ingredients (tracked in both places), a correction here doesn't create a second number to keep in sync — flagging New Stocks or Ending on a linked item routes the correction through to that same ingredient's real stock figure, the one place it actually lives:
 
 ![Linked ingredient](walkthrough-screenshots/05-stock/11-station-items-linked-ingredient.png)
 
-A free, client-side-only consistency check compares Beginning + New Stocks − Ending against the typed Usage figure — if they don't match, the Usage field flags a **Mismatch** with the expected value. No backend cost, purely a nudge:
+Every one of the four numbers is consistent by construction (Beginning + New Stocks − Usage = Ending always holds), so there's no mismatch check left to run — instead, each field has its own small flag icon. Clicking it opens a correction dialog requiring a reason before it can be saved, which writes a real audited stock adjustment (the same mechanism a Recipe Ingredients count-adjustment uses), never a silent overwrite. A corrected field shows its reason right in the grid, and shows up in Variance Log too:
 
-![Mismatch warning](walkthrough-screenshots/05-stock/12-station-items-mismatch-warning.png)
+![Flag / correct a field](walkthrough-screenshots/05-stock/12-station-items-flag-dialog.png)
 
 ### 7.3 Manage Catalog
 
-A fifth sub-tab, visible only to managers/executives, lists every station item across all four stations in one place:
+A fifth sub-tab, visible only to managers/executives, lists every station item across all four stations in one place, each row now with its own Consumption Rules button alongside Edit:
 
 ![Manage Catalog](walkthrough-screenshots/05-stock/13-station-items-manage-catalog.png)
 
 Editing an item lets you change its name/category/unit/reorder threshold, and — critically — link it to a real ingredient. Linking is what makes a station item's Ending/New Stocks feed directly into that ingredient's real stock, the same mechanism Receive Shipment and Recipe Ingredients already use:
 
 ![Manage Catalog edit dialog](walkthrough-screenshots/05-stock/14-station-items-manage-catalog-edit.png)
+
+Each row's new **Consumption Rules** button is what actually turns on the automation for that item — without a rule, a station item's Usage just stays at 0 no matter how many are sold, the same way a product with no recipe deducts nothing. A rule is either **per product sold** (e.g. "1 can deducted per Coke sold", tied to a specific product and size) or **per transaction** (e.g. "1 box per takeout order", optionally scoped to dine-in or takeout only and scaled by guest count for things like napkins or chopsticks). Populating real rules for all ~200 items is expected to happen gradually as the client works through Manage Catalog — an item with no rule yet simply shows Usage = 0 until one is added.
+
+Back on the station grid itself, each row also has its own **Log Loss** action — spoilage, breakage, comps, or shrinkage for that specific item, the same reasons as the standalone Loss Log page, deducted immediately and counted in that item's Usage for the day.
 
 ### 7.4 Overview
 

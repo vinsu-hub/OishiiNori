@@ -1,7 +1,7 @@
 # Oishii Nori — Inventory Management Guide
 
 **Audience:** kitchen staff, cashiers, managers, executives
-**Last updated:** 2026-08-24 (this update: Inventory Count and Stock Count (Stations) are now one page — **Stock**, with a Recipe Ingredients tab and a Station Items tab — plus automatic low-stock alerts and count-entry autosave; see sections 2 and 4)
+**Last updated:** 2026-08-25 (this update: Station Items' New Stocks/Beginning/Usage/Ending are now auto-computed from sales, deliveries, and losses — the same automation Recipe Ingredients already had — with a per-field "flag as wrong" correction instead of manual typing; see sections 2 and 4)
 
 This guide explains how inventory now works in the Oishii Nori Command Suite — what the system already tracks automatically, and the few manual touchpoints that remain. The short version: **you no longer need to count every ingredient by hand every day.** The system watches stock levels continuously as sales happen, and manual counting is now a periodic accuracy check, not the primary way stock gets tracked.
 
@@ -11,7 +11,9 @@ This guide explains how inventory now works in the Oishii Nori Command Suite —
 
 **Old way (fully manual):** someone walks every station once a day with a paper sheet, writes down New Stocks / Beginning / Usage / Ending for every single item, and that's the only record of what's in stock. Mistakes during prep (extra egg, dropped roll, wrong portion) never get recorded anywhere — they just show up later as an unexplained gap between what the sheet says and what's actually on the shelf.
 
-**New way (mostly automatic):** every sale run through POS Terminal or the customer QR menu already knows the recipe for what was sold, so the system deducts the exact ingredients used **the moment the sale happens** — no one has to write anything down for that to happen. The two things a manual count could never see on its own — a customer asking to hold an ingredient, and staff using more than the recipe calls for — are now captured directly at the point they happen, by the person who saw it happen. Physical counting still exists, but its job has shifted: it's a periodic accuracy check (and the only tracking method for things that have no recipe, like packaging and resale drinks), not the day's main event.
+**New way (mostly automatic):** every sale run through POS Terminal or the customer QR menu already knows the recipe for what was sold, so the system deducts the exact ingredients used **the moment the sale happens** — no one has to write anything down for that to happen. The two things a manual count could never see on its own — a customer asking to hold an ingredient, and staff using more than the recipe calls for — are now captured directly at the point they happen, by the person who saw it happen. Physical counting still exists, but its job has shifted: it's a periodic accuracy check, not the day's main event.
+
+**Station Items got the same treatment.** Packaging, supplies, and resale drinks never had a recipe to auto-deduct from, so until now their New Stocks/Beginning/Usage/Ending sheet was still a blank form someone filled in by hand every day. It now works the same way Recipe Ingredients does: a **consumption rule** (set up once, in Manage Catalog) tells the system how much of an item a sale uses — either per unit of a specific product sold (a can of Coke) or once per transaction (a takeout box, optionally scaled by guest count) — and every sale, delivery, and logged loss auto-fills all four numbers. Staff now review an already-completed list instead of typing it from scratch, and only touch a field by flagging it wrong.
 
 ---
 
@@ -25,6 +27,9 @@ If a customer asks to hold an ingredient (e.g., "no cucumber"), check the box fo
 
 > Why this matters: before this was wired up correctly, a held ingredient still got silently deducted every time — creating fake shrinkage that only ever showed up later as an unexplained gap during a manual count, with no way to trace where it came from. Now the system's own sales data is accurate at the source, so there's nothing left to "explain away" later.
 
+### Station Items fill themselves in the same way
+Once a consumption rule exists for an item (see section 4), a sale of the linked product deducts it automatically — no different from a recipe ingredient. Voiding the sale restores it. A logged delivery (Receive Shipment) counts as that day's New Stocks; a logged loss counts as Usage. Beginning carries forward from yesterday's computed Ending. You'll only ever type a number here by flagging a field as wrong.
+
 ### Bundles (Sushi Boat and similar) work differently
 Bundle products don't have their own recipe — kitchen staff log which specific rolls fulfilled the bundle from **Kitchen Display**'s "Log rolls used" checklist, and *those* rolls' own recipes are what actually gets deducted.
 
@@ -32,7 +37,7 @@ Bundle products don't have their own recipe — kitchen staff log which specific
 Anything at or below its reorder threshold — recipe ingredients or station items — now shows as a red count badge next to **Stock** in the sidebar, and as a **Low Stock** card on the Home page for non-executive roles (executives already see the full breakdown on Command Center). You no longer need to open Stock and scan the table to notice something's running low; if the badge is there, something needs reordering.
 
 ### An in-progress count is never lost
-Typing counts into either tab of **Stock** now autosaves your unsaved entries in the browser as you go (nothing is sent to the server until you actually hit Save). If a tab gets closed, the device loses power, or you get pulled away mid-count, reopening the page offers to restore what you'd entered, with a note on when it was saved — just double-check the numbers still look right before saving, since stock may have moved in the meantime.
+Typing a count into the Recipe Ingredients tab still autosaves your unsaved entries in the browser as you go (nothing is sent to the server until you actually hit Save). If a tab gets closed, the device loses power, or you get pulled away mid-count, reopening the page offers to restore what you'd entered, with a note on when it was saved — just double-check the numbers still look right before saving, since stock may have moved in the meantime. Station Items has nothing left to lose mid-typing this way — its four numbers are computed, not typed — but a flag/correction and its reason are saved to the server the moment you submit them, same as any other Stock action.
 
 ---
 
@@ -58,21 +63,36 @@ That's it — stock is deducted for the extra amount immediately, and it shows u
 
 ## 4. What still needs a physical count — and why
 
-Physical counting still covers two genuinely different jobs — recipe ingredients that drive food cost, and everything else that doesn't have a recipe at all. They now live as **two tabs on one page, Stock**, instead of two separate sidebar items, since staff are doing the same basic task (walk around, count what's there) either way. Which tab you want depends on *what* you're counting, not a different page to remember.
+Physical counting still covers two genuinely different jobs — recipe ingredients that drive food cost, and everything else that doesn't have a recipe at all. They now live as **two tabs on one page, Stock**, instead of two separate sidebar items, since staff are doing the same basic task (spot-check what's there) either way. Which tab you want depends on *what* you're checking, not a different page to remember.
 
 ### Stock → Recipe Ingredients tab — the source of truth for recipe ingredients
 **Who:** everyone can log a count; only manager/executive can edit an ingredient's other fields.
 **What it's for:** the definitive place to correct a recipe ingredient's stock level after a physical spot-check, and to edit fields like base unit, category, or reorder threshold.
 **When to use it:** periodically (not necessarily daily anymore), or whenever something looks off and you want to reconcile the system's running total against what's physically on the shelf.
 
-### Stock → Station Items tab — for everything that isn't a recipe ingredient
-**Who:** everyone can log a count; manager/executive manage the catalog (adding/editing items) via the tab's own **Manage Catalog** sub-tab.
-**What it's for:** the ~200 items on the client's real paper stock sheets that have no recipe at all — packaging, supplies, resale beverages — organized by physical station (Tako-Snack, Cafe-Drinks, Sushi-Kitchen Main, Ramen-Hot Line) in the same New Stocks / Beginning / Usage / Ending format as the old paper sheets.
-**Important:** for the small set of items that are *also* real recipe ingredients (tracked in both places), the Station Items tab shows that item's live stock as **read-only** with an "Edit in Recipe Ingredients →" link that jumps straight to the other tab — the Recipe Ingredients tab is the single place that actually edits that number. This isn't two competing systems doing the same job; it avoids exactly that. Beginning/Usage/Notes/Flag-for-verification stay editable everywhere, since those are informational and don't change the tracked stock figure.
+### Stock → Station Items tab — an already-done list, not a blank form
+**Who:** everyone can review and flag a field, or log a loss; manager/executive manage the catalog and set up **Consumption Rules** via the tab's own **Manage Catalog** sub-tab.
+**What it's for:** the ~200 items on the client's real paper stock sheets that have no recipe at all — packaging, supplies, resale beverages — organized by physical station (Tako-Snack, Cafe-Drinks, Sushi-Kitchen Main, Ramen-Hot Line).
 
-Both tabs stay loaded once you've opened them, so switching back and forth to cross-check something doesn't lose your in-progress count or re-fetch from scratch.
+**How the four numbers get filled in now:**
+- **New Stocks** sums that item's deliveries logged today (via Receive Shipment).
+- **Beginning** carries forward from yesterday's computed Ending (or, on an item's first day, backs into a consistent number from the live stock).
+- **Usage** sums that item's sales (via its consumption rule — see below) plus any logged losses.
+- **Ending** is the item's live running stock — the same number the other three are built from, so all four are always consistent with each other.
 
-**Receive Shipment** is the third piece of this: logging a delivery here adds directly to a recipe ingredient's stock (and its own audit trail) — the same mechanism the Station Items tab's "New Stocks" field uses under the hood for a linked item.
+**Setting up a consumption rule (Manage Catalog → Consumption Rules, manager/executive):** this is what tells the system a sale should deduct this item at all — without one, a station item's Usage just stays at 0 no matter how many are sold, same as a product with no recipe. Two shapes:
+- **Per product sold** — e.g. "1 can deducted per Coke sold." Pick the exact product and size.
+- **Per transaction** — e.g. "1 box deducted per takeout order," optionally scoped to dine-in or takeout only, and optionally scaled by guest count (for napkins, chopsticks, etc.).
+
+A rule can be switched active/inactive or deleted at any time; populating real rules for all ~200 items is expected to happen gradually, not all at once — an item with no rule yet just shows Usage = 0 and needs a manual **Log Loss** or flag if something moved anyway.
+
+**Flagging a field as wrong:** each of the four numbers has a small flag icon. Click it, enter the corrected value and a reason (required), and save — this writes a real audited correction (same underlying mechanism as a Recipe Ingredients count-adjustment), not a silent overwrite. A flagged field shows the correction and its reason right in the grid, and shows up in Variance Log too.
+
+**Log Loss:** each row has its own Log Loss action — spoilage, breakage, comps, or shrinkage for that specific item, same reasons as the standalone Loss Log page, deducted immediately.
+
+**Important:** for the small set of items that are *also* real recipe ingredients (tracked in both places), a flag/correction on New Stocks or Ending routes through to that same ingredient's real stock number — the Recipe Ingredients tab is still the single place that number ultimately lives; Station Items just gives it a station-organized view. This isn't two competing systems doing the same job; it avoids exactly that.
+
+**Receive Shipment** is the fourth piece of this: logging a delivery there adds directly to an item's stock (and its own audit trail) — for an unlinked station item, it's the only way New Stocks gets real delivery data to sum, so its picker covers both recipe ingredients and unlinked station items.
 
 ---
 
@@ -82,7 +102,7 @@ Both tabs stay loaded once you've opened them, so switching back and forth to cr
 - **As it happens, one click:** if kitchen staff use more of an ingredient than the recipe calls for, they log it from Kitchen Display right then — no waiting for count day to discover it.
 - **As it happens, standalone:** spoilage, breakage, comps, and shrinkage noticed off the kitchen board get logged in Loss Log.
 - **On delivery:** log what came in via Receive Shipment.
-- **Periodically (not daily):** run Stock's Recipe Ingredients tab as a spot-check/reconciliation for recipe ingredients, and its Station Items tab per station for packaging/supplies/resale items that have no other tracking mechanism.
+- **Periodically (not daily):** run Stock's Recipe Ingredients tab as a spot-check/reconciliation. Station Items no longer needs a walk-and-count at all — review its per-station list and flag anything that looks wrong.
 - **Proactively, no action needed:** a red badge next to Stock in the sidebar (and a card on Home) tells you when something's hit its reorder threshold, in either tab, before you'd otherwise notice.
 - **As needed:** adjust an ingredient's base unit, category, reorder threshold, or the VAT rate from the Recipe Ingredients tab's edit dialog / Settings — executive-only, since these affect how the whole system computes cost and tax.
 
@@ -102,7 +122,10 @@ The net effect: the system's own numbers are trustworthy enough, day to day, tha
 | Log spoilage/breakage/comp/shrinkage | Loss Log | everyone |
 | Log a delivery | Receive Shipment | everyone |
 | Spot-check/correct a recipe ingredient's stock | Stock → Recipe Ingredients tab | everyone (edit fields: manager/executive) |
-| Count packaging/supplies/resale items by station | Stock → Station Items tab | everyone (manage catalog: manager/executive) |
+| Review auto-filled packaging/supplies/resale stock by station | Stock → Station Items tab | everyone |
+| Flag/correct a Station Items field | Stock → Station Items tab (flag icon) | everyone |
+| Log a loss for a station item | Stock → Station Items tab ("Log Loss") | everyone |
+| Set up a sale-deduction rule for a station item | Stock → Station Items → Manage Catalog → Consumption Rules | manager/executive |
 | Edit ingredient base unit, category, reorder threshold | Stock → Recipe Ingredients tab → Edit | manager/executive |
 | See what's running low before it becomes a problem | Sidebar badge / Home card (any page); full detail on Command Center | everyone (detail: executive) |
 | Change the VAT rate | Settings → Business Settings | executive |

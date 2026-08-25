@@ -25,17 +25,24 @@ Real product photos exist for only 17 of the 52 active menu items (mostly Baked 
 
 - **Do a real physical count** on Recipe Ingredients and Station Items (Stock sidebar group) the morning you open, so the running totals start from ground truth. After that, the system tracks deductions automatically — this is a one-time reset, not an ongoing chore.
 
-## 4. Reservation tables — zero active tables right now
+## 4. Station Items consumption rules — none are set up yet
+
+Station Items' Usage now auto-fills from sales the same way Recipe Ingredients does, but only for an item that has a **consumption rule** (Stock → Station Items → Manage Catalog → Consumption Rules). Right now, zero of the ~200 items have one — every station item's Usage will show 0 no matter how many sell, until a rule tells the system what a sale actually consumes.
+
+- **Where to fix it:** dashboard-web → Stock → Station Items → Manage Catalog, per item — pick "per product sold" (e.g. 1 can per Coke) or "per transaction" (e.g. 1 box per takeout order) and set the quantity.
+- This is expected to happen gradually as the client works through the real ~200-item list, not all before day one — an item with no rule yet just needs a manual **Log Loss**/flag entry if something moves, same as before this automation existed.
+
+## 5. Reservation tables — zero active tables right now
 
 The `tables` roster currently has 5 entries, all inactive, all leftover from feature testing (`Table 1`, `Table 2`, `Table 3`, `VIP Table 1`, plus one more). **No reservation can be confirmed until at least one table is active** — the availability engine has nothing to assign a party to.
 
 - **Where to fix it:** dashboard-web → Reservations → Tables tab (manager/executive). Either repurpose the existing test rows (rename, set the real capacity, toggle active) or add fresh ones — either way, make sure the final active roster matches your actual floor plan and seat counts.
 
-## 5. Business hours — confirm they're actually correct
+## 6. Business hours — confirm they're actually correct
 
 Currently set to **10:00 AM – 10:00 PM, every day, no closed days** (`Settings` → Business Hours, executive-only). This gates both the reservation system and the Landing Page's displayed hours — if this doesn't match reality, fix it before launch, not after the first wrong reservation comes in.
 
-## 6. Landing Page footer — placeholder contact info
+## 7. Landing Page footer — placeholder contact info
 
 `apps/landing-page`'s footer currently has:
 - A fake phone number (`+63 000 000 0000`)
@@ -43,7 +50,7 @@ Currently set to **10:00 AM – 10:00 PM, every day, no closed days** (`Settings
 
 These also feed the page's `Restaurant` structured data (JSON-LD) that search engines and AI answer engines read — wrong/fake contact info there actively hurts local SEO trust signals (NAP consistency), it's not just cosmetic. Provide the real phone number and Instagram handle and these get swapped in.
 
-## 7. Remove test/QA accounts from the employee roster
+## 8. Remove test/QA accounts from the employee roster
 
 Five non-real accounts are currently in the system alongside the 6 real staff members (Ana Reyes, Juan Dela Cruz, Liza Fernandez, Maria Santos, Mark Villanueva, Rico Bautista):
 
@@ -51,15 +58,15 @@ Five non-real accounts are currently in the system alongside the 6 real staff me
 
 These are harmless to leave (they'll just sit at ₱0 in payroll runs), but they're login-capable accounts with no real owner and will clutter Employees/HR Attendance/Payroll reports. Deactivate or remove them via Employees (manager/executive) before real staff start using the system day to day.
 
-## 8. Staff login credentials — review before real use
+## 9. Staff login credentials — review before real use
 
 Every seeded/test account uses this project's known development defaults (a shared default password and a shared default PIN, set at account-creation time). Before real staff start relying on these accounts for POS/payroll access, have each real employee set their own real password and kiosk PIN rather than continuing to use the defaults they were created with.
 
-## 9. Outside this codebase: Google Business Profile
+## 10. Outside this codebase: Google Business Profile
 
 Not something any of this can set up automatically — a free Google Business Profile listing (separate from this system, needs the restaurant's own Google account) is typically the single highest-impact local-SEO lever for a physical restaurant, well beyond what on-page work alone can achieve. Recommended before/alongside launch, not required for the system itself to function.
 
-## 10. Vercel: finish wiring the Landing Page's short domain
+## 11. Vercel: finish wiring the Landing Page's short domain
 
 `https://oishii-nori-landing.vercel.app` currently needs to be manually re-pointed after every deploy (it's an ad-hoc alias, not a real project Domain). One-time fix: Vercel dashboard → `oishii-nori-landing` project → Settings → Domains → add `oishii-nori-landing.vercel.app` as a proper domain. Until then, `https://oishii-nori-landing-vince-tamis.vercel.app` always resolves correctly and can be used/shared safely in the meantime.
 

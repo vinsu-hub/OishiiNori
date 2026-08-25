@@ -1,7 +1,7 @@
 # Oishii Nori Command Suite — Session Handoff
 
-**Date:** 2026-08-20 (build session) · **Updated:** 2026-08-25 (this update: connection/data-processing optimization pass, POS Terminal offline order queueing, a full table-reservation system with automatic conflict prevention, a new 5th app — the public Landing Page — and a full SEO/AI-search optimization pass on it. All **deployed and production-verified**. See `SYSTEM_GUIDE.md` sections 3.15/3.16 for the reservation system and Landing Page, and `LAUNCH_CHECKLIST.md` for what real-world data still needs filling in before go-live.)
-**Repo:** `D:\ioshinori\oishii-nori-command-suite` — pushed to GitHub: `https://github.com/vinsu-hub/OishiiNori` (private, `main` branch), commit `6a7c732`. Everything described in this document is committed and pushed as of this write-up — nothing is sitting as local-only changes.
+**Date:** 2026-08-20 (build session) · **Updated:** 2026-08-25 (this update: Station Items' New Stocks/Beginning/Usage/Ending are now auto-computed and sale-driven, same as Recipe Ingredients, replacing the blank-canvas manual sheet with a flag-to-edit review list. **Deployed and production-verified**. See `INVENTORY_SYSTEM_GUIDE.md` section 4 for the staff-facing explanation.)
+**Repo:** `D:\ioshinori\oishii-nori-command-suite` — pushed to GitHub: `https://github.com/vinsu-hub/OishiiNori` (private, `main` branch), commit `07ae91f`. Everything described in this document is committed and pushed as of this write-up — nothing is sitting as local-only changes.
 **Live deployments (Vercel, team `vince-tamis`, Git-integration auto-deploy on push to `main`):**
 - Dashboard: `https://oishii-nori-dashboard.vercel.app`
 - Staff Clock kiosk: `https://oishii-nori-staff-clock.vercel.app`
@@ -13,6 +13,18 @@
 **Build status: functionally complete, everything verified live.** All 5 apps deployed to production — each re-verified against the live API/dashboard after deploy (not just local dev). The two long-standing blockers from this project's earlier history — the Supabase `hr` schema not being exposed to PostgREST, and Oishii AI's LLM provider having no working billing — were both resolved on 2026-08-22 and remain resolved. **The system is feature-complete but not yet ready for real customers** — see `LAUNCH_CHECKLIST.md` for the real-business-data gaps (menu photos, ingredient costs, table setup, placeholder contact info, leftover QA accounts) that need addressing first.
 
 ---
+
+## 📋 Station Items stock tracking: full sale-driven automation (completed 2026-08-25)
+
+The client's question — "we already have a full automation pipeline for stock, right?" — was true for Recipe Ingredients but false for Station Items: the New Stocks/Beginning/Usage/Ending sheet for the ~200 packaging/supply/resale items was still a blank form typed by hand daily, with no deduction pathway from a sale at all (selling a Drinks product deducted nothing anywhere). Extended the exact pattern Recipe Ingredients already used instead of building a second one.
+
+**New (migrations `0028`/`0029`, applied live):** `stock_consumption_rules` table drives auto-deduction on sale -- either **per product unit sold** (a can of Coke) or **once per transaction** (a takeout box), optionally scoped by `order_type` and scaled by `guest_count`, covering packaging that doesn't map to one product. `inventory_movements`/`loss_records` made polymorphic (nullable `ingredient_id` + new `stock_item_id`, exactly-one-of constraint) so Station Items reuse the same movement/audit-trail machinery Recipe Ingredients already has, instead of a parallel one. `loss_records.skip_stock_deduction` -- previously a request-only flag that was applied at write time then silently discarded -- is now actually persisted, since Usage's computation needs to know after the fact which losses already had their stock accounted for elsewhere.
+
+**Computed daily summary:** `GET /stock-items/count-entries` now returns real computed values instead of a raw passthrough -- Beginning carries forward from yesterday's Ending, New Stocks sums today's deliveries, Usage sums today's sale-consumption + losses, Ending is the live running stock. Rewritten to batch all of a station's items into a handful of queries instead of one-per-item (a 61-item station went from **45s to 2.8s** to load).
+
+**Flag-to-edit, not free typing:** the four fields render read-only in the UI; a per-field flag icon opens a correction dialog requiring a reason, which writes an audited stock adjustment through the same `apply_ingredient_count`/`apply_stock_item_count` paths Inventory Count already uses -- never a silent overwrite. Manage Catalog gained a Consumption Rules editor (manager/executive) for setting up the sale-deduction rules above; Station Items gained a per-row Log Loss action; Receive Shipment, Variance Log, and Stock Overview were extended to recognize stock-item-targeted movements/losses alongside ingredient ones.
+
+Verified end-to-end against the live API and in a real browser session (sale deduction, void-restore, carry-forward, flag/correct with audit trail + Variance Log visibility + reload persistence, consumption-rule authoring, Receive Shipment's combined picker) before deploy. Populating the actual ~200 items' real consumption rules is the client's job via the new Manage Catalog UI -- deliberately not fabricated here.
 
 ## 🌐 Public Landing Page (5th app) + full SEO/AI-search optimization (completed 2026-08-25)
 
