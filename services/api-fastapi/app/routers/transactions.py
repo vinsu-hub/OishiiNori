@@ -7,6 +7,7 @@ from postgrest.exceptions import APIError
 from app.auth import CurrentUser, get_current_user, require_role, verify_employee_pin
 from app.deps import get_supabase
 from app.ph_time import ph_day_bounds_utc
+from app.routers.stock_items import adjust_stock_items_for_product_unit, adjust_stock_items_for_transaction
 from app.schemas import (
     BundleFulfillmentRequest,
     BundleFulfillmentResponse,
@@ -423,6 +424,16 @@ def _create_transaction_row(
             sign=-1,
             held_ingredient_names=item.held_ingredients if held_ingredients_supported else None,
         )
+        adjust_stock_items_for_product_unit(
+            supabase, item.product_size_id, item.quantity, sign=-1,
+            employee_id=employee_id, transaction_id=transaction_id,
+        )
+    # Once per transaction, not per item -- e.g. a takeout box consumed
+    # once regardless of how many products are in the order.
+    adjust_stock_items_for_transaction(
+        supabase, order_type, guest_count, sign=-1,
+        employee_id=employee_id, transaction_id=transaction_id,
+    )
 
     if discount:
         discount_amount = subtotal * (discount["percentage"] / 100)
@@ -640,6 +651,14 @@ def void_transaction(
                 sign=1,
                 held_ingredient_names=row.get("held_ingredients"),
             )
+            adjust_stock_items_for_product_unit(
+                supabase, row["product_size_id"], float(row["quantity"]), sign=1,
+                employee_id=user.id, transaction_id=transaction_id,
+            )
+    adjust_stock_items_for_transaction(
+        supabase, transaction.get("order_type"), transaction.get("guest_count"), sign=1,
+        employee_id=user.id, transaction_id=transaction_id,
+    )
 
     updated = (
         supabase.table("transactions")

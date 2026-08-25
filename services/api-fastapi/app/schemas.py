@@ -23,7 +23,14 @@ OrderType = Literal["dine_in", "takeout"]
 # reusing/widening that type would change the digital-order schema's own
 # semantics.
 TransactionPaymentMethod = Literal["cash", "gcash", "card", "split"]
-MovementType = Literal["trans_in", "trans_out", "delivery", "transfer_in", "transfer_out", "count_adjustment"]
+MovementType = Literal[
+    "trans_in", "trans_out", "delivery", "transfer_in", "transfer_out", "count_adjustment",
+    # Sale-driven stock-item consumption (0028) -- deliberately logged as a
+    # movement, unlike recipe-ingredient sale deduction, so Station Items'
+    # auto-computed Usage has a summable daily trail to add up.
+    "sale_consumption", "sale_consumption_reversal",
+]
+StockConsumptionTrigger = Literal["per_product_unit", "per_transaction"]
 LossReason = Literal["spoilage", "breakage", "comp", "prep_error", "shrinkage"]
 UtilityType = Literal["electricity", "water", "gas"]
 ProductAvailability = Literal["available", "low_stock", "unavailable"]
@@ -403,7 +410,12 @@ class InventoryCountResponse(BaseModel):
 
 
 class InventoryMovementCreate(BaseModel):
-    ingredient_id: str
+    # Exactly one of ingredient_id/stock_item_id is required (0028) --
+    # validated in the router, mirroring the DB's own exactly-one check
+    # constraint rather than duplicating it as a pydantic validator that
+    # could drift from the real constraint.
+    ingredient_id: str | None = None
+    stock_item_id: str | None = None
     type: MovementType
     department: DepartmentType | None = None
     quantity: float = Field(gt=0)
@@ -422,7 +434,8 @@ class InventoryMovementCreate(BaseModel):
 
 class InventoryMovementResponse(BaseModel):
     id: str
-    ingredient_id: str
+    ingredient_id: str | None = None
+    stock_item_id: str | None = None
     type: MovementType
     department: DepartmentType | None = None
     quantity: float
@@ -515,6 +528,82 @@ class StockCountEntryResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Stock consumption rules (0028) -- the recipe_items equivalent for stock
+# items, plus the computed daily summary and flag/override write path that
+# replace the old typed-by-hand New Stocks/Beginning/Usage/Ending sheet.
+# ---------------------------------------------------------------------------
+
+
+class StockConsumptionRuleCreate(BaseModel):
+    stock_item_id: str
+    trigger_type: StockConsumptionTrigger
+    product_size_id: str | None = None
+    order_type: OrderType | None = None
+    qty_per_unit: float = Field(gt=0)
+    scale_by_guest_count: bool = False
+    active: bool = True
+    notes: str | None = None
+
+
+class StockConsumptionRuleUpdate(BaseModel):
+    qty_per_unit: float | None = Field(default=None, gt=0)
+    scale_by_guest_count: bool | None = None
+    active: bool | None = None
+    notes: str | None = None
+
+
+class StockConsumptionRuleOut(BaseModel):
+    id: str
+    stock_item_id: str
+    trigger_type: StockConsumptionTrigger
+    product_size_id: str | None = None
+    product_name: str | None = None
+    size_label: str | None = None
+    order_type: OrderType | None = None
+    qty_per_unit: float
+    scale_by_guest_count: bool
+    active: bool
+    notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class FieldOverride(BaseModel):
+    value: float
+    reason: str
+    by: str
+    at: datetime
+
+
+class StockItemDailySummary(BaseModel):
+    stock_item_id: str
+    count_date: date
+    beginning: float
+    beginning_source: Literal["carry_forward", "fallback"]
+    new_stocks: float
+    usage: float
+    ending: float
+    notes: str | None = None
+    needs_verification: bool = False
+    overrides: dict[str, FieldOverride] = Field(default_factory=dict)
+
+
+class StockItemNotesUpdate(BaseModel):
+    recorded_by: str
+    count_date: date | None = None
+    notes: str | None = None
+    needs_verification: bool | None = None
+
+
+class StockItemFieldOverrideRequest(BaseModel):
+    field: Literal["beginning", "new_stocks", "usage", "ending"]
+    corrected_value: float
+    reason: str = Field(min_length=1)
+    employee_id: str
+    count_date: date | None = None
+
+
+# ---------------------------------------------------------------------------
 # Discounts
 # ---------------------------------------------------------------------------
 
@@ -548,7 +637,10 @@ class DiscountTypeOut(BaseModel):
 
 
 class CreateLossRecordRequest(BaseModel):
-    ingredient_id: str
+    # Exactly one of ingredient_id/stock_item_id is required (0028) --
+    # validated in the router.
+    ingredient_id: str | None = None
+    stock_item_id: str | None = None
     product_id: str | None = None
     employee_id: str
     reason: LossReason
@@ -566,13 +658,15 @@ class CreateLossRecordRequest(BaseModel):
 
 class LossRecordResponse(BaseModel):
     id: str
-    ingredient_id: str
+    ingredient_id: str | None = None
+    stock_item_id: str | None = None
     product_id: str | None = None
     employee_id: str
     reason: LossReason
     quantity: float
     cost_impact: float
     photo_url: str | None = None
+    skip_stock_deduction: bool = False
     created_at: datetime
 
 

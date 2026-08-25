@@ -12,10 +12,12 @@ import {
   ApiIngredient,
   ApiInventoryMovement,
   ApiLossRecord,
+  ApiStockItem,
   fetchEmployees,
   fetchInventory,
   fetchInventoryMovements,
   fetchLossRecords,
+  fetchStockItems,
 } from '@/lib/api';
 import { LOSS_REASONS } from '@/lib/types';
 import { formatCurrency } from '@/lib/utils';
@@ -29,8 +31,10 @@ type Kind = 'loss' | 'count_adjustment';
 interface VarianceRow {
   key: string;
   createdAt: string;
-  ingredientId: string;
-  ingredientName: string;
+  // Combined filter key: "ingredient:<id>" or "stock_item:<id>" -- 0028
+  // let count adjustments and losses target either table.
+  targetKey: string;
+  targetName: string;
   kind: Kind;
   quantityDisplay: string;
   costImpact: number | null;
@@ -59,11 +63,12 @@ export default function StockVarianceLog() {
   const [lossRecords, setLossRecords] = useState<ApiLossRecord[]>([]);
   const [adjustments, setAdjustments] = useState<ApiInventoryMovement[]>([]);
   const [ingredients, setIngredients] = useState<ApiIngredient[]>([]);
+  const [stockItems, setStockItems] = useState<ApiStockItem[]>([]);
   const [employees, setEmployees] = useState<ApiEmployee[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [kindFilter, setKindFilter] = useState<'all' | Kind>('all');
-  const [ingredientFilter, setIngredientFilter] = useState<string>('all');
+  const [itemFilter, setItemFilter] = useState<string>('all');
 
   const load = useCallback(() => {
     setLoading(true);
@@ -71,12 +76,14 @@ export default function StockVarianceLog() {
       fetchLossRecords(50),
       fetchInventoryMovements({ type: 'count_adjustment', limit: 50 }),
       fetchInventory(),
+      fetchStockItems({ active_only: false }),
       fetchEmployees(),
     ])
-      .then(([losses, moves, ing, emps]) => {
+      .then(([losses, moves, ing, items, emps]) => {
         setLossRecords(losses);
         setAdjustments(moves);
         setIngredients(ing);
+        setStockItems(items);
         setEmployees(emps);
       })
       .catch((e) => toast.error(`Failed to load Variance Log: ${e.message}`))
@@ -88,43 +95,61 @@ export default function StockVarianceLog() {
   }, [load]);
 
   const ingredientById = useMemo(() => new Map(ingredients.map((i) => [i.id, i])), [ingredients]);
+  const stockItemById = useMemo(() => new Map(stockItems.map((i) => [i.id, i])), [stockItems]);
   const employeeById = useMemo(() => new Map(employees.map((e) => [e.id, e])), [employees]);
 
+  function targetKeyAndName(ingredientId: string | null, stockItemId: string | null): { key: string; name: string } {
+    if (ingredientId) {
+      return { key: `ingredient:${ingredientId}`, name: ingredientById.get(ingredientId)?.name || ingredientId.slice(0, 8) };
+    }
+    if (stockItemId) {
+      return { key: `stock_item:${stockItemId}`, name: stockItemById.get(stockItemId)?.name || stockItemId.slice(0, 8) };
+    }
+    return { key: 'unknown', name: '--' };
+  }
+
   const rows = useMemo<VarianceRow[]>(() => {
-    const lossRows: VarianceRow[] = lossRecords.map((r) => ({
-      key: `loss-${r.id}`,
-      createdAt: r.created_at,
-      ingredientId: r.ingredient_id,
-      ingredientName: ingredientById.get(r.ingredient_id)?.name || r.ingredient_id.slice(0, 8),
-      kind: 'loss',
-      quantityDisplay: `-${r.quantity}`,
-      costImpact: r.cost_impact,
-      reason: LOSS_REASON_LABELS[r.reason] || r.reason,
-      recordedBy: employeeById.get(r.employee_id)?.full_name || r.employee_id.slice(0, 8),
-      idShort: r.id.slice(0, 8),
-      idFull: r.id,
-    }));
-    const adjustmentRows: VarianceRow[] = adjustments.map((m) => ({
-      key: `adj-${m.id}`,
-      createdAt: m.created_at,
-      ingredientId: m.ingredient_id,
-      ingredientName: ingredientById.get(m.ingredient_id)?.name || m.ingredient_id.slice(0, 8),
-      kind: 'count_adjustment',
-      quantityDisplay: parseSignedVariance(m.reason, m.quantity),
-      costImpact: m.unit_cost_snapshot != null ? m.unit_cost_snapshot * m.quantity : null,
-      reason: m.reason || '--',
-      recordedBy: employeeById.get(m.employee_id)?.full_name || m.employee_id.slice(0, 8),
-      idShort: m.id.slice(0, 8),
-      idFull: m.id,
-    }));
+    const lossRows: VarianceRow[] = lossRecords.map((r) => {
+      const { key, name } = targetKeyAndName(r.ingredient_id, r.stock_item_id);
+      return {
+        key: `loss-${r.id}`,
+        createdAt: r.created_at,
+        targetKey: key,
+        targetName: name,
+        kind: 'loss',
+        quantityDisplay: `-${r.quantity}`,
+        costImpact: r.cost_impact,
+        reason: LOSS_REASON_LABELS[r.reason] || r.reason,
+        recordedBy: employeeById.get(r.employee_id)?.full_name || r.employee_id.slice(0, 8),
+        idShort: r.id.slice(0, 8),
+        idFull: r.id,
+      };
+    });
+    const adjustmentRows: VarianceRow[] = adjustments.map((m) => {
+      const { key, name } = targetKeyAndName(m.ingredient_id, m.stock_item_id);
+      return {
+        key: `adj-${m.id}`,
+        createdAt: m.created_at,
+        targetKey: key,
+        targetName: name,
+        kind: 'count_adjustment',
+        quantityDisplay: parseSignedVariance(m.reason, m.quantity),
+        costImpact: m.unit_cost_snapshot != null ? m.unit_cost_snapshot * m.quantity : null,
+        reason: m.reason || '--',
+        recordedBy: employeeById.get(m.employee_id)?.full_name || m.employee_id.slice(0, 8),
+        idShort: m.id.slice(0, 8),
+        idFull: m.id,
+      };
+    });
     return [...lossRows, ...adjustmentRows].sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
-  }, [lossRecords, adjustments, ingredientById, employeeById]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lossRecords, adjustments, ingredientById, stockItemById, employeeById]);
 
   const filteredRows = rows
     .filter((r) => kindFilter === 'all' || r.kind === kindFilter)
-    .filter((r) => ingredientFilter === 'all' || r.ingredientId === ingredientFilter);
+    .filter((r) => itemFilter === 'all' || r.targetKey === itemFilter);
 
   if (user && user.role === 'employee') {
     return (
@@ -165,16 +190,21 @@ export default function StockVarianceLog() {
                 </Select>
               </div>
               <div className="space-y-1 flex-1 min-w-[200px]">
-                <label className="text-xs text-muted-foreground">Ingredient</label>
-                <Select value={ingredientFilter} onValueChange={setIngredientFilter}>
+                <label className="text-xs text-muted-foreground">Item</label>
+                <Select value={itemFilter} onValueChange={setItemFilter}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All ingredients</SelectItem>
+                    <SelectItem value="all">All items</SelectItem>
                     {ingredients.map((i) => (
-                      <SelectItem key={i.id} value={i.id}>
+                      <SelectItem key={`ingredient-${i.id}`} value={`ingredient:${i.id}`}>
                         {i.name}
+                      </SelectItem>
+                    ))}
+                    {stockItems.map((i) => (
+                      <SelectItem key={`stock_item-${i.id}`} value={`stock_item:${i.id}`}>
+                        {i.name} (Station Item)
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -200,7 +230,7 @@ export default function StockVarianceLog() {
                 <TableHeader>
                   <TableRow className={STOCK_TABLE_ROW_CLASS}>
                     <TableHead className={STOCK_TABLE_HEAD_CLASS}>Date</TableHead>
-                    <TableHead className={STOCK_TABLE_HEAD_CLASS}>Ingredient</TableHead>
+                    <TableHead className={STOCK_TABLE_HEAD_CLASS}>Item</TableHead>
                     <TableHead className={STOCK_TABLE_HEAD_CLASS}>Kind</TableHead>
                     <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Variance</TableHead>
                     <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Cost Impact</TableHead>
@@ -215,7 +245,7 @@ export default function StockVarianceLog() {
                       <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-muted-foreground`}>
                         {new Date(row.createdAt).toLocaleString()}
                       </TableCell>
-                      <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-medium`}>{row.ingredientName}</TableCell>
+                      <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-medium`}>{row.targetName}</TableCell>
                       <TableCell className={STOCK_TABLE_CELL_CLASS}>
                         <StockStatusBadge variant={row.kind === 'loss' ? 'critical' : 'neutral'}>
                           {row.kind === 'loss' ? 'Loss Record' : 'Count Adjustment'}

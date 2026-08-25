@@ -14,11 +14,13 @@ import { Loader2, Plus, Trash2 } from 'lucide-react';
 import {
   ApiIngredient,
   ApiInventoryMovement,
+  ApiStockItem,
   Department,
   MovementType,
   createInventoryMovement,
   fetchInventory,
   fetchInventoryMovements,
+  fetchStockItems,
 } from '@/lib/api';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 
@@ -40,29 +42,49 @@ const DEPARTMENTS: { value: Department; label: string }[] = [
 
 const VOLATILE_TIERS = new Set(['high', 'medium_high']);
 
+// Combined ingredient + unlinked-stock-item picker key, "ingredient:<id>" or
+// "stock_item:<id>" -- Receive Shipment is the only real delivery-logging
+// surface an unlinked Station Item has (0028), so it needs both target kinds
+// in one list. Linked stock items are excluded here -- receive those via
+// their real ingredient instead, same routing rule the rest of this app
+// already follows.
+type TargetKey = string;
+
+function targetKeyFor(kind: 'ingredient' | 'stock_item', id: string): TargetKey {
+  return `${kind}:${id}`;
+}
+
+function parseTargetKey(key: TargetKey): { kind: 'ingredient' | 'stock_item'; id: string } | null {
+  const [kind, id] = key.split(':');
+  if ((kind === 'ingredient' || kind === 'stock_item') && id) return { kind, id };
+  return null;
+}
+
 interface ShipmentRow {
   localId: string;
-  ingredientId: string;
+  targetKey: TargetKey;
   quantity: string;
   unitCost: string;
   expiryDate: string;
 }
 
 function newShipmentRow(): ShipmentRow {
-  return { localId: crypto.randomUUID(), ingredientId: '', quantity: '', unitCost: '', expiryDate: '' };
+  return { localId: crypto.randomUUID(), targetKey: '', quantity: '', unitCost: '', expiryDate: '' };
 }
 
 export default function InventoryMovements() {
   const { user } = useAuth();
   const [ingredients, setIngredients] = useState<ApiIngredient[]>([]);
+  const [stockItems, setStockItems] = useState<ApiStockItem[]>([]);
   const [movements, setMovements] = useState<ApiInventoryMovement[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(() => {
-    Promise.all([fetchInventory(), fetchInventoryMovements({ limit: 50 })])
-      .then(([ing, mov]) => {
+    Promise.all([fetchInventory(), fetchInventoryMovements({ limit: 50 }), fetchStockItems({ active_only: true })])
+      .then(([ing, mov, items]) => {
         setIngredients([...ing].sort((a, b) => a.name.localeCompare(b.name)));
         setMovements(mov);
+        setStockItems([...items].filter((i) => !i.ingredient_id).sort((a, b) => a.name.localeCompare(b.name)));
       })
       .catch((e) => toast.error(`Failed to load movements: ${e.message}`))
       .finally(() => setLoading(false));
@@ -75,6 +97,18 @@ export default function InventoryMovements() {
     for (const ing of ingredients) map.set(ing.id, ing);
     return map;
   }, [ingredients]);
+
+  const stockItemsById = useMemo(() => {
+    const map = new Map<string, ApiStockItem>();
+    for (const item of stockItems) map.set(item.id, item);
+    return map;
+  }, [stockItems]);
+
+  function movementTargetName(m: ApiInventoryMovement): string {
+    if (m.ingredient_id) return ingredientsById.get(m.ingredient_id)?.name || m.ingredient_id.slice(0, 8);
+    if (m.stock_item_id) return stockItemsById.get(m.stock_item_id)?.name || m.stock_item_id.slice(0, 8);
+    return '--';
+  }
 
   // --- Receive Shipment (batch) ---
   const [shipmentRows, setShipmentRows] = useState<ShipmentRow[]>([newShipmentRow()]);
@@ -95,25 +129,27 @@ export default function InventoryMovements() {
 
   async function handleReceiveShipment() {
     if (!user) return;
-    const validRows = shipmentRows.filter((r) => r.ingredientId && Number(r.quantity) > 0);
+    const validRows = shipmentRows.filter((r) => r.targetKey && Number(r.quantity) > 0);
     if (validRows.length === 0) {
-      toast.error('Add at least one ingredient with a quantity greater than 0');
+      toast.error('Add at least one item with a quantity greater than 0');
       return;
     }
     setReceiving(true);
     try {
       await Promise.all(
-        validRows.map((r) =>
-          createInventoryMovement({
-            ingredient_id: r.ingredientId,
+        validRows.map((r) => {
+          const target = parseTargetKey(r.targetKey);
+          return createInventoryMovement({
+            ingredient_id: target?.kind === 'ingredient' ? target.id : undefined,
+            stock_item_id: target?.kind === 'stock_item' ? target.id : undefined,
             type: 'delivery',
             quantity: Number(r.quantity),
             reason: supplierNote.trim() || undefined,
             employee_id: user.id,
             unit_cost_snapshot: r.unitCost.trim() ? Number(r.unitCost) : undefined,
             expiry_date: r.expiryDate || undefined,
-          })
-        )
+          });
+        })
       );
       toast.success(`Shipment received -- ${validRows.length} item${validRows.length === 1 ? '' : 's'} logged`);
       setShipmentRows([newShipmentRow()]);
@@ -210,26 +246,35 @@ export default function InventoryMovements() {
 
                 <div className="space-y-3">
                   {shipmentRows.map((row) => {
-                    const rowIngredient = row.ingredientId ? ingredientsById.get(row.ingredientId) : undefined;
+                    const target = parseTargetKey(row.targetKey);
+                    const rowIngredient = target?.kind === 'ingredient' ? ingredientsById.get(target.id) : undefined;
+                    const rowStockItem = target?.kind === 'stock_item' ? stockItemsById.get(target.id) : undefined;
                     return (
                       <div key={row.localId} className="grid grid-cols-12 gap-2 items-end">
                         <div className="col-span-4 space-y-1">
-                          <Label className="text-xs">Ingredient</Label>
-                          <Select value={row.ingredientId} onValueChange={(v) => updateShipmentRow(row.localId, { ingredientId: v })}>
+                          <Label className="text-xs">Item</Label>
+                          <Select value={row.targetKey} onValueChange={(v) => updateShipmentRow(row.localId, { targetKey: v })}>
                             <SelectTrigger>
-                              <SelectValue placeholder="Select ingredient" />
+                              <SelectValue placeholder="Select ingredient or stock item" />
                             </SelectTrigger>
                             <SelectContent>
                               {ingredients.map((ing) => (
-                                <SelectItem key={ing.id} value={ing.id}>
+                                <SelectItem key={targetKeyFor('ingredient', ing.id)} value={targetKeyFor('ingredient', ing.id)}>
                                   {ing.name}
+                                </SelectItem>
+                              ))}
+                              {stockItems.map((item) => (
+                                <SelectItem key={targetKeyFor('stock_item', item.id)} value={targetKeyFor('stock_item', item.id)}>
+                                  {item.name} (Station Item)
                                 </SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
                         </div>
                         <div className="col-span-2 space-y-1">
-                          <Label className="text-xs">Quantity {rowIngredient ? `(${rowIngredient.base_unit})` : ''}</Label>
+                          <Label className="text-xs">
+                            Quantity {rowIngredient ? `(${rowIngredient.base_unit})` : rowStockItem?.unit ? `(${rowStockItem.unit})` : ''}
+                          </Label>
                           <Input
                             type="number"
                             min={0}
@@ -387,7 +432,7 @@ export default function InventoryMovements() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Ingredient</TableHead>
+                    <TableHead>Item</TableHead>
                     <TableHead>Type</TableHead>
                     <TableHead>Quantity</TableHead>
                     <TableHead>Department</TableHead>
@@ -399,7 +444,7 @@ export default function InventoryMovements() {
                 <TableBody>
                   {movements.map((m) => (
                     <TableRow key={m.id}>
-                      <TableCell>{ingredientsById.get(m.ingredient_id)?.name || m.ingredient_id.slice(0, 8)}</TableCell>
+                      <TableCell>{movementTargetName(m)}</TableCell>
                       <TableCell>
                         <Badge variant="outline">{m.type}</Badge>
                       </TableCell>

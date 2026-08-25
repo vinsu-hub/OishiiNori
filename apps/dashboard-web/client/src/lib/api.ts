@@ -580,10 +580,22 @@ export function fetchIngredientRecipeUsage(id: string): Promise<ApiIngredientRec
   return request(`/inventory/${id}/recipe-usage`);
 }
 
-export type MovementType = 'trans_in' | 'trans_out' | 'delivery' | 'transfer_in' | 'transfer_out' | 'count_adjustment';
+// 0028 adds sale_consumption/sale_consumption_reversal (Station Items'
+// auto-deduction on sale/void) alongside the pre-existing manual types.
+export type MovementType =
+  | 'trans_in'
+  | 'trans_out'
+  | 'delivery'
+  | 'transfer_in'
+  | 'transfer_out'
+  | 'count_adjustment'
+  | 'sale_consumption'
+  | 'sale_consumption_reversal';
 
 export interface CreateInventoryMovementRequest {
-  ingredient_id: string;
+  // Exactly one of ingredient_id/stock_item_id (0028).
+  ingredient_id?: string | null;
+  stock_item_id?: string | null;
   type: MovementType;
   department?: Department | null;
   quantity: number;
@@ -596,7 +608,8 @@ export interface CreateInventoryMovementRequest {
 
 export interface ApiInventoryMovement {
   id: string;
-  ingredient_id: string;
+  ingredient_id: string | null;
+  stock_item_id: string | null;
   type: MovementType;
   department: Department | null;
   quantity: number;
@@ -612,9 +625,15 @@ export function createInventoryMovement(body: CreateInventoryMovementRequest): P
   return request('/inventory-movements', { method: 'POST', body: JSON.stringify(body) });
 }
 
-export function fetchInventoryMovements(params?: { ingredient_id?: string; type?: MovementType; limit?: number }): Promise<ApiInventoryMovement[]> {
+export function fetchInventoryMovements(params?: {
+  ingredient_id?: string;
+  stock_item_id?: string;
+  type?: MovementType;
+  limit?: number;
+}): Promise<ApiInventoryMovement[]> {
   const qs = new URLSearchParams();
   if (params?.ingredient_id) qs.set('ingredient_id', params.ingredient_id);
+  if (params?.stock_item_id) qs.set('stock_item_id', params.stock_item_id);
   if (params?.type) qs.set('type', params.type);
   if (params?.limit) qs.set('limit', String(params.limit));
   const query = qs.toString();
@@ -644,37 +663,46 @@ export interface ApiStockItem {
   updated_at: string;
 }
 
-export interface ApiStockCountEntry {
-  id: string;
-  stock_item_id: string;
-  count_date: string;
-  new_stocks: number | null;
-  beginning: number | null;
-  usage: number | null;
-  ending: number | null;
-  notes: string | null;
-  needs_verification: boolean;
-  recorded_by: string;
-  created_at: string;
-  updated_at: string;
+// 0028: the four sheet fields are computed server-side (auto-filled from
+// sales/losses/deliveries/carry-forward), not typed by hand -- see
+// services/api-fastapi/app/routers/stock_items.py's module docstring.
+// `overrides` holds any field a staff member has flagged-and-corrected for
+// this count_date, keyed by field name.
+export interface FieldOverride {
+  value: number;
+  reason: string;
+  by: string;
+  at: string;
 }
 
-export interface CreateStockCountEntryRequest {
+export type StockSummaryField = 'beginning' | 'new_stocks' | 'usage' | 'ending';
+
+export interface ApiStockItemDailySummary {
+  stock_item_id: string;
+  count_date: string;
+  beginning: number;
+  beginning_source: 'carry_forward' | 'fallback';
+  new_stocks: number;
+  usage: number;
+  ending: number;
+  notes: string | null;
+  needs_verification: boolean;
+  overrides: Partial<Record<StockSummaryField, FieldOverride>>;
+}
+
+export interface UpdateStockItemNotesRequest {
   recorded_by: string;
   count_date?: string;
-  new_stocks?: number | null;
-  beginning?: number | null;
-  usage?: number | null;
-  ending?: number | null;
   notes?: string | null;
   needs_verification?: boolean;
 }
 
-export interface StockCountEntryResult {
-  entry: ApiStockCountEntry;
-  stock_item: ApiStockItem;
-  ingredient_count_result: unknown | null;
-  delivery_movement: unknown | null;
+export interface StockItemFieldOverrideRequest {
+  field: StockSummaryField;
+  corrected_value: number;
+  reason: string;
+  employee_id: string;
+  count_date?: string;
 }
 
 export function fetchStockItems(params?: { station?: StockStation; active_only?: boolean }): Promise<ApiStockItem[]> {
@@ -711,14 +739,84 @@ export function updateStockItem(
   return request(`/stock-items/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
 }
 
-export function fetchStockCountEntries(params: { station: StockStation; date?: string }): Promise<ApiStockCountEntry[]> {
+export function fetchStockCountEntries(params: { station: StockStation; date?: string }): Promise<ApiStockItemDailySummary[]> {
   const qs = new URLSearchParams({ station: params.station });
   if (params.date) qs.set('date', params.date);
   return request(`/stock-items/count-entries?${qs.toString()}`);
 }
 
-export function recordStockCount(stockItemId: string, body: CreateStockCountEntryRequest): Promise<StockCountEntryResult> {
-  return request(`/stock-items/${stockItemId}/count-entries`, { method: 'POST', body: JSON.stringify(body) });
+export function updateStockItemNotes(stockItemId: string, body: UpdateStockItemNotesRequest): Promise<{ ok: true }> {
+  return request(`/stock-items/${stockItemId}/notes`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function overrideStockItemField(
+  stockItemId: string,
+  body: StockItemFieldOverrideRequest
+): Promise<ApiStockItemDailySummary> {
+  return request(`/stock-items/${stockItemId}/field-override`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+// ---------------------------------------------------------------------------
+// Stock consumption rules (0028) -- the recipe_items equivalent for stock
+// items, authored from Station Items' Manage Catalog tab.
+// ---------------------------------------------------------------------------
+
+export type StockConsumptionTrigger = 'per_product_unit' | 'per_transaction';
+
+export interface ApiStockConsumptionRule {
+  id: string;
+  stock_item_id: string;
+  trigger_type: StockConsumptionTrigger;
+  product_size_id: string | null;
+  product_name: string | null;
+  size_label: string | null;
+  order_type: OrderType | null;
+  qty_per_unit: number;
+  scale_by_guest_count: boolean;
+  active: boolean;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateStockConsumptionRuleRequest {
+  stock_item_id: string;
+  trigger_type: StockConsumptionTrigger;
+  product_size_id?: string | null;
+  order_type?: OrderType | null;
+  qty_per_unit: number;
+  scale_by_guest_count?: boolean;
+  active?: boolean;
+  notes?: string | null;
+}
+
+export interface UpdateStockConsumptionRuleRequest {
+  qty_per_unit?: number;
+  scale_by_guest_count?: boolean;
+  active?: boolean;
+  notes?: string | null;
+}
+
+export function fetchStockConsumptionRules(params?: { stock_item_id?: string }): Promise<ApiStockConsumptionRule[]> {
+  const qs = new URLSearchParams();
+  if (params?.stock_item_id) qs.set('stock_item_id', params.stock_item_id);
+  const query = qs.toString();
+  return request(`/stock-consumption-rules${query ? `?${query}` : ''}`);
+}
+
+export function createStockConsumptionRule(body: CreateStockConsumptionRuleRequest): Promise<ApiStockConsumptionRule> {
+  return request('/stock-consumption-rules', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function updateStockConsumptionRule(
+  id: string,
+  body: UpdateStockConsumptionRuleRequest
+): Promise<ApiStockConsumptionRule> {
+  return request(`/stock-consumption-rules/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+export function deleteStockConsumptionRule(id: string): Promise<{ ok: true }> {
+  return request(`/stock-consumption-rules/${id}`, { method: 'DELETE' });
 }
 
 // ---------------------------------------------------------------------------
@@ -728,7 +826,9 @@ export function recordStockCount(stockItemId: string, body: CreateStockCountEntr
 export type LossReason = 'spoilage' | 'breakage' | 'comp' | 'prep_error' | 'shrinkage';
 
 export interface CreateLossRecordRequest {
-  ingredient_id: string;
+  // Exactly one of ingredient_id/stock_item_id (0028).
+  ingredient_id?: string | null;
+  stock_item_id?: string | null;
   product_id?: string | null;
   employee_id: string;
   reason: LossReason;
@@ -741,13 +841,15 @@ export interface CreateLossRecordRequest {
 
 export interface ApiLossRecord {
   id: string;
-  ingredient_id: string;
+  ingredient_id: string | null;
+  stock_item_id: string | null;
   product_id: string | null;
   employee_id: string;
   reason: LossReason;
   quantity: number;
   cost_impact: number;
   photo_url: string | null;
+  skip_stock_deduction: boolean;
   created_at: string;
 }
 

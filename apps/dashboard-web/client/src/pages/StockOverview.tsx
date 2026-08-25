@@ -50,12 +50,18 @@ export default function StockOverview() {
 
   const load = useCallback(() => {
     setLoading(true);
-    Promise.all([fetchInventory(), fetchExpiringSoon(7), fetchStockItems({ active_only: true }), fetchInventoryMovements({ limit: 10 })])
+    // Fetch a wider window then drop routine sale_consumption(_reversal)
+    // rows (0028) client-side -- this widget is for reviewing manual
+    // movements/adjustments, not every sale, same principle Variance Log
+    // applies.
+    Promise.all([fetchInventory(), fetchExpiringSoon(7), fetchStockItems({ active_only: true }), fetchInventoryMovements({ limit: 30 })])
       .then(([ing, expiring, items, moves]) => {
         setIngredients(ing);
         setExpiringSoon(expiring);
         setStockItems(items);
-        setMovements(moves);
+        setMovements(
+          moves.filter((m) => m.type !== 'sale_consumption' && m.type !== 'sale_consumption_reversal').slice(0, 10)
+        );
       })
       .catch((e) => toast.error(`Failed to load Stock Overview: ${e.message}`))
       .finally(() => setLoading(false));
@@ -76,6 +82,12 @@ export default function StockOverview() {
   }
 
   const ingredientById = new Map(ingredients.map((i) => [i.id, i]));
+  const stockItemById = new Map(stockItems.map((i) => [i.id, i]));
+  function movementTargetName(m: ApiInventoryMovement): string {
+    if (m.ingredient_id) return ingredientById.get(m.ingredient_id)?.name || m.ingredient_id.slice(0, 8);
+    if (m.stock_item_id) return stockItemById.get(m.stock_item_id)?.name || m.stock_item_id.slice(0, 8);
+    return '--';
+  }
   const needsVerificationCount = stockItems.filter((i) => i.needs_review).length;
 
   const byStation = STATIONS.map((s) => {
@@ -210,7 +222,7 @@ export default function StockOverview() {
                             {new Date(m.created_at).toLocaleString()}
                           </TableCell>
                           <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-medium`}>
-                            {ingredientById.get(m.ingredient_id)?.name || m.ingredient_id.slice(0, 8)}
+                            {movementTargetName(m)}
                           </TableCell>
                           <TableCell className={STOCK_TABLE_CELL_CLASS}>
                             {MOVEMENT_TYPE_LABELS[m.type] || m.type}

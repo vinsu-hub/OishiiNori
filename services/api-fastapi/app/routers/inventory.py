@@ -201,7 +201,9 @@ def get_ingredient_recipe_usage(ingredient_id: str, user: CurrentUser = Depends(
     return rows
 
 
-def apply_ingredient_count(supabase, ingredient_id: str, counted_stock: float, employee_id: str) -> InventoryCountResponse:
+def apply_ingredient_count(
+    supabase, ingredient_id: str, counted_stock: float, employee_id: str, note: str | None = None
+) -> InventoryCountResponse:
     """Records a physical stock count. Unlike a manual movement, a count
     sets current_stock directly to what was actually counted rather than
     applying a delta -- and, when the counted value differs from what the
@@ -230,6 +232,9 @@ def apply_ingredient_count(supabase, ingredient_id: str, counted_stock: float, e
 
     movement = None
     if variance != 0:
+        reason = f"Stock count: {previous_stock} -> {counted_stock} (variance {variance:+})"
+        if note:
+            reason = f"{note} -- {reason}"
         movement_result = (
             supabase.table("inventory_movements")
             .insert(
@@ -237,7 +242,7 @@ def apply_ingredient_count(supabase, ingredient_id: str, counted_stock: float, e
                     "ingredient_id": ingredient_id,
                     "type": "count_adjustment",
                     "quantity": abs(variance),
-                    "reason": f"Stock count: {previous_stock} -> {counted_stock} (variance {variance:+})",
+                    "reason": reason,
                     "employee_id": employee_id,
                 }
             )

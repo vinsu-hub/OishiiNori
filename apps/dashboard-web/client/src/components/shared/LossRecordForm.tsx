@@ -23,6 +23,12 @@ interface LossRecordFormProps {
   fixedIngredientId?: string;
   fixedIngredientLabel?: string;
 
+  // Stock item (0028): a fixed, unlinked Station Item -- mutually exclusive
+  // with ingredientOptions/fixedIngredientId. Station Items' "Log Loss"
+  // action always targets one specific row, so there's no picker mode here.
+  fixedStockItemId?: string;
+  stockItemLabel?: string;
+
   // Quantity: editable by default, or fixed/read-only (e.g. Inventory
   // Count's shrinkage row, where the quantity IS the measured variance).
   quantityEditable?: boolean;
@@ -62,6 +68,8 @@ export function LossRecordForm({
   ingredientOptions,
   fixedIngredientId,
   fixedIngredientLabel,
+  fixedStockItemId,
+  stockItemLabel,
   quantityEditable = true,
   fixedQuantity,
   quantityUnit,
@@ -82,11 +90,12 @@ export function LossRecordForm({
   const [skip, setSkip] = useState(skipStockDeduction);
   const [submitting, setSubmitting] = useState(false);
 
+  const isStockItemMode = !!fixedStockItemId;
   const selectedOption = ingredientOptions?.find((o) => o.id === ingredientId);
   const unitLabel = quantityUnit ?? selectedOption?.unit;
 
   async function handleSubmit() {
-    if (!ingredientId) {
+    if (!isStockItemMode && !ingredientId) {
       toast.error('Select an ingredient');
       return;
     }
@@ -98,7 +107,8 @@ export function LossRecordForm({
     setSubmitting(true);
     try {
       const record = await createLossRecord({
-        ingredient_id: ingredientId,
+        ingredient_id: isStockItemMode ? undefined : ingredientId,
+        stock_item_id: isStockItemMode ? fixedStockItemId : undefined,
         product_id: productId ?? undefined,
         employee_id: employeeId,
         reason,
@@ -141,8 +151,10 @@ export function LossRecordForm({
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1">
-          <Label>Ingredient</Label>
-          {ingredientOptions ? (
+          <Label>{isStockItemMode ? 'Stock Item' : 'Ingredient'}</Label>
+          {isStockItemMode ? (
+            <p className="text-sm font-medium py-2">{stockItemLabel}</p>
+          ) : ingredientOptions ? (
             <Select value={ingredientId} onValueChange={setIngredientId}>
               <SelectTrigger>
                 <SelectValue placeholder="Select ingredient" />
