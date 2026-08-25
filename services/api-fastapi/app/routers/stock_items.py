@@ -320,12 +320,25 @@ def _sum_new_stocks_and_usage(movements: list[dict], losses: list[dict]) -> tupl
     return new_stocks, usage
 
 
-def _build_daily_summaries(supabase, items: list[dict], count_date: date) -> list[StockItemDailySummary]:
+def _build_daily_summaries(
+    supabase, items: list[dict], count_date: date, entry_column: str = "stock_item_id"
+) -> list[dict]:
     """Batched version of the per-item computation: a station grid can hold
     ~200 rows, and issuing 4-6 sequential queries per item (one station load
     -> 800-1200 round trips) made the page take 45s+ to load. This issues a
     fixed handful of queries scoped to the whole item set instead, then
-    computes each item's four numbers in memory."""
+    computes each item's four numbers in memory.
+
+    entry_column selects which stock_count_entries column the four numbers
+    are read from/keyed by (0030 made that table polymorphic the same way
+    inventory_movements/loss_records already were) -- "stock_item_id" for a
+    Station Items grid (the default, unchanged from before 0030), or
+    "ingredient_id" when the caller is inventory.py's plain-ingredient
+    summary (see _ingredient_summary_items there). Returns plain dicts
+    (id/count_date/beginning/.../overrides) rather than a pydantic model
+    directly, since the two callers key the row differently
+    (stock_item_id vs ingredient_id) -- each wraps the dict in its own
+    response schema."""
     if not items:
         return []
 
@@ -365,26 +378,26 @@ def _build_daily_summaries(supabase, items: list[dict], count_date: date) -> lis
     # Most recent prior-day Ending per item, for carry-forward Beginning.
     prior_rows = (
         supabase.table("stock_count_entries")
-        .select("stock_item_id, count_date, ending")
-        .in_("stock_item_id", item_ids)
+        .select(f"{entry_column}, count_date, ending")
+        .in_(entry_column, item_ids)
         .lt("count_date", count_date.isoformat())
         .order("count_date", desc=True)
         .execute()
     ).data
     prior_ending_by_item: dict[str, float] = {}
     for row in prior_rows:
-        if row["ending"] is None or row["stock_item_id"] in prior_ending_by_item:
+        if row["ending"] is None or row[entry_column] in prior_ending_by_item:
             continue
-        prior_ending_by_item[row["stock_item_id"]] = float(row["ending"])
+        prior_ending_by_item[row[entry_column]] = float(row["ending"])
 
     today_rows = (
         supabase.table("stock_count_entries")
         .select("*")
-        .in_("stock_item_id", item_ids)
+        .in_(entry_column, item_ids)
         .eq("count_date", count_date.isoformat())
         .execute()
     ).data
-    today_entry_by_item = {row["stock_item_id"]: row for row in today_rows}
+    today_entry_by_item = {row[entry_column]: row for row in today_rows}
 
     summaries = []
     for item in items:
@@ -427,26 +440,72 @@ def _build_daily_summaries(supabase, items: list[dict], count_date: date) -> lis
                     ending = float(value)
 
         summaries.append(
-            StockItemDailySummary(
-                stock_item_id=item["id"],
-                count_date=count_date,
-                beginning=beginning,
-                beginning_source=beginning_source,
-                new_stocks=new_stocks,
-                usage=usage,
-                ending=ending,
-                notes=_strip_override_markers(entry.get("notes")) if entry else None,
-                needs_verification=bool(entry.get("needs_verification")) if entry else False,
-                overrides=overrides,
-            )
+            {
+                "id": item["id"],
+                "count_date": count_date,
+                "beginning": beginning,
+                "beginning_source": beginning_source,
+                "new_stocks": new_stocks,
+                "usage": usage,
+                "ending": ending,
+                "notes": _strip_override_markers(entry.get("notes")) if entry else None,
+                "needs_verification": bool(entry.get("needs_verification")) if entry else False,
+                "overrides": overrides,
+            }
         )
     return summaries
+
+
+def _to_stock_item_summary(d: dict) -> StockItemDailySummary:
+    return StockItemDailySummary(stock_item_id=d["id"], **{k: v for k, v in d.items() if k != "id"})
 
 
 def _build_daily_summary(supabase, stock_item: dict, count_date: date) -> StockItemDailySummary:
     """Single-item convenience wrapper around _build_daily_summaries, for
     the field-override endpoint's before/after computation."""
-    return _build_daily_summaries(supabase, [stock_item], count_date)[0]
+    return _to_stock_item_summary(_build_daily_summaries(supabase, [stock_item], count_date)[0])
+
+
+def _upsert_override_entry(
+    supabase,
+    entry_column: str,
+    entry_id: str,
+    count_date: date,
+    field: str,
+    corrected_value: float,
+    reason: str,
+    employee_id: str,
+) -> None:
+    """Persists a field correction on stock_count_entries (keyed by either
+    stock_item_id or ingredient_id, see 0030) so it survives a reload and is
+    distinguishable from the auto-computed value (see _build_daily_summaries'
+    overrides parsing). Shared by both Station Items' and plain ingredients'
+    field-override endpoints."""
+    existing = (
+        supabase.table("stock_count_entries")
+        .select("id, notes")
+        .eq(entry_column, entry_id)
+        .eq("count_date", count_date.isoformat())
+        .execute()
+    )
+    marker = f"[{field}] {reason}"
+    if existing.data:
+        prior_notes = existing.data[0].get("notes") or ""
+        lines = [l for l in prior_notes.split("\n") if not l.strip().startswith(f"[{field}]")]
+        lines.append(marker)
+        supabase.table("stock_count_entries").update(
+            {field: corrected_value, "notes": "\n".join(lines), "updated_at": datetime.now(timezone.utc).isoformat()}
+        ).eq("id", existing.data[0]["id"]).execute()
+    else:
+        supabase.table("stock_count_entries").insert(
+            {
+                entry_column: entry_id,
+                "count_date": count_date.isoformat(),
+                "recorded_by": employee_id,
+                field: corrected_value,
+                "notes": marker,
+            }
+        ).execute()
 
 
 @router.get("/stock-items/count-entries", response_model=list[StockItemDailySummary])
@@ -466,7 +525,7 @@ def list_count_entries(
         .eq("station", station)
         .execute()
     ).data
-    return _build_daily_summaries(supabase, items, count_date)
+    return [_to_stock_item_summary(s) for s in _build_daily_summaries(supabase, items, count_date)]
 
 
 @router.post("/stock-items/{stock_item_id}/notes")
@@ -631,34 +690,9 @@ def override_stock_item_field(
                 }
             ).execute()
 
-    # Persist the override on stock_count_entries so it survives a reload
-    # and is distinguishable from the auto-computed value (see
-    # _build_daily_summary's overrides parsing).
-    existing = (
-        supabase.table("stock_count_entries")
-        .select("id, notes")
-        .eq("stock_item_id", stock_item_id)
-        .eq("count_date", count_date.isoformat())
-        .execute()
+    _upsert_override_entry(
+        supabase, "stock_item_id", stock_item_id, count_date, body.field, body.corrected_value, body.reason, body.employee_id
     )
-    marker = f"[{body.field}] {body.reason}"
-    if existing.data:
-        prior_notes = existing.data[0].get("notes") or ""
-        lines = [l for l in prior_notes.split("\n") if not l.strip().startswith(f"[{body.field}]")]
-        lines.append(marker)
-        supabase.table("stock_count_entries").update(
-            {body.field: body.corrected_value, "notes": "\n".join(lines), "updated_at": datetime.now(timezone.utc).isoformat()}
-        ).eq("id", existing.data[0]["id"]).execute()
-    else:
-        supabase.table("stock_count_entries").insert(
-            {
-                "stock_item_id": stock_item_id,
-                "count_date": count_date.isoformat(),
-                "recorded_by": body.employee_id,
-                body.field: body.corrected_value,
-                "notes": marker,
-            }
-        ).execute()
 
     refreshed = (
         supabase.table("stock_items")

@@ -603,6 +603,32 @@ class StockItemFieldOverrideRequest(BaseModel):
     count_date: date | None = None
 
 
+class IngredientDailySummary(BaseModel):
+    """Ingredient equivalent of StockItemDailySummary (0030) -- same computed
+    New Stocks/Beginning/Usage/Ending shape, keyed by ingredient_id instead
+    of stock_item_id since a plain recipe ingredient has no wrapping
+    stock_items row."""
+
+    ingredient_id: str
+    count_date: date
+    beginning: float
+    beginning_source: Literal["carry_forward", "fallback"]
+    new_stocks: float
+    usage: float
+    ending: float
+    notes: str | None = None
+    needs_verification: bool = False
+    overrides: dict[str, FieldOverride] = Field(default_factory=dict)
+
+
+class IngredientFieldOverrideRequest(BaseModel):
+    field: Literal["beginning", "new_stocks", "usage", "ending"]
+    corrected_value: float
+    reason: str = Field(min_length=1)
+    employee_id: str
+    count_date: date | None = None
+
+
 # ---------------------------------------------------------------------------
 # Discounts
 # ---------------------------------------------------------------------------

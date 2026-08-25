@@ -154,6 +154,8 @@ def _adjust_ingredients_for_size(
     product_size_id: str,
     quantity: float,
     sign: int,
+    employee_id: str,
+    transaction_id: str,
     held_ingredient_names: list[str] | None = None,
 ) -> dict[str, float]:
     """Applies recipe-based stock changes for one product_size sold/restored.
@@ -174,6 +176,15 @@ def _adjust_ingredients_for_size(
     was deducted unconditionally regardless of what was held, silently
     manufacturing false "shrinkage" that only surfaced later during a
     manual count.
+
+    employee_id/transaction_id (0030): every delta is also logged as a
+    sale_consumption/sale_consumption_reversal inventory_movements row --
+    the same movement types Station Items' sale-driven deduction already
+    uses (0028). Previously this function only mutated current_stock with
+    no audit trail at all (see 0028's own comment), which meant recipe
+    ingredients had no summable "Usage" the way Station Items does. The
+    insert is batched (one call for the whole product_size, not one per
+    ingredient) for the same hot-path reason the read above is batched.
     """
     held = set(held_ingredient_names or [])
     recipe_result = (
@@ -200,6 +211,8 @@ def _adjust_ingredients_for_size(
     current_stock_by_id = {row["id"]: float(row["current_stock"]) for row in stock_result.data}
 
     deltas: dict[str, float] = {}
+    movement_rows: list[dict] = []
+    movement_type = "sale_consumption" if sign < 0 else "sale_consumption_reversal"
     for recipe_item in recipe_rows:
         ingredient_id = recipe_item["ingredient_id"]
         delta_qty = float(recipe_item["qty_per_serving"]) * quantity * sign
@@ -207,6 +220,18 @@ def _adjust_ingredients_for_size(
         new_stock = current_stock + delta_qty
         supabase.table("ingredients").update({"current_stock": new_stock}).eq("id", ingredient_id).execute()
         deltas[ingredient_id] = delta_qty
+        if delta_qty != 0:
+            movement_rows.append(
+                {
+                    "ingredient_id": ingredient_id,
+                    "type": movement_type,
+                    "quantity": abs(delta_qty),
+                    "reason": f"Recipe sale -- transaction {transaction_id}",
+                    "employee_id": employee_id,
+                }
+            )
+    if movement_rows:
+        supabase.table("inventory_movements").insert(movement_rows).execute()
     return deltas
 
 
@@ -422,6 +447,8 @@ def _create_transaction_row(
             item.product_size_id,
             item.quantity,
             sign=-1,
+            employee_id=employee_id,
+            transaction_id=transaction_id,
             held_ingredient_names=item.held_ingredients if held_ingredients_supported else None,
         )
         adjust_stock_items_for_product_unit(
@@ -640,7 +667,10 @@ def void_transaction(
                     .execute()
                 )
                 for roll_size in roll_size_result.data:
-                    _adjust_ingredients_for_size(supabase, roll_size["id"], f["quantity"], sign=1)
+                    _adjust_ingredients_for_size(
+                        supabase, roll_size["id"], f["quantity"], sign=1,
+                        employee_id=user.id, transaction_id=transaction_id,
+                    )
             if fulfillments.data:
                 supabase.table("bundle_fulfillments").delete().eq("transaction_item_id", row["id"]).execute()
         else:
@@ -649,6 +679,8 @@ def void_transaction(
                 row["product_size_id"],
                 float(row["quantity"]),
                 sign=1,
+                employee_id=user.id,
+                transaction_id=transaction_id,
                 held_ingredient_names=row.get("held_ingredients"),
             )
             adjust_stock_items_for_product_unit(
@@ -868,7 +900,10 @@ def bundle_fulfillment(
             ingredient_units[ingredient_id] = recipe_item["unit"]
             ingredient_totals[ingredient_id] += float(recipe_item["qty_per_serving"]) * line.quantity
 
-        _adjust_ingredients_for_size(supabase, roll_size_id, line.quantity, sign=-1)
+        _adjust_ingredients_for_size(
+            supabase, roll_size_id, line.quantity, sign=-1,
+            employee_id=user.id, transaction_id=transaction_id,
+        )
 
         supabase.table("bundle_fulfillments").insert(
             {

@@ -37,7 +37,7 @@ const HELP_GROUPS: HelpGroup[] = [
           <>
             <p>Every account has one role, shown in the sidebar footer:</p>
             <ul className="list-disc pl-5 space-y-1 mt-1">
-              <li><strong>Employee</strong> — POS, Order Queue, Pending Orders, Kitchen Display, the Stock group's Recipe Ingredients/Station Items/Receive Shipment, Loss Log, Utility Log, Settings.</li>
+              <li><strong>Employee</strong> — POS, Order Queue, Pending Orders, Kitchen Display, the Stock group's Ingredient Stock/Station Items/Receive Shipment, Loss Log, Utility Log, Settings.</li>
               <li><strong>Manager</strong> — everything above, plus the Stock group's Overview/Alerts/Variance Log, POS Management, Employees, HR Attendance, Payroll, Holiday Calendar, and Payroll Settings.</li>
               <li><strong>Executive</strong> — everything above, plus Command Center, Trend Analysis, Menu Editing, P&amp;L, Oishii AI, and this Help page. Executives land on Command Center after logging in instead of Home.</li>
             </ul>
@@ -140,14 +140,16 @@ const HELP_GROUPS: HelpGroup[] = [
               on it.
             </p>
             <p className="mt-1">
-              <strong>Recipe Ingredients</strong> — the source of truth for anything used in a recipe and driving
-              food cost. Anyone can log a count here to correct the system's running total; managers/executives can
-              also edit an ingredient's details (base unit, category, reorder threshold).
+              <strong>Ingredient Stock</strong> — the source of truth for anything used in a recipe and driving food
+              cost. New Stocks/Beginning/Usage/Ending are auto-filled from real sales, deliveries and logged losses
+              -- anyone can flag a field with a reason if it looks wrong, which writes an audited correction rather
+              than a silent overwrite. Managers/executives can also edit an ingredient's details (base unit,
+              category, reorder threshold).
             </p>
             <p className="mt-1">
               <strong>Station Items</strong> — everything on the old paper stock sheets that has no recipe at all
               (packaging, supplies, resale drinks), organized by physical station. If an item is also a recipe
-              ingredient, its stock number is read-only here and links to the Recipe Ingredients tab, so there's
+              ingredient, its stock number is read-only here and links to the Ingredient Stock tab, so there's
               only ever one place that actually changes that figure.
             </p>
             <p className="mt-1">

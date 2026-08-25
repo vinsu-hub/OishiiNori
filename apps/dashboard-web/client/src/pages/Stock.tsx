@@ -24,7 +24,7 @@ export default function Stock() {
   const [location] = useLocation();
   const search = useSearch();
   const [activeTab, setActiveTab] = useState<StockTab>(() => resolveTab(location, search));
-  // Set when Station Items' "Edit in Recipe Ingredients →" link is clicked
+  // Set when Station Items' "Edit in Ingredient Stock →" link is clicked
   // for a linked item -- tells IngredientsPanel which row to scroll to /
   // highlight (and, for an executive, open straight into Edit) instead of
   // leaving the user to hunt for it in a 70+ row list. Cleared once
@@ -40,7 +40,7 @@ export default function Stock() {
       <div className="p-6 space-y-4">
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as StockTab)}>
           <TabsList>
-            <TabsTrigger value="ingredients">Recipe Ingredients</TabsTrigger>
+            <TabsTrigger value="ingredients">Ingredient Stock</TabsTrigger>
             <TabsTrigger value="stations">Station Items</TabsTrigger>
           </TabsList>
         </Tabs>

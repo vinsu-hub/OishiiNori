@@ -76,7 +76,7 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
     localStorage.setItem('stockNavGroupOpen', String(open));
   };
 
-  // Recipe Ingredients / Station Items are both the /stock route, split by a
+  // Ingredient Stock / Station Items are both the /stock route, split by a
   // ?tab= query param -- Stock.tsx reads this reactively (not just on
   // mount), so these two links correctly switch tabs even when /stock is
   // already the active page. Legacy /inventory-count and /stock-count paths
@@ -100,7 +100,7 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
     ...(isManagerOrExecutive
       ? [{ icon: ClipboardList, label: 'Overview', href: '/stock/overview', isActive: isOverviewActive }]
       : []),
-    { icon: Package, label: 'Recipe Ingredients', href: '/stock', isActive: isRecipeIngredientsActive },
+    { icon: Package, label: 'Ingredient Stock', href: '/stock', isActive: isRecipeIngredientsActive },
     { icon: Boxes, label: 'Station Items', href: '/stock?tab=stations', isActive: isStationItemsActive },
     { icon: Truck, label: 'Receive Shipment', href: '/inventory-movements', isActive: isReceiveShipmentActive },
     ...(isManagerOrExecutive

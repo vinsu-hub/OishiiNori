@@ -62,7 +62,7 @@ export default function Home() {
                   className="text-xs text-primary underline underline-offset-2"
                   onClick={() => navigate('/stock')}
                 >
-                  Recipe Ingredients &rarr;
+                  Ingredient Stock &rarr;
                 </button>
                 <button
                   type="button"

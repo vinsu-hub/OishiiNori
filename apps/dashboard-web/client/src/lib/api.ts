@@ -580,6 +580,44 @@ export function fetchIngredientRecipeUsage(id: string): Promise<ApiIngredientRec
   return request(`/inventory/${id}/recipe-usage`);
 }
 
+// 0030: Ingredient Stock's New Stocks/Beginning/Usage/Ending, computed the
+// same way Station Items' already is (0028) -- see
+// services/api-fastapi/app/routers/inventory.py's module docstring.
+export interface ApiIngredientDailySummary {
+  ingredient_id: string;
+  count_date: string;
+  beginning: number;
+  beginning_source: 'carry_forward' | 'fallback';
+  new_stocks: number;
+  usage: number;
+  ending: number;
+  notes: string | null;
+  needs_verification: boolean;
+  overrides: Partial<Record<StockSummaryField, FieldOverride>>;
+}
+
+export interface IngredientFieldOverrideRequest {
+  field: StockSummaryField;
+  corrected_value: number;
+  reason: string;
+  employee_id: string;
+  count_date?: string;
+}
+
+export function fetchIngredientCountEntries(params?: { date?: string }): Promise<ApiIngredientDailySummary[]> {
+  const qs = new URLSearchParams();
+  if (params?.date) qs.set('date', params.date);
+  const query = qs.toString();
+  return request(`/inventory/count-entries${query ? `?${query}` : ''}`);
+}
+
+export function overrideIngredientField(
+  ingredientId: string,
+  body: IngredientFieldOverrideRequest
+): Promise<ApiIngredientDailySummary> {
+  return request(`/inventory/${ingredientId}/field-override`, { method: 'POST', body: JSON.stringify(body) });
+}
+
 // 0028 adds sale_consumption/sale_consumption_reversal (Station Items'
 // auto-deduction on sale/void) alongside the pre-existing manual types.
 export type MovementType =

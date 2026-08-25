@@ -17,7 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Flag, Loader2, Trash2 } from 'lucide-react';
+import { Loader2, Trash2 } from 'lucide-react';
 import {
   ApiIngredient,
   ApiProduct,
@@ -27,7 +27,6 @@ import {
   OrderType,
   StockConsumptionTrigger,
   StockStation,
-  StockSummaryField,
   createStockConsumptionRule,
   deleteStockConsumptionRule,
   fetchInventory,
@@ -44,6 +43,7 @@ import { LossRecordForm } from '@/components/shared/LossRecordForm';
 import { LOSS_REASONS } from '@/lib/types';
 import { StockStatusBadge } from '@/components/stock/StockStatusBadge';
 import { STOCK_TABLE_CELL_CLASS, STOCK_TABLE_HEAD_CLASS, STOCK_TABLE_ROW_CLASS } from '@/components/stock/stockTableStyle';
+import { SummaryFieldCell } from '@/components/stock/SummaryFieldCell';
 
 const STATIONS: { value: StockStation; label: string }[] = [
   { value: 'tako_snack', label: 'Tako / Snack' },
@@ -51,13 +51,6 @@ const STATIONS: { value: StockStation; label: string }[] = [
   { value: 'sushi_kitchen_main', label: 'Sushi-Kitchen Main' },
   { value: 'ramen_hot_line', label: 'Ramen / Hot Line' },
 ];
-
-const FIELD_LABELS: Record<StockSummaryField, string> = {
-  new_stocks: 'New Stocks',
-  beginning: 'Beginning',
-  usage: 'Usage',
-  ending: 'Ending',
-};
 
 type ActiveTab = StockStation | 'catalog';
 
@@ -77,8 +70,8 @@ function notesDraftChanged(a: NotesDraft | undefined, b: NotesDraft | undefined)
 
 interface StationsPanelProps {
   // Optional ingredientId: when set, the caller should also scroll to /
-  // highlight that specific ingredient on Recipe Ingredients -- this is
-  // the parity link for a linked item ("Edit in Recipe Ingredients →"),
+  // highlight that specific ingredient on Ingredient Stock -- this is
+  // the parity link for a linked item ("Edit in Ingredient Stock →"),
   // not just a generic tab switch.
   onViewIngredients: (ingredientId?: string) => void;
 }
@@ -221,7 +214,7 @@ export function StationsPanel({ onViewIngredients }: StationsPanelProps) {
                     className="text-primary underline underline-offset-2"
                     onClick={() => onViewIngredients()}
                   >
-                    View Recipe Ingredients &rarr;
+                    View Ingredient Stock &rarr;
                   </button>
                 </p>
               </div>
@@ -273,22 +266,29 @@ export function StationsPanel({ onViewIngredients }: StationsPanelProps) {
                                 className="text-xs text-primary underline underline-offset-2"
                                 onClick={() => onViewIngredients(item.ingredient_id!)}
                               >
-                                Edit in Recipe Ingredients &rarr;
+                                Edit in Ingredient Stock &rarr;
                               </button>
                             )}
                           </TableCell>
                           <SummaryFieldCell
                             field="new_stocks"
-                            item={item}
+                            itemName={item.name}
                             summary={summary}
                             employeeId={user?.id}
+                            onOverride={(field, correctedValue, reason, employeeId) =>
+                              overrideStockItemField(item.id, { field, corrected_value: correctedValue, reason, employee_id: employeeId })
+                            }
                             onSaved={handleOverrideSaved}
+                            linkedHint={item.ingredient_id ? "corrects the linked ingredient's stock" : undefined}
                           />
                           <SummaryFieldCell
                             field="beginning"
-                            item={item}
+                            itemName={item.name}
                             summary={summary}
                             employeeId={user?.id}
+                            onOverride={(field, correctedValue, reason, employeeId) =>
+                              overrideStockItemField(item.id, { field, corrected_value: correctedValue, reason, employee_id: employeeId })
+                            }
                             onSaved={handleOverrideSaved}
                             extra={
                               summary && !summary.overrides.beginning ? (
@@ -300,17 +300,24 @@ export function StationsPanel({ onViewIngredients }: StationsPanelProps) {
                           />
                           <SummaryFieldCell
                             field="usage"
-                            item={item}
+                            itemName={item.name}
                             summary={summary}
                             employeeId={user?.id}
+                            onOverride={(field, correctedValue, reason, employeeId) =>
+                              overrideStockItemField(item.id, { field, corrected_value: correctedValue, reason, employee_id: employeeId })
+                            }
                             onSaved={handleOverrideSaved}
                           />
                           <SummaryFieldCell
                             field="ending"
-                            item={item}
+                            itemName={item.name}
                             summary={summary}
                             employeeId={user?.id}
+                            onOverride={(field, correctedValue, reason, employeeId) =>
+                              overrideStockItemField(item.id, { field, corrected_value: correctedValue, reason, employee_id: employeeId })
+                            }
                             onSaved={handleOverrideSaved}
+                            linkedHint={item.ingredient_id ? "corrects the linked ingredient's stock" : undefined}
                           />
                           <TableCell className={STOCK_TABLE_CELL_CLASS}>
                             <Input
@@ -369,121 +376,6 @@ export function StationsPanel({ onViewIngredients }: StationsPanelProps) {
         </DialogContent>
       </Dialog>
     </div>
-  );
-}
-
-interface SummaryFieldCellProps {
-  field: StockSummaryField;
-  item: ApiStockItem;
-  summary: ApiStockItemDailySummary | undefined;
-  employeeId: string | undefined;
-  onSaved: (summary: ApiStockItemDailySummary) => void;
-  extra?: React.ReactNode;
-}
-
-function SummaryFieldCell({ field, item, summary, employeeId, onSaved, extra }: SummaryFieldCellProps) {
-  const [flagOpen, setFlagOpen] = useState(false);
-  const [correctedValue, setCorrectedValue] = useState('');
-  const [reason, setReason] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  const value = summary?.[field];
-  const override = summary?.overrides[field];
-  const isLinkedEndingOrNewStocks = item.ingredient_id && (field === 'new_stocks' || field === 'ending');
-
-  function openFlag() {
-    setCorrectedValue(value != null ? String(value) : '');
-    setReason('');
-    setFlagOpen(true);
-  }
-
-  async function handleSubmit() {
-    if (!employeeId) return;
-    const corrected = Number(correctedValue);
-    if (correctedValue.trim() === '' || Number.isNaN(corrected)) {
-      toast.error('Enter a corrected value');
-      return;
-    }
-    if (!reason.trim()) {
-      toast.error('A reason is required to flag/correct a field');
-      return;
-    }
-    setSaving(true);
-    try {
-      const result = await overrideStockItemField(item.id, {
-        field,
-        corrected_value: corrected,
-        reason: reason.trim(),
-        employee_id: employeeId,
-      });
-      onSaved(result);
-      toast.success(`${FIELD_LABELS[field]} corrected for ${item.name}`);
-      setFlagOpen(false);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to save correction');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right align-top`}>
-      <div className="flex items-center justify-end gap-1">
-        <span className={`text-sm font-medium ${override ? 'text-warning' : ''}`}>
-          {value != null ? value : '--'}
-        </span>
-        <button
-          type="button"
-          className="text-muted-foreground hover:text-warning"
-          title={
-            isLinkedEndingOrNewStocks
-              ? `Flag ${FIELD_LABELS[field]} as wrong (corrects the linked ingredient's stock)`
-              : `Flag ${FIELD_LABELS[field]} as wrong`
-          }
-          onClick={openFlag}
-        >
-          <Flag className="w-3.5 h-3.5" />
-        </button>
-      </div>
-      {extra}
-      {override && (
-        <p className="text-[10px] text-warning mt-0.5" title={override.reason}>
-          flagged: {override.reason}
-        </p>
-      )}
-
-      <Dialog open={flagOpen} onOpenChange={setFlagOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              Flag {FIELD_LABELS[field]} -- {item.name}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Auto-computed value: <span className="font-medium text-foreground">{value != null ? value : '--'}</span>
-            </p>
-            <div className="space-y-1">
-              <Label>Corrected value</Label>
-              <Input type="number" value={correctedValue} onChange={(e) => setCorrectedValue(e.target.value)} />
-            </div>
-            <div className="space-y-1">
-              <Label>Reason (required)</Label>
-              <Input
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="e.g. physical recount found 3 more cups"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button disabled={saving} onClick={handleSubmit}>
-              {saving ? 'Saving...' : 'Save correction'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </TableCell>
   );
 }
 

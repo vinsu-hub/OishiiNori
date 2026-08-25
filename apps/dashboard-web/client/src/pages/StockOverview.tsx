@@ -132,7 +132,7 @@ export default function StockOverview() {
                 onClick={() => navigate('/stock?tab=stations')}
               />
               <StockStatTile
-                label="Recipe Ingredients Tracked"
+                label="Ingredient Stock Tracked"
                 value={ingredients.length}
                 hint="Total ingredient catalog size"
                 onClick={() => navigate('/stock')}

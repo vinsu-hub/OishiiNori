@@ -6,6 +6,8 @@ from app.auth import CurrentUser, get_current_user, require_role
 from app.deps import get_supabase
 from app.schemas import (
     ExpiringIngredient,
+    IngredientDailySummary,
+    IngredientFieldOverrideRequest,
     IngredientOut,
     IngredientRecipeUsage,
     IngredientUpdate,
@@ -14,7 +16,7 @@ from app.schemas import (
     LowStockIngredient,
     LowStockSummaryResponse,
 )
-from app.routers.stock_items import get_low_stock_stock_items
+from app.routers.stock_items import _build_daily_summaries, _upsert_override_entry, get_low_stock_stock_items
 
 router = APIRouter(tags=["inventory"])
 
@@ -126,6 +128,60 @@ def list_expiring_soon(days: int = Query(7, ge=1, le=90), user: CurrentUser = De
     ]
     rows.sort(key=lambda r: r.days_until_expiry)
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Computed daily summary (New Stocks / Beginning / Usage / Ending) -- 0030.
+# Extends the same automation Station Items got in 0028 to plain recipe
+# ingredients, whose stock has always been sale-driven (recipe_items via
+# _adjust_ingredients_for_size in transactions.py) but never had this
+# computed view or a flag-to-correct path -- staff instead saw a blank
+# "Counted" sheet, as if nothing was tracked yet.
+#
+# Registered before /inventory/{ingredient_id} below: FastAPI/Starlette
+# matches routes in declaration order, so a static "/inventory/count-entries"
+# path must be declared ahead of the "/inventory/{ingredient_id}" pattern or
+# every request to it gets swallowed as ingredient_id="count-entries" instead.
+# ---------------------------------------------------------------------------
+
+
+def _ingredient_summary_items(ingredients: list[dict]) -> list[dict]:
+    """Shapes plain ingredient rows into the generic {id, ingredient_id,
+    current_stock, ingredients} item form _build_daily_summaries already
+    understands (it was written for stock_items rows, where a linked item's
+    real stock lives on the joined `ingredients` sub-object) -- a plain
+    ingredient is trivially its own "linked item" here."""
+    return [
+        {
+            "id": ing["id"],
+            "ingredient_id": ing["id"],
+            "current_stock": ing["current_stock"],
+            "ingredients": {"current_stock": ing["current_stock"]},
+        }
+        for ing in ingredients
+    ]
+
+
+def _to_ingredient_summary(d: dict) -> IngredientDailySummary:
+    return IngredientDailySummary(ingredient_id=d["id"], **{k: v for k, v in d.items() if k != "id"})
+
+
+@router.get("/inventory/count-entries", response_model=list[IngredientDailySummary])
+def list_ingredient_count_entries(
+    count_date: date | None = Query(None, alias="date"),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Hydrates the Ingredient Stock list for a given day (defaults today)
+    with the computed New Stocks/Beginning/Usage/Ending -- see module
+    docstring above. Not station-scoped: ingredients aren't station-bound
+    the way Station Items are."""
+    if count_date is None:
+        count_date = date.today()
+    supabase = get_supabase()
+    ingredients = supabase.table("ingredients").select("id, current_stock").order("name").execute().data
+    items = _ingredient_summary_items(ingredients)
+    summaries = _build_daily_summaries(supabase, items, count_date, entry_column="ingredient_id")
+    return [_to_ingredient_summary(s) for s in summaries]
 
 
 @router.get("/inventory/{ingredient_id}", response_model=IngredientOut)
@@ -263,3 +319,69 @@ def count_inventory(
         raise HTTPException(status_code=403, detail="Cannot log a count under another employee's id")
     supabase = get_supabase()
     return apply_ingredient_count(supabase, ingredient_id, body.counted_stock, body.employee_id)
+
+
+@router.post("/inventory/{ingredient_id}/field-override", response_model=IngredientDailySummary)
+def override_ingredient_field(
+    ingredient_id: str,
+    body: IngredientFieldOverrideRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Flag-to-edit: staff review the auto-computed New Stocks/Beginning/
+    Usage/Ending and only reach this endpoint when one looks wrong. Every
+    call requires a reason and writes an audited correction -- never a
+    silent overwrite of the computed value. Mirrors stock_items.py's
+    override_stock_item_field for a linked stock item, minus the
+    linked/unlinked branch (a plain ingredient has no such split)."""
+    if body.employee_id != user.id:
+        raise HTTPException(status_code=403, detail="Cannot log a correction under another employee's id")
+
+    supabase = get_supabase()
+    existing = (
+        supabase.table("ingredients").select("id, current_stock").eq("id", ingredient_id).maybe_single().execute()
+    )
+    if not existing or not existing.data:
+        raise HTTPException(status_code=404, detail="Ingredient not found")
+    ingredient = existing.data
+    count_date = body.count_date or date.today()
+
+    if body.field == "beginning":
+        # Beginning is informational carry-forward context -- it has never
+        # driven current_stock, and shouldn't start now. Just record it.
+        pass
+    elif body.field == "ending":
+        apply_ingredient_count(supabase, ingredient_id, body.corrected_value, body.employee_id, note=body.reason)
+    else:
+        # new_stocks / usage: figure out how current_stock itself needs to
+        # move so the corrected value is what future summaries compute --
+        # same delta math as override_stock_item_field's else-branch.
+        item = _ingredient_summary_items([ingredient])[0]
+        auto = _build_daily_summaries(supabase, [item], count_date, entry_column="ingredient_id")[0]
+        auto_value = auto["new_stocks"] if body.field == "new_stocks" else auto["usage"]
+        field_delta = body.corrected_value - auto_value
+        stock_delta = field_delta if body.field == "new_stocks" else -field_delta
+
+        if stock_delta != 0:
+            current = (
+                supabase.table("ingredients").select("current_stock").eq("id", ingredient_id).maybe_single().execute()
+            ).data
+            new_stock = float(current["current_stock"]) + stock_delta
+            supabase.table("ingredients").update({"current_stock": new_stock}).eq("id", ingredient_id).execute()
+            supabase.table("inventory_movements").insert(
+                {
+                    "ingredient_id": ingredient_id,
+                    "type": "count_adjustment",
+                    "quantity": abs(stock_delta),
+                    "reason": f"{body.reason} -- {body.field} corrected to {body.corrected_value}",
+                    "employee_id": body.employee_id,
+                }
+            ).execute()
+
+    _upsert_override_entry(
+        supabase, "ingredient_id", ingredient_id, count_date, body.field, body.corrected_value, body.reason, body.employee_id
+    )
+
+    refreshed = supabase.table("ingredients").select("id, current_stock").eq("id", ingredient_id).maybe_single().execute()
+    item = _ingredient_summary_items([refreshed.data])[0]
+    summary = _build_daily_summaries(supabase, [item], count_date, entry_column="ingredient_id")[0]
+    return _to_ingredient_summary(summary)

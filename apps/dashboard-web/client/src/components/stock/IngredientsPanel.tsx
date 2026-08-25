@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
-import { useDraftPersistence } from '@/hooks/useDraftPersistence';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,39 +10,31 @@ import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import {
-  ChevronDown,
-  ChevronUp,
-  ChevronsUpDown,
-  Clock,
-  HelpCircle,
-  Loader2,
-  TrendingDown,
-  TrendingUp,
-} from 'lucide-react';
+import { ChevronDown, Clock, HelpCircle, Loader2 } from 'lucide-react';
 import {
   ApiExpiringIngredient,
   ApiIngredient,
+  ApiIngredientDailySummary,
   ApiIngredientRecipeUsage,
   CostVolatilityTier,
-  LossReason,
-  countStock,
   fetchExpiringSoon,
+  fetchIngredientCountEntries,
   fetchIngredientRecipeUsage,
   fetchInventory,
+  overrideIngredientField,
   updateIngredient,
 } from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
+import { LOSS_REASONS } from '@/lib/types';
 import { LossRecordForm } from '@/components/shared/LossRecordForm';
-import { StockStatusBadge } from '@/components/stock/StockStatusBadge';
 import { STOCK_TABLE_CELL_CLASS, STOCK_TABLE_HEAD_CLASS, STOCK_TABLE_ROW_CLASS } from '@/components/stock/stockTableStyle';
+import { SummaryFieldCell } from '@/components/stock/SummaryFieldCell';
 
 const COST_VOLATILITY_TIERS: { value: CostVolatilityTier; label: string }[] = [
   { value: 'low', label: 'Low' },
@@ -53,46 +44,10 @@ const COST_VOLATILITY_TIERS: { value: CostVolatilityTier; label: string }[] = [
   { value: 'high', label: 'High' },
 ];
 
-type ItemStatus = 'pending' | 'counted' | 'overage' | 'shortage';
-type SortKey = 'name' | 'category' | 'unit_cost' | 'expected' | 'variance' | 'status';
-type SortDir = 'asc' | 'desc';
-
-const STATUS_RANK: Record<ItemStatus, number> = { pending: 0, counted: 1, overage: 2, shortage: 3 };
-
-const STATUS_BADGE: Record<ItemStatus, { variant: 'ok' | 'warning' | 'critical' | 'neutral'; label: string }> = {
-  pending: { variant: 'neutral', label: 'Pending' },
-  counted: { variant: 'ok', label: 'Counted' },
-  overage: { variant: 'warning', label: 'Overage' },
-  shortage: { variant: 'critical', label: 'Shortage' },
-};
-
-const SHRINKAGE_REASONS: { value: LossReason; label: string }[] = [
-  { value: 'shrinkage', label: 'Shrinkage (unexplained)' },
-  { value: 'spoilage', label: 'Spoilage' },
-  { value: 'breakage', label: 'Breakage' },
-  { value: 'prep_error', label: 'Prep Error' },
-  { value: 'comp', label: 'Complimentary' },
-];
-
-interface ShrinkageItem {
-  ingredientId: string;
-  ingredientName: string;
-  unit: string;
-  quantity: number;
-  logged: boolean;
-}
-
-function computeStatus(expected: number, counted: number | null): ItemStatus {
-  if (counted === null) return 'pending';
-  const variancePercent = expected === 0 ? 0 : ((counted - expected) / expected) * 100;
-  if (Math.abs(variancePercent) <= 5) return 'counted';
-  return variancePercent > 0 ? 'overage' : 'shortage';
-}
-
 interface IngredientsPanelProps {
   onViewStations: () => void;
-  // Edit-link parity with Station Items' "Edit in Recipe Ingredients →":
-  // when set, scroll that row into view, flash-highlight it, and (for an
+  // Edit-link parity with Station Items' "Edit in Ingredient Stock →": when
+  // set, scroll that row into view, flash-highlight it, and (for an
   // executive, who's the only role that can actually edit) open straight
   // into its Edit dialog -- instead of leaving the user to hunt for one
   // row in a 70+ item list. onFocusIngredientConsumed clears it in the
@@ -104,32 +59,14 @@ interface IngredientsPanelProps {
 export function IngredientsPanel({ onViewStations, focusIngredientId, onFocusIngredientConsumed }: IngredientsPanelProps) {
   const { user } = useAuth();
   const [ingredients, setIngredients] = useState<ApiIngredient[]>([]);
+  const [summaries, setSummaries] = useState<Record<string, ApiIngredientDailySummary>>({});
   const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [countedValues, setCountedValues] = useState<Record<string, string>>({});
-  const { clearDraft: clearCountDraft } = useDraftPersistence(
-    'oishii-draft-inventory-count',
-    countedValues,
-    (restored) => {
-      setCountedValues((prev) => {
-        const ingredientIds = new Set(ingredients.map((i) => i.id));
-        const merged = { ...prev };
-        for (const [id, v] of Object.entries(restored)) {
-          if (ingredientIds.size === 0 || ingredientIds.has(id)) merged[id] = v;
-        }
-        return merged;
-      });
-    }
-  );
   const [unitCostValues, setUnitCostValues] = useState<Record<string, string>>({});
   const [savingCosts, setSavingCosts] = useState(false);
-  const [shrinkageDialogOpen, setShrinkageDialogOpen] = useState(false);
-  const [shrinkageItems, setShrinkageItems] = useState<ShrinkageItem[]>([]);
   const [howItWorksOpen, setHowItWorksOpen] = useState(true);
-  const [sortKey, setSortKey] = useState<SortKey>('name');
-  const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [expiringSoon, setExpiringSoon] = useState<ApiExpiringIngredient[]>([]);
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const [lossIngredient, setLossIngredient] = useState<ApiIngredient | null>(null);
   const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
 
   // --- Edit ingredient (full catalog fields) ---
@@ -147,24 +84,15 @@ export function IngredientsPanel({ onViewStations, focusIngredientId, onFocusIng
   const [loadingUsage, setLoadingUsage] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
 
-  function handleSort(key: SortKey) {
-    if (key === sortKey) {
-      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-    } else {
-      setSortKey(key);
-      setSortDir('asc');
-    }
-  }
-
-  function SortIcon({ column }: { column: SortKey }) {
-    if (column !== sortKey) return <ChevronsUpDown className="w-3.5 h-3.5 text-muted-foreground/40" />;
-    return sortDir === 'asc' ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />;
-  }
-
   const loadInventory = useCallback(() => {
     setLoading(true);
-    fetchInventory()
-      .then((data) => setIngredients([...data].sort((a, b) => a.name.localeCompare(b.name))))
+    Promise.all([fetchInventory(), fetchIngredientCountEntries()])
+      .then(([ingredientsData, summaryData]) => {
+        setIngredients([...ingredientsData].sort((a, b) => a.name.localeCompare(b.name)));
+        const byId: Record<string, ApiIngredientDailySummary> = {};
+        for (const s of summaryData) byId[s.ingredient_id] = s;
+        setSummaries(byId);
+      })
       .catch(() => toast.error('Could not load inventory. Check your connection.'))
       .finally(() => setLoading(false));
     fetchExpiringSoon().then(setExpiringSoon).catch(() => {
@@ -175,10 +103,6 @@ export function IngredientsPanel({ onViewStations, focusIngredientId, onFocusIng
   useEffect(() => {
     loadInventory();
   }, [loadInventory]);
-
-  const updateCount = (id: string, value: string) => {
-    setCountedValues({ ...countedValues, [id]: value });
-  };
 
   const updateUnitCost = (id: string, value: string) => {
     setUnitCostValues({ ...unitCostValues, [id]: value });
@@ -231,7 +155,7 @@ export function IngredientsPanel({ onViewStations, focusIngredientId, onFocusIng
       .finally(() => setLoadingUsage(false));
   }
 
-  // Edit-link parity: Station Items' "Edit in Recipe Ingredients →" sets
+  // Edit-link parity: Station Items' "Edit in Ingredient Stock →" sets
   // focusIngredientId. Once that ingredient's row actually exists (list
   // loaded), scroll to it and flash-highlight it; an executive also gets
   // dropped straight into Edit, since that's the only role that can act
@@ -292,156 +216,15 @@ export function IngredientsPanel({ onViewStations, focusIngredientId, onFocusIng
     }
   }
 
-  const handleSubmit = async () => {
-    const entries = Object.entries(countedValues).filter(([, v]) => v !== '' && !isNaN(parseFloat(v)));
-    if (entries.length === 0) {
-      toast.error('Enter a counted value for at least one item first.');
-      return;
-    }
-    if (!user?.id) {
-      toast.error('No user account found');
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      const results = await Promise.all(
-        entries.map(([id, value]) =>
-          countStock(id, { employee_id: user.id, counted_stock: parseFloat(value) })
-        )
-      );
-      toast.success('Inventory count saved. Stock levels updated.');
-
-      const shortages = results
-        .filter((r) => r.variance < 0)
-        .map(
-          (r): ShrinkageItem => ({
-            ingredientId: r.ingredient.id,
-            ingredientName: r.ingredient.name,
-            unit: r.ingredient.base_unit,
-            quantity: Math.abs(r.variance),
-            logged: false,
-          })
-        );
-
-      setCountedValues({});
-      clearCountDraft();
-      loadInventory();
-
-      if (shortages.length > 0) {
-        setShrinkageItems(shortages);
-        setShrinkageDialogOpen(true);
-      }
-    } catch (error) {
-      toast.error('Could not save the count. Try again.');
-      console.error(error);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const markShrinkageLogged = (ingredientId: string) => {
-    setShrinkageItems((prev) =>
-      prev.map((i) => (i.ingredientId === ingredientId ? { ...i, logged: true } : i))
-    );
-  };
-
-  const getVarianceColor = (variancePercent: number | null) => {
-    if (variancePercent === null) return 'text-muted-foreground';
-    if (Math.abs(variancePercent) <= 5) return 'text-success';
-    return variancePercent > 0 ? 'text-warning' : 'text-destructive';
-  };
-
-  const rows = ingredients.map((ingredient) => {
-    const raw = countedValues[ingredient.id];
-    const counted = raw !== undefined && raw !== '' && !isNaN(parseFloat(raw)) ? parseFloat(raw) : null;
-    const variance = counted !== null ? counted - ingredient.current_stock : null;
-    const variancePercent =
-      counted !== null && ingredient.current_stock !== 0
-        ? (variance! / ingredient.current_stock) * 100
-        : counted !== null
-          ? 0
-          : null;
-    const status = computeStatus(ingredient.current_stock, counted);
-    return { ingredient, counted, variance, variancePercent, status };
-  });
-
-  const countedItems = rows.filter((r) => r.counted !== null).length;
-  const varianceItems = rows.filter((r) => r.status === 'overage' || r.status === 'shortage').length;
-
-  function compareRows(a: (typeof rows)[number], b: (typeof rows)[number]): number {
-    switch (sortKey) {
-      case 'name':
-        return sortDir === 'asc'
-          ? a.ingredient.name.localeCompare(b.ingredient.name)
-          : b.ingredient.name.localeCompare(a.ingredient.name);
-      case 'category': {
-        const ac = a.ingredient.category;
-        const bc = b.ingredient.category;
-        if (ac === null && bc === null) return 0;
-        if (ac === null) return 1; // uncategorized always sorts last
-        if (bc === null) return -1;
-        return sortDir === 'asc' ? ac.localeCompare(bc) : bc.localeCompare(ac);
-      }
-      case 'unit_cost': {
-        const ac = a.ingredient.unit_cost;
-        const bc = b.ingredient.unit_cost;
-        if (ac === null && bc === null) return 0;
-        if (ac === null) return 1; // uncosted always sorts last
-        if (bc === null) return -1;
-        return sortDir === 'asc' ? ac - bc : bc - ac;
-      }
-      case 'expected':
-        return sortDir === 'asc'
-          ? a.ingredient.current_stock - b.ingredient.current_stock
-          : b.ingredient.current_stock - a.ingredient.current_stock;
-      case 'variance': {
-        if (a.variance === null && b.variance === null) return 0;
-        if (a.variance === null) return 1; // not-yet-counted always sorts last
-        if (b.variance === null) return -1;
-        return sortDir === 'asc' ? a.variance - b.variance : b.variance - a.variance;
-      }
-      case 'status':
-        return sortDir === 'asc'
-          ? STATUS_RANK[a.status] - STATUS_RANK[b.status]
-          : STATUS_RANK[b.status] - STATUS_RANK[a.status];
-      default:
-        return 0;
-    }
+  function handleOverrideSaved(summary: ApiIngredientDailySummary) {
+    setSummaries((prev) => ({ ...prev, [summary.ingredient_id]: summary }));
   }
-
-  const sortedRows = [...rows].sort(compareRows);
 
   return (
     <>
       <div className="space-y-6">
-        {/* Progress Summary */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Card className="border-l-4 border-l-success">
-            <CardContent className="p-4">
-              <p className="text-sm text-muted-foreground mb-1">Items Counted</p>
-              <p className="text-3xl font-bold text-foreground">
-                {countedItems}/{ingredients.length}
-              </p>
-              <div className="w-full bg-secondary rounded-full h-2 mt-3">
-                <div
-                  className="bg-success h-2 rounded-full transition-all"
-                  style={{
-                    width: `${ingredients.length ? (countedItems / ingredients.length) * 100 : 0}%`,
-                  }}
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-l-4 border-l-warning">
-            <CardContent className="p-4">
-              <p className="text-sm text-muted-foreground mb-1">Variance Detected</p>
-              <p className="text-3xl font-bold text-warning">{varianceItems}</p>
-              <p className="text-xs text-muted-foreground mt-2">Items with &gt;5% difference</p>
-            </CardContent>
-          </Card>
-
+        {/* Expiring Soon */}
+        <div className="grid grid-cols-1 md:grid-cols-1 gap-4">
           <Card className="border-l-4 border-l-destructive">
             <CardContent className="p-4">
               <p className="text-sm text-muted-foreground mb-1">Expiring Soon</p>
@@ -497,7 +280,7 @@ export function IngredientsPanel({ onViewStations, focusIngredientId, onFocusIng
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 py-4">
                   <div className="flex items-center gap-2">
                     <HelpCircle className="w-4 h-4 text-muted-foreground" />
-                    <CardTitle className="text-base">How Stock Counting Works</CardTitle>
+                    <CardTitle className="text-base">How Ingredient Stock Works</CardTitle>
                   </div>
                   <ChevronDown
                     className={`w-4 h-4 text-muted-foreground transition-transform ${howItWorksOpen ? 'rotate-180' : ''}`}
@@ -506,75 +289,38 @@ export function IngredientsPanel({ onViewStations, focusIngredientId, onFocusIng
               </button>
             </CollapsibleTrigger>
             <CollapsibleContent>
-              <CardContent className="pt-0 space-y-4 text-sm">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="flex gap-2">
-                    <span className="font-semibold text-muted-foreground">1.</span>
-                    <p>
-                      <span className="font-semibold text-foreground">Expected</span> is what the system currently
-                      thinks you have on the shelf. <span className="font-semibold text-foreground">Counted</span>{' '}
-                      is what you physically count and type in.
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <span className="font-semibold text-muted-foreground">2.</span>
-                    <p>
-                      <span className="font-semibold text-foreground">Variance</span> = Counted - Expected. Within
-                      5% is treated as normal counting noise and shown in green -- nothing to worry about.
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <TrendingUp className="w-4 h-4 text-warning shrink-0 mt-0.5" />
-                    <p>
-                      <span className="font-semibold text-warning">Overage</span> -- you counted more than expected.
-                      Often a past miscount or an uncounted delivery; worth a second look, not urgent.
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <TrendingDown className="w-4 h-4 text-destructive shrink-0 mt-0.5" />
-                    <p>
-                      <span className="font-semibold text-destructive">Shortage</span> -- you counted less than
-                      expected. Could be real loss (spoilage, theft, an unlogged use) or a miscount.
-                    </p>
-                  </div>
-                </div>
-                <div className="pt-3 border-t border-border space-y-2">
-                  <p>
-                    <span className="font-semibold text-foreground">You don't have to count everything at once</span>{' '}
-                    -- Save works as soon as at least one item has a counted value; anything left blank is simply
-                    skipped and stays untouched.
-                  </p>
-                  <p>
-                    <span className="font-semibold text-foreground">When you save:</span> stock is set to exactly
-                    what you counted. Any item that came out different from expected -- overage or shortage -- is
-                    permanently logged as a stock count adjustment in{' '}
-                    <span className="font-semibold text-foreground">Inventory Movements</span>, showing the before
-                    and after value, who counted it, and when. An item that matched exactly logs nothing -- there's
-                    no discrepancy to record.
-                  </p>
-                  <p>
-                    <span className="font-semibold text-foreground">If anything comes up short,</span> you'll be
-                    asked afterward whether to log it as a loss under "Shrinkage" so the cost is tracked. This is
-                    always optional and never automatic -- a shortage might just be a miscount, so it's your call.
-                  </p>
-                </div>
+              <CardContent className="pt-0 space-y-2 text-sm">
+                <p>
+                  <span className="font-semibold text-foreground">New Stocks, Beginning, Usage and Ending are
+                  auto-filled</span> from real sales (every recipe-based deduction), deliveries and logged losses --
+                  the same automation Station Items uses. This is already a done list, not a form to fill in.
+                </p>
+                <p>
+                  <span className="font-semibold text-foreground">Only flag a field if it looks wrong.</span> Click
+                  the flag icon next to a number, enter what it should actually be and why -- that writes a real,
+                  audited correction (visible on Variance Log) instead of silently overwriting the computed value.
+                </p>
+                <p>
+                  <span className="font-semibold text-foreground">Found a real shortage during a physical check?</span>{' '}
+                  Use "Log Loss" on that row so the cost is tracked, same as before.
+                </p>
               </CardContent>
             </CollapsibleContent>
           </Card>
         </Collapsible>
 
-        {/* Inventory Table */}
+        {/* Ingredient Stock Table */}
         <Card className="border-l-4 border-l-primary">
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <div>
-              <CardTitle>Recipe Ingredients</CardTitle>
-              <button
-                type="button"
-                className="text-xs text-primary underline underline-offset-2 mt-0.5"
-                onClick={onViewStations}
-              >
-                View Station Items &rarr;
-              </button>
+              <CardTitle>Ingredient Stock -- today's count</CardTitle>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Auto-filled from sales, losses and deliveries. Already a done list -- flag a field only if it looks
+                wrong.{' '}
+                <button type="button" className="text-primary underline underline-offset-2" onClick={onViewStations}>
+                  View Station Items &rarr;
+                </button>
+              </p>
             </div>
             {user?.role === 'executive' && (
               <Button
@@ -600,214 +346,138 @@ export function IngredientsPanel({ onViewStations, focusIngredientId, onFocusIng
               <Table>
                 <TableHeader>
                   <TableRow className={STOCK_TABLE_ROW_CLASS}>
-                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} cursor-pointer select-none`} onClick={() => handleSort('name')}>
-                      <span className="inline-flex items-center gap-1">
-                        Item <SortIcon column="name" />
-                      </span>
-                    </TableHead>
-                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} cursor-pointer select-none`} onClick={() => handleSort('category')}>
-                      <span className="inline-flex items-center gap-1">
-                        Category <SortIcon column="category" />
-                      </span>
-                    </TableHead>
-                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right cursor-pointer select-none`} onClick={() => handleSort('unit_cost')}>
-                      <span className="inline-flex items-center gap-1 justify-end">
-                        Unit Cost <SortIcon column="unit_cost" />
-                      </span>
-                    </TableHead>
-                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right cursor-pointer select-none`} onClick={() => handleSort('expected')}>
-                      <span className="inline-flex items-center gap-1 justify-end">
-                        Expected <SortIcon column="expected" />
-                      </span>
-                    </TableHead>
-                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Counted</TableHead>
-                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right cursor-pointer select-none`} onClick={() => handleSort('variance')}>
-                      <span className="inline-flex items-center gap-1 justify-end">
-                        Variance <SortIcon column="variance" />
-                      </span>
-                    </TableHead>
-                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-center cursor-pointer select-none`} onClick={() => handleSort('status')}>
-                      <span className="inline-flex items-center gap-1 justify-center">
-                        Status <SortIcon column="status" />
-                      </span>
-                    </TableHead>
-                    {user?.role === 'executive' && <TableHead className={STOCK_TABLE_HEAD_CLASS} />}
+                    <TableHead className={STOCK_TABLE_HEAD_CLASS}>Item</TableHead>
+                    <TableHead className={STOCK_TABLE_HEAD_CLASS}>Category</TableHead>
+                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Unit Cost</TableHead>
+                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>New Stocks</TableHead>
+                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Beginning</TableHead>
+                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Usage</TableHead>
+                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Ending</TableHead>
+                    <TableHead className={STOCK_TABLE_HEAD_CLASS} />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {sortedRows.map(({ ingredient, counted, variance, variancePercent, status }) => (
-                    <TableRow
-                      key={ingredient.id}
-                      ref={(el) => {
-                        rowRefs.current[ingredient.id] = el;
-                      }}
-                      className={`${STOCK_TABLE_ROW_CLASS} ${
-                        highlightedId === ingredient.id ? 'bg-accent-soft/60 transition-colors duration-1000' : ''
-                      }`}
-                    >
-                      <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-medium`}>{ingredient.name}</TableCell>
-                      <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-muted-foreground`}>{ingredient.category || '--'}</TableCell>
-                      <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>
-                        {user?.role === 'executive' ? (
-                          <Input
-                            type="number"
-                            placeholder="--"
-                            value={unitCostValues[ingredient.id] ?? (ingredient.unit_cost != null ? String(ingredient.unit_cost) : '')}
-                            onChange={(e) => updateUnitCost(ingredient.id, e.target.value)}
-                            className="w-24 text-right text-sm ml-auto"
-                          />
-                        ) : ingredient.unit_cost != null ? (
-                          formatCurrency(ingredient.unit_cost)
-                        ) : (
-                          <span className="text-muted-foreground">--</span>
-                        )}
-                      </TableCell>
-                      <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>
-                        {ingredient.current_stock} {ingredient.base_unit}
-                      </TableCell>
-                      <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>
-                        <Input
-                          type="number"
-                          placeholder="0"
-                          value={countedValues[ingredient.id] ?? ''}
-                          onChange={(e) => updateCount(ingredient.id, e.target.value)}
-                          className="w-24 text-right text-sm ml-auto"
-                        />
-                      </TableCell>
-                      <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>
-                        {variance !== null ? (
-                          <span className={`font-semibold ${getVarianceColor(variancePercent)}`}>
-                            {variance > 0 ? '+' : ''}
-                            {variance.toFixed(1)} ({variancePercent?.toFixed(1)}%)
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground">--</span>
-                        )}
-                      </TableCell>
-                      <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-center`}>
-                        <div className="flex items-center justify-center">
-                          <StockStatusBadge variant={STATUS_BADGE[status].variant}>
-                            {STATUS_BADGE[status].label}
-                          </StockStatusBadge>
-                        </div>
-                      </TableCell>
-                      {user?.role === 'executive' && (
-                        <TableCell className={STOCK_TABLE_CELL_CLASS}>
-                          <Button size="sm" variant="outline" onClick={() => openEdit(ingredient)}>
-                            Edit
-                          </Button>
+                  {ingredients.map((ingredient) => {
+                    const summary = summaries[ingredient.id];
+                    return (
+                      <TableRow
+                        key={ingredient.id}
+                        ref={(el) => {
+                          rowRefs.current[ingredient.id] = el;
+                        }}
+                        className={`${STOCK_TABLE_ROW_CLASS} ${
+                          highlightedId === ingredient.id ? 'bg-accent-soft/60 transition-colors duration-1000' : ''
+                        }`}
+                      >
+                        <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-medium`}>
+                          {ingredient.name}
+                          <p className="text-xs text-muted-foreground">{ingredient.base_unit}</p>
                         </TableCell>
-                      )}
-                    </TableRow>
-                  ))}
+                        <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-muted-foreground`}>{ingredient.category || '--'}</TableCell>
+                        <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>
+                          {user?.role === 'executive' ? (
+                            <Input
+                              type="number"
+                              placeholder="--"
+                              value={unitCostValues[ingredient.id] ?? (ingredient.unit_cost != null ? String(ingredient.unit_cost) : '')}
+                              onChange={(e) => updateUnitCost(ingredient.id, e.target.value)}
+                              className="w-24 text-right text-sm ml-auto"
+                            />
+                          ) : ingredient.unit_cost != null ? (
+                            formatCurrency(ingredient.unit_cost)
+                          ) : (
+                            <span className="text-muted-foreground">--</span>
+                          )}
+                        </TableCell>
+                        <SummaryFieldCell
+                          field="new_stocks"
+                          itemName={ingredient.name}
+                          summary={summary}
+                          employeeId={user?.id}
+                          onOverride={(field, correctedValue, reason, employeeId) =>
+                            overrideIngredientField(ingredient.id, { field, corrected_value: correctedValue, reason, employee_id: employeeId })
+                          }
+                          onSaved={handleOverrideSaved}
+                        />
+                        <SummaryFieldCell
+                          field="beginning"
+                          itemName={ingredient.name}
+                          summary={summary}
+                          employeeId={user?.id}
+                          onOverride={(field, correctedValue, reason, employeeId) =>
+                            overrideIngredientField(ingredient.id, { field, corrected_value: correctedValue, reason, employee_id: employeeId })
+                          }
+                          onSaved={handleOverrideSaved}
+                          extra={
+                            summary && !summary.overrides.beginning ? (
+                              <p className="text-[10px] text-muted-foreground">
+                                {summary.beginning_source === 'carry_forward' ? "from yesterday's ending" : 'no prior count'}
+                              </p>
+                            ) : null
+                          }
+                        />
+                        <SummaryFieldCell
+                          field="usage"
+                          itemName={ingredient.name}
+                          summary={summary}
+                          employeeId={user?.id}
+                          onOverride={(field, correctedValue, reason, employeeId) =>
+                            overrideIngredientField(ingredient.id, { field, corrected_value: correctedValue, reason, employee_id: employeeId })
+                          }
+                          onSaved={handleOverrideSaved}
+                        />
+                        <SummaryFieldCell
+                          field="ending"
+                          itemName={ingredient.name}
+                          summary={summary}
+                          employeeId={user?.id}
+                          onOverride={(field, correctedValue, reason, employeeId) =>
+                            overrideIngredientField(ingredient.id, { field, corrected_value: correctedValue, reason, employee_id: employeeId })
+                          }
+                          onSaved={handleOverrideSaved}
+                        />
+                        <TableCell className={`${STOCK_TABLE_CELL_CLASS} space-x-2 whitespace-nowrap`}>
+                          <Button size="sm" variant="ghost" onClick={() => setLossIngredient(ingredient)}>
+                            Log Loss
+                          </Button>
+                          {user?.role === 'executive' && (
+                            <Button size="sm" variant="outline" onClick={() => openEdit(ingredient)}>
+                              Edit
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             )}
           </CardContent>
         </Card>
-
-        {/* Variance Items */}
-        {varianceItems > 0 && (
-          <Card className="border-l-4 border-l-destructive bg-error-bg">
-            <CardHeader>
-              <CardTitle className="text-destructive">Items with Variance</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                {sortedRows
-                  .filter((r) => r.status === 'overage' || r.status === 'shortage')
-                  .map(({ ingredient, counted, variancePercent, status }) => (
-                    <div
-                      key={ingredient.id}
-                      className="flex justify-between items-center p-3 bg-card rounded-md border border-border"
-                    >
-                      <div>
-                        <p className="font-semibold text-foreground">{ingredient.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          Expected: {ingredient.current_stock} {ingredient.base_unit} - Counted: {counted}{' '}
-                          {ingredient.base_unit}
-                        </p>
-                      </div>
-                      <StockStatusBadge variant={status === 'overage' ? 'warning' : 'critical'}>
-                        {STATUS_BADGE[status].label} - {variancePercent?.toFixed(1)}%
-                      </StockStatusBadge>
-                    </div>
-                  ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Submit Button */}
-        <div className="space-y-1.5">
-          <Button
-            onClick={handleSubmit}
-            disabled={submitting || ingredients.length === 0 || countedItems === 0}
-            className="w-full py-6"
-          >
-            {submitting ? <Loader2 className="w-5 h-5 mr-2 animate-spin" /> : null}
-            Save Inventory Count
-          </Button>
-          {countedItems > 0 && countedItems < ingredients.length && (
-            <p className="text-xs text-muted-foreground text-center">
-              Only the {countedItems} item{countedItems === 1 ? '' : 's'} you've entered will be saved -- the rest
-              are left as-is, you don't need to count everything at once.
-            </p>
-          )}
-        </div>
       </div>
 
-      {/* Shrinkage follow-up prompt */}
-      <Dialog open={shrinkageDialogOpen} onOpenChange={setShrinkageDialogOpen}>
-        <DialogContent className="max-w-lg">
+      {/* Log Loss */}
+      <Dialog open={!!lossIngredient} onOpenChange={(open) => !open && setLossIngredient(null)}>
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle>Log Shortages as a Loss?</DialogTitle>
-            <DialogDescription>
-              This count came up short on {shrinkageItems.length} item{shrinkageItems.length === 1 ? '' : 's'}.
-              Optionally log each as a loss so the cost is tracked -- this is never automatic, and skipping is fine.
-            </DialogDescription>
+            <DialogTitle>Log Loss -- {lossIngredient?.name}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3 max-h-96 overflow-y-auto">
-            {shrinkageItems.map((item) => (
-              <div
-                key={item.ingredientId}
-                className="flex items-center justify-between gap-3 p-3 bg-card rounded-md border border-border"
-              >
-                <div className="min-w-0">
-                  <p className="font-semibold text-foreground">{item.ingredientName}</p>
-                  <p className="text-xs text-muted-foreground">
-                    Short by {item.quantity} {item.unit}
-                  </p>
-                </div>
-                {item.logged ? (
-                  <Badge variant="secondary" className="text-xs shrink-0">
-                    Logged
-                  </Badge>
-                ) : (
-                  user?.id && (
-                    <LossRecordForm
-                      layout="compact"
-                      employeeId={user.id}
-                      fixedIngredientId={item.ingredientId}
-                      fixedIngredientLabel={item.ingredientName}
-                      quantityEditable={false}
-                      fixedQuantity={item.quantity}
-                      quantityUnit={item.unit}
-                      reasonOptions={SHRINKAGE_REASONS}
-                      defaultReason="shrinkage"
-                      skipStockDeduction
-                      submitLabel="Log Loss"
-                      successToast={() => `${item.ingredientName} logged as a loss`}
-                      onSuccess={() => markShrinkageLogged(item.ingredientId)}
-                    />
-                  )
-                )}
-              </div>
-            ))}
-          </div>
-          <Button variant="ghost" onClick={() => setShrinkageDialogOpen(false)} className="w-full">
-            Done
-          </Button>
+          {lossIngredient && user?.id && (
+            <LossRecordForm
+              employeeId={user.id}
+              fixedIngredientId={lossIngredient.id}
+              fixedIngredientLabel={lossIngredient.name}
+              reasonOptions={LOSS_REASONS}
+              defaultReason="spoilage"
+              skipStockDeduction={false}
+              submitLabel="Log Loss"
+              successToast={() => `Loss logged for ${lossIngredient.name}`}
+              onSuccess={() => {
+                setLossIngredient(null);
+                loadInventory();
+              }}
+            />
+          )}
         </DialogContent>
       </Dialog>
 
