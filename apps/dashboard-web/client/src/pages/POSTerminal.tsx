@@ -18,13 +18,25 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Star } from 'lucide-react';
+import {
+  Star,
+  Search,
+  Users,
+  ShoppingBag,
+  Percent,
+  PauseCircle,
+  X,
+  Grid2x2,
+  List as ListIcon,
+} from 'lucide-react';
 import {
   ApiDiscountType,
   ApiMenuAddon,
   ApiProduct,
   ApiProductSize,
   ApiRecipeItem,
+  OrderType,
+  TransactionPaymentMethod,
   createTransaction,
   QueuedOfflineError,
   fetchAddons,
@@ -99,6 +111,17 @@ function generateId(): string {
 // catalog's category strings aren't enumerable from static code).
 const UPSELL_CATEGORIES = ['Cafe (16oz Iced)', 'Oishii Salad'];
 
+// Availability lives per-size, not per-product -- a product counts as
+// available if any size is buyable right now, else low_stock if any size
+// is flagged low, else unavailable. Priority order (available beats
+// low_stock beats unavailable) since a cashier can still sell it in some
+// size whenever any size is buyable.
+function productAvailability(product: ApiProduct): 'available' | 'low_stock' | 'unavailable' {
+  if (product.sizes.some((s) => s.availability === 'available')) return 'available';
+  if (product.sizes.some((s) => s.availability === 'low_stock')) return 'low_stock';
+  return 'unavailable';
+}
+
 export default function POSTerminal() {
   const { user } = useAuth();
   const [products, setProducts] = useState<ApiProduct[]>([]);
@@ -128,6 +151,26 @@ export default function POSTerminal() {
   const [favorites, setFavorites] = useState<Set<string>>(() => loadFavorites());
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
 
+  // Order context (table/guests/order type/payment method) -- persisted for
+  // real on the transaction, see migration 0027. orderType/guestCount are
+  // sticky across a charge (same posture as selectedCategory); tableNumber/
+  // paymentMethod reset after a successful charge since they're a per-sale
+  // fact, not a terminal-wide setting.
+  const [orderType, setOrderType] = useState<OrderType>('dine_in');
+  const [tableNumber, setTableNumber] = useState('');
+  const [guestCount, setGuestCount] = useState(2);
+  const [paymentMethod, setPaymentMethod] = useState<TransactionPaymentMethod | null>(null);
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [availabilityFilter, setAvailabilityFilter] = useState<
+    'all' | 'available' | 'low_stock' | 'unavailable'
+  >('all');
+  // No Popularity/Stock sort options -- this catalog has no ranking data,
+  // and a labeled sort that silently does nothing would be dead UI, the
+  // same thing the "persist payment method for real" decision avoided.
+  const [sortBy, setSortBy] = useState<'default' | 'price' | 'name'>('default');
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+
   useEffect(() => {
     try {
       sessionStorage.setItem(HELD_CARTS_STORAGE_KEY, JSON.stringify(heldCarts));
@@ -149,12 +192,17 @@ export default function POSTerminal() {
       .finally(() => setLoading(false));
   }, []);
 
-  // F4 hold order, Esc clear order -- matches the SMFC reference's
-  // shortcuts for these two actions (its F3/F5 don't port: no discount
-  // chip row to scroll to, no per-item note field here).
+  // F3 scroll-to-discounts, F4 hold order, Esc clear order -- matches the
+  // SMFC reference's shortcuts for these actions. F5 (free-text per-item
+  // notes) deliberately doesn't port -- not requested, and would need its
+  // own new transaction_items column; the existing held-ingredients Edit
+  // Order dialog covers item customization instead.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === 'F4') {
+      if (e.key === 'F3') {
+        e.preventDefault();
+        document.getElementById('discount-chip-row')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      } else if (e.key === 'F4') {
         e.preventDefault();
         handleHoldOrder();
       } else if (e.key === 'Escape') {
@@ -197,6 +245,36 @@ export default function POSTerminal() {
     [products]
   );
   const pillCategories = useMemo(() => ['Favorites', ...categories, 'All'], [categories]);
+
+  const availabilityCounts = useMemo(() => {
+    const counts = { all: products.length, available: 0, low_stock: 0, unavailable: 0 };
+    products.forEach((p) => {
+      counts[productAvailability(p)]++;
+    });
+    return counts;
+  }, [products]);
+
+  const visibleProducts = useMemo(() => {
+    let list = products.filter((product) => {
+      if (selectedCategory === 'Favorites') {
+        if (!favorites.has(product.id)) return false;
+      } else if (selectedCategory !== 'All' && product.category !== selectedCategory) {
+        return false;
+      }
+      if (availabilityFilter !== 'all' && productAvailability(product) !== availabilityFilter) return false;
+      if (searchQuery.trim() && !product.name.toLowerCase().includes(searchQuery.trim().toLowerCase())) {
+        return false;
+      }
+      return true;
+    });
+    if (sortBy === 'name') {
+      list = [...list].sort((a, b) => a.name.localeCompare(b.name));
+    } else if (sortBy === 'price') {
+      const cheapest = (p: ApiProduct) => Math.min(...p.sizes.map((s) => s.price));
+      list = [...list].sort((a, b) => cheapest(a) - cheapest(b));
+    }
+    return list;
+  }, [products, selectedCategory, favorites, availabilityFilter, searchQuery, sortBy]);
 
   const upsellItems = useMemo(() => {
     const cartProductIds = new Set(cart.map((l) => l.product.id));
@@ -377,6 +455,10 @@ export default function POSTerminal() {
       toast.error('Cart is empty');
       return;
     }
+    if (orderType === 'dine_in' && !tableNumber.trim()) {
+      toast.error('Table number is required for dine-in orders');
+      return;
+    }
     setSubmitting(true);
     try {
       const transaction = await createTransaction({
@@ -392,6 +474,10 @@ export default function POSTerminal() {
         owner_request_employee_number: ownerRequestConfirmed?.employeeNumber,
         owner_request_pin: ownerRequestConfirmed?.pin,
         owner_request_note: ownerRequestConfirmed?.note || undefined,
+        order_type: orderType,
+        table_number: orderType === 'dine_in' ? Number(tableNumber) : null,
+        guest_count: orderType === 'dine_in' ? guestCount : null,
+        payment_method: paymentMethod ?? undefined,
       });
       toast.success(
         `Sale complete -- total ${formatCurrency(transaction.total_amount)} (discount ${formatCurrency(
@@ -399,6 +485,8 @@ export default function POSTerminal() {
         )}, tax ${formatCurrency(transaction.tax_amount)})`
       );
       clearOrder();
+      setTableNumber('');
+      setPaymentMethod(null);
     } catch (e) {
       if (e instanceof QueuedOfflineError) {
         // A real network failure, not a rejection -- the sale is safely
@@ -410,6 +498,8 @@ export default function POSTerminal() {
         toast.warning(e.message);
         setCart([]);
         setDiscountTypeId('none');
+        setTableNumber('');
+        setPaymentMethod(null);
       } else {
         toast.error(e instanceof Error ? e.message : 'Failed to create transaction');
         // A failed charge invalidates whatever was staged for Owner's Request --
@@ -426,6 +516,37 @@ export default function POSTerminal() {
     <DashboardLayout title="POS Terminal">
       <div className="flex h-full overflow-hidden">
         <div className="flex-1 overflow-auto p-6">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                className="pl-8"
+                placeholder="Search menu item..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+            <div className="flex rounded-md overflow-hidden border shrink-0">
+              <button
+                type="button"
+                onClick={() => setOrderType('dine_in')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm ${
+                  orderType === 'dine_in' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground'
+                }`}
+              >
+                <Users className="w-4 h-4" /> Dine In
+              </button>
+              <button
+                type="button"
+                onClick={() => setOrderType('takeout')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm ${
+                  orderType === 'takeout' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground'
+                }`}
+              >
+                <ShoppingBag className="w-4 h-4" /> Takeout
+              </button>
+            </div>
+          </div>
           <div className="flex gap-2 overflow-x-auto pb-1 mb-3">
             {pillCategories.map((cat) => (
               <button
@@ -448,19 +569,124 @@ export default function POSTerminal() {
               </button>
             ))}
           </div>
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div className="flex flex-wrap gap-2">
+              {(['all', 'available', 'low_stock', 'unavailable'] as const).map((key) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setAvailabilityFilter(key)}
+                  className={`px-3 py-1 rounded-full text-xs border transition-colors ${
+                    availabilityFilter === key
+                      ? 'bg-primary text-primary-foreground border-transparent'
+                      : 'bg-card text-muted-foreground border-border'
+                  }`}
+                >
+                  {key === 'all' ? 'All' : key === 'available' ? 'Available' : key === 'low_stock' ? 'Low Stock' : 'Unavailable'}{' '}
+                  ({availabilityCounts[key]})
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <Select value={sortBy} onValueChange={(v) => setSortBy(v as typeof sortBy)}>
+                <SelectTrigger className="w-28 h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">Sort</SelectItem>
+                  <SelectItem value="price">Price</SelectItem>
+                  <SelectItem value="name">Name</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button size="icon-sm" variant={viewMode === 'grid' ? 'default' : 'outline'} onClick={() => setViewMode('grid')}>
+                <Grid2x2 className="w-4 h-4" />
+              </Button>
+              <Button size="icon-sm" variant={viewMode === 'list' ? 'default' : 'outline'} onClick={() => setViewMode('list')}>
+                <ListIcon className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading menu...</p>
           ) : (
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-              {products
-                .filter((product) => {
-                  if (selectedCategory === 'Favorites') return favorites.has(product.id);
-                  if (selectedCategory === 'All') return true;
-                  return product.category === selectedCategory;
-                })
-                .map((product) => {
+            <div
+              className={
+                viewMode === 'grid'
+                  ? 'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3'
+                  : 'flex flex-col gap-2'
+              }
+            >
+              {visibleProducts.map((product) => {
                 const cheapest = [...product.sizes].sort((a, b) => a.price - b.price)[0];
                 const allUnavailable = product.sizes.every((s) => s.availability === 'unavailable');
+                const priceLabel =
+                  product.sizes.length > 1 && cheapest
+                    ? `from ${formatCurrency(cheapest.price)}`
+                    : cheapest
+                      ? formatCurrency(cheapest.price)
+                      : '';
+                const favoriteButton = (
+                  <button
+                    type="button"
+                    className={
+                      viewMode === 'grid'
+                        ? 'absolute top-1 right-1 z-10 p-1 rounded-full bg-background/80'
+                        : 'shrink-0 p-1 rounded-full hover:bg-accent'
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleFavorite(product.id);
+                    }}
+                    aria-label={favorites.has(product.id) ? 'Remove favorite' : 'Add favorite'}
+                  >
+                    <Star
+                      className="w-4 h-4"
+                      fill={favorites.has(product.id) ? 'currentColor' : 'none'}
+                      color={favorites.has(product.id) ? '#FFBF47' : 'currentColor'}
+                    />
+                  </button>
+                );
+                const image = (
+                  <div className={viewMode === 'grid' ? 'aspect-square w-full bg-muted' : 'w-14 h-14 shrink-0 bg-muted rounded-md overflow-hidden'}>
+                    {product.image_path ? (
+                      <img
+                        src={product.image_path}
+                        alt={product.name}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-muted-foreground text-xs">
+                        {viewMode === 'grid' ? 'No photo' : ''}
+                      </div>
+                    )}
+                  </div>
+                );
+
+                if (viewMode === 'list') {
+                  return (
+                    <Card
+                      key={product.id}
+                      className={`cursor-pointer transition hover:border-primary ${allUnavailable ? 'opacity-50' : ''}`}
+                      onClick={() => !allUnavailable && handleProductClick(product)}
+                    >
+                      <CardContent className="py-3 flex items-center gap-3">
+                        {image}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-corp-display font-medium truncate">{product.name}</p>
+                          <p className="text-xs text-muted-foreground">{product.category}</p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className="text-sm font-semibold">{priceLabel}</span>
+                            {product.is_bundle && <Badge variant="gold">Bundle</Badge>}
+                            {allUnavailable && <Badge variant="destructive">Unavailable</Badge>}
+                          </div>
+                        </div>
+                        {favoriteButton}
+                      </CardContent>
+                    </Card>
+                  );
+                }
+
                 return (
                   <Card
                     key={product.id}
@@ -469,43 +695,14 @@ export default function POSTerminal() {
                     }`}
                     onClick={() => !allUnavailable && handleProductClick(product)}
                   >
-                    <button
-                      type="button"
-                      className="absolute top-1 right-1 z-10 p-1 rounded-full bg-background/80"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleFavorite(product.id);
-                      }}
-                      aria-label={favorites.has(product.id) ? 'Remove favorite' : 'Add favorite'}
-                    >
-                      <Star
-                        className="w-4 h-4"
-                        fill={favorites.has(product.id) ? 'currentColor' : 'none'}
-                        color={favorites.has(product.id) ? '#FFBF47' : 'currentColor'}
-                      />
-                    </button>
-                    <div className="aspect-square w-full bg-muted">
-                      {product.image_path ? (
-                        <img
-                          src={product.image_path}
-                          alt={product.name}
-                          className="w-full h-full object-cover"
-                          loading="lazy"
-                        />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-muted-foreground text-xs">
-                          No photo
-                        </div>
-                      )}
-                    </div>
+                    {favoriteButton}
+                    {image}
                     <CardHeader className="pb-2">
                       <CardTitle className="text-sm font-corp-display">{product.name}</CardTitle>
                     </CardHeader>
                     <CardContent className="pb-3 space-y-1">
                       <p className="text-xs text-muted-foreground">{product.category}</p>
-                      <p className="text-sm font-semibold">
-                        {product.sizes.length > 1 && cheapest ? `from ${formatCurrency(cheapest.price)}` : cheapest ? formatCurrency(cheapest.price) : ''}
-                      </p>
+                      <p className="text-sm font-semibold">{priceLabel}</p>
                       {product.is_bundle && (
                         <Badge
                           variant="gold"
@@ -545,9 +742,18 @@ export default function POSTerminal() {
         </div>
 
         <div className="w-96 border-l flex flex-col overflow-hidden">
-          <div className="p-4 border-b flex items-center justify-between gap-2">
+          <div className="p-4 border-b space-y-2">
+          <div className="flex items-center justify-between gap-2">
             <h3 className="font-corp-display font-semibold">Current Order</h3>
             <div className="flex items-center gap-2">
+              {orderType === 'dine_in' && (
+                <Input
+                  className="w-24 h-8 text-sm text-right"
+                  placeholder="Table #"
+                  value={tableNumber}
+                  onChange={(e) => setTableNumber(e.target.value)}
+                />
+              )}
               <Popover>
                 <PopoverTrigger asChild>
                   <Button size="sm" variant="outline">
@@ -586,6 +792,35 @@ export default function POSTerminal() {
                 Edit Order
               </Button>
             </div>
+          </div>
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            {orderType === 'dine_in' ? (
+              <>
+                <Users className="w-4 h-4" />
+                <span>Dine In</span>
+                <div className="ml-auto flex items-center gap-2">
+                  <Button
+                    size="icon"
+                    variant="outline"
+                    className="h-6 w-6"
+                    onClick={() => setGuestCount((g) => Math.max(1, g - 1))}
+                  >
+                    -
+                  </Button>
+                  <span className="w-4 text-center">{guestCount}</span>
+                  <Button size="icon" variant="outline" className="h-6 w-6" onClick={() => setGuestCount((g) => g + 1)}>
+                    +
+                  </Button>
+                  <span>Guests</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <ShoppingBag className="w-4 h-4" />
+                <span>Takeout</span>
+              </>
+            )}
+          </div>
           </div>
           <div className="flex-1 overflow-auto p-4 space-y-2">
             {cart.length === 0 && <p className="text-sm text-muted-foreground">No items yet.</p>}
@@ -674,19 +909,45 @@ export default function POSTerminal() {
           <div className="p-4 border-t space-y-3">
             <div>
               <Label className="text-xs">Discount</Label>
-              <Select value={discountTypeId} onValueChange={setDiscountTypeId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="No discount" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">No discount</SelectItem>
-                  {discountTypes.map((d) => (
-                    <SelectItem key={d.id} value={d.id}>
-                      {d.name} ({d.percentage}%)
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div id="discount-chip-row" className="flex flex-wrap gap-2 mt-1">
+                {discountTypes.map((d) => (
+                  <button
+                    key={d.id}
+                    type="button"
+                    onClick={() => setDiscountTypeId((prev) => (prev === d.id ? 'none' : d.id))}
+                    className={`px-3 py-1 rounded-full text-xs border transition-colors ${
+                      discountTypeId === d.id
+                        ? 'bg-primary text-primary-foreground border-transparent'
+                        : 'bg-card text-muted-foreground border-border'
+                    }`}
+                  >
+                    {d.name} ({d.percentage}%)
+                  </button>
+                ))}
+                {discountTypes.length === 0 && (
+                  <p className="text-xs text-muted-foreground">No discount types configured.</p>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <Label className="text-xs">Payment Method</Label>
+              <div className="grid grid-cols-4 gap-1.5 mt-1">
+                {(['cash', 'gcash', 'card', 'split'] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setPaymentMethod((prev) => (prev === m ? null : m))}
+                    className={`text-xs py-1.5 rounded border capitalize ${
+                      paymentMethod === m
+                        ? 'bg-primary text-primary-foreground border-transparent'
+                        : 'bg-card text-muted-foreground border-border'
+                    }`}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <Button
@@ -696,6 +957,25 @@ export default function POSTerminal() {
             >
               {ownerRequestConfirmed ? "Owner's Request -- confirmed" : "Owner's Request"}
             </Button>
+
+            <div className="grid grid-cols-3 gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1"
+                onClick={() =>
+                  document.getElementById('discount-chip-row')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+                }
+              >
+                <Percent className="w-3.5 h-3.5" /> Discount <kbd className="ml-auto text-[10px] opacity-60">F3</kbd>
+              </Button>
+              <Button variant="outline" size="sm" className="gap-1" onClick={handleHoldOrder}>
+                <PauseCircle className="w-3.5 h-3.5" /> Hold <kbd className="ml-auto text-[10px] opacity-60">F4</kbd>
+              </Button>
+              <Button variant="destructive" size="sm" className="gap-1" onClick={clearOrder}>
+                <X className="w-3.5 h-3.5" /> Clear <kbd className="ml-auto text-[10px] opacity-60">Esc</kbd>
+              </Button>
+            </div>
 
             <div className="text-sm space-y-1">
               <div className="flex justify-between">

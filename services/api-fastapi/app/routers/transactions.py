@@ -48,6 +48,7 @@ _kitchen_status_supported: bool | None = None
 _bundle_fulfillments_supported: bool | None = None
 _held_ingredients_supported: bool | None = None
 _transaction_item_addons_supported: bool | None = None
+_transaction_order_context_supported: bool | None = None
 
 
 def _kitchen_status_supported_check(supabase) -> bool:
@@ -97,6 +98,20 @@ def _transaction_item_addons_supported_check(supabase) -> bool:
         except APIError:
             _transaction_item_addons_supported = False
     return _transaction_item_addons_supported
+
+
+def _transaction_order_context_supported_check(supabase) -> bool:
+    """Migration 0027 feature-detection, same pattern as the checks above."""
+    global _transaction_order_context_supported
+    if _transaction_order_context_supported is None:
+        try:
+            supabase.table("transactions").select(
+                "order_type, table_number, guest_count, payment_method"
+            ).limit(1).execute()
+            _transaction_order_context_supported = True
+        except APIError:
+            _transaction_order_context_supported = False
+    return _transaction_order_context_supported
 
 
 def _attach_item_addons(supabase, items: list[dict]) -> None:
@@ -238,6 +253,10 @@ def _fetch_transaction_with_items(supabase, transaction_id: str) -> dict | None:
     _attach_item_addons(supabase, items)
     transaction["items"] = items
     transaction.setdefault("kitchen_status", "queued")
+    transaction.setdefault("order_type", None)
+    transaction.setdefault("table_number", None)
+    transaction.setdefault("guest_count", None)
+    transaction.setdefault("payment_method", None)
     return transaction
 
 
@@ -249,6 +268,10 @@ def _create_transaction_row(
     is_owner_request: bool = False,
     owner_request_by: str | None = None,
     owner_request_note: str | None = None,
+    order_type: str | None = None,
+    table_number: int | None = None,
+    guest_count: int | None = None,
+    payment_method: str | None = None,
 ) -> TransactionResponse:
     """Insert a transaction + items, deduct non-bundle recipe ingredients,
     and compute discount/tax. Shared by POS sale creation (create_transaction
@@ -331,6 +354,11 @@ def _create_transaction_row(
     if _kitchen_status_supported_check(supabase):
         insert_payload["kitchen_status"] = "queued"
         insert_payload["kitchen_status_updated_at"] = now_iso
+    if _transaction_order_context_supported_check(supabase):
+        insert_payload["order_type"] = order_type
+        insert_payload["table_number"] = table_number
+        insert_payload["guest_count"] = guest_count
+        insert_payload["payment_method"] = payment_method
 
     transaction_insert = supabase.table("transactions").insert(insert_payload).execute()
     transaction = transaction_insert.data[0]
@@ -416,6 +444,10 @@ def _create_transaction_row(
     )
     transaction = updated.data[0]
     transaction.setdefault("kitchen_status", "queued")
+    transaction.setdefault("order_type", None)
+    transaction.setdefault("table_number", None)
+    transaction.setdefault("guest_count", None)
+    transaction.setdefault("payment_method", None)
     return TransactionResponse(**transaction, items=inserted_items)
 
 
@@ -427,6 +459,8 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
     approval."""
     if body.employee_id != user.id:
         raise HTTPException(status_code=403, detail="Cannot record a sale under another employee's id")
+    if body.order_type == "dine_in" and not body.table_number:
+        raise HTTPException(status_code=400, detail="Table number is required for dine-in orders")
 
     supabase = get_supabase()
 
@@ -449,6 +483,10 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
         is_owner_request=body.is_owner_request,
         owner_request_by=owner_request_by,
         owner_request_note=body.owner_request_note,
+        order_type=body.order_type,
+        table_number=body.table_number,
+        guest_count=body.guest_count,
+        payment_method=body.payment_method,
     )
 
 
@@ -462,7 +500,8 @@ def list_transactions(
     query = supabase.table("transactions").select(
         "id, employee_id, status, opened_at, closed_at, total_amount, discount_type_id, "
         "discount_amount, tax_amount, is_owner_request, owner_request_by, owner_request_note, "
-        "voided_by, voided_at, void_reason, kitchen_status, kitchen_status_updated_at"
+        "voided_by, voided_at, void_reason, kitchen_status, kitchen_status_updated_at, "
+        "order_type, table_number, guest_count, payment_method"
     )
     if on_date:
         start, end = ph_day_bounds_utc(on_date)
@@ -492,6 +531,10 @@ def list_transactions(
     out = []
     for t in transactions:
         t.setdefault("kitchen_status", "queued")
+        t.setdefault("order_type", None)
+        t.setdefault("table_number", None)
+        t.setdefault("guest_count", None)
+        t.setdefault("payment_method", None)
         out.append(TransactionResponse(**t, items=items_by_transaction.get(t["id"], [])))
     return out
 
@@ -521,6 +564,10 @@ def close_transaction(transaction_id: str, user: CurrentUser = Depends(get_curre
     )
     updated_row = updated.data[0]
     updated_row.setdefault("kitchen_status", "queued")
+    updated_row.setdefault("order_type", None)
+    updated_row.setdefault("table_number", None)
+    updated_row.setdefault("guest_count", None)
+    updated_row.setdefault("payment_method", None)
     return TransactionResponse(**updated_row, items=transaction["items"])
 
 
@@ -609,6 +656,10 @@ def void_transaction(
     )
     updated_row = updated.data[0]
     updated_row.setdefault("kitchen_status", "queued")
+    updated_row.setdefault("order_type", None)
+    updated_row.setdefault("table_number", None)
+    updated_row.setdefault("guest_count", None)
+    updated_row.setdefault("payment_method", None)
 
     # transaction["items"] was fetched (with its bundle_fulfilled flags)
     # before the restore loop above deleted this transaction's
@@ -666,6 +717,10 @@ def update_kitchen_status(
 
     updated = _set_kitchen_status(supabase, transaction, body.kitchen_status, user, allow_skip=False)
     updated.setdefault("kitchen_status", "queued")
+    updated.setdefault("order_type", None)
+    updated.setdefault("table_number", None)
+    updated.setdefault("guest_count", None)
+    updated.setdefault("payment_method", None)
     return TransactionResponse(**updated, items=transaction["items"])
 
 
@@ -684,6 +739,10 @@ def fulfill_transaction(transaction_id: str, user: CurrentUser = Depends(get_cur
 
     updated = _set_kitchen_status(supabase, transaction, "completed", user, allow_skip=True)
     updated.setdefault("kitchen_status", "queued")
+    updated.setdefault("order_type", None)
+    updated.setdefault("table_number", None)
+    updated.setdefault("guest_count", None)
+    updated.setdefault("payment_method", None)
     return TransactionResponse(**updated, items=transaction["items"])
 
 

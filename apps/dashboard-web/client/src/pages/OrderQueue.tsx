@@ -257,6 +257,12 @@ export default function OrderQueue() {
                   <span className="font-mono text-xs text-muted-foreground">{t.id.slice(0, 8)}</span>
                   <Badge variant={STATUS_VARIANT[t.status]}>{t.status}</Badge>
                   <Badge variant={KITCHEN_STATUS_VARIANT[t.kitchen_status]}>{t.kitchen_status}</Badge>
+                  {t.table_number != null && (
+                    <Badge variant="outline">
+                      Table {t.table_number}
+                      {t.guest_count ? ` · ${t.guest_count} guests` : ''}
+                    </Badge>
+                  )}
                   {t.is_owner_request && <Badge variant="secondary">Owner's Request</Badge>}
                 </div>
                 <p className="text-sm text-muted-foreground">

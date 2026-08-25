@@ -274,6 +274,10 @@ export function fetchAddons(): Promise<ApiMenuAddon[]> {
 
 export type KitchenStatus = 'queued' | 'preparing' | 'ready' | 'completed';
 export type TransactionStatus = 'open' | 'closed' | 'voided';
+export type OrderType = 'dine_in' | 'takeout';
+// Distinct from any digital-order payment-method type -- POS supports two
+// more values (card, split).
+export type TransactionPaymentMethod = 'cash' | 'gcash' | 'card' | 'split';
 
 export interface ApiMenuAddon {
   id: string;
@@ -302,6 +306,10 @@ export interface CreateTransactionRequest {
   owner_request_employee_number?: string | null;
   owner_request_pin?: string | null;
   owner_request_note?: string | null;
+  order_type?: OrderType | null;
+  table_number?: number | null;
+  guest_count?: number | null;
+  payment_method?: TransactionPaymentMethod | null;
 }
 
 export interface ApiTransactionItemAddon {
@@ -342,6 +350,10 @@ export interface ApiTransaction {
   void_reason: string | null;
   kitchen_status: KitchenStatus;
   kitchen_status_updated_at: string | null;
+  order_type: OrderType | null;
+  table_number: number | null;
+  guest_count: number | null;
+  payment_method: TransactionPaymentMethod | null;
   items: ApiTransactionItem[];
 }
 

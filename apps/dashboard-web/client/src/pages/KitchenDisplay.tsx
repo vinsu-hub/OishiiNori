@@ -339,6 +339,12 @@ export default function KitchenDisplay() {
                       <CardHeader className="pb-2">
                         <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
                           <span className="font-mono text-xs text-muted-foreground">{order.id.slice(0, 8)}</span>
+                          {order.table_number != null && (
+                            <Badge variant="outline">
+                              Table {order.table_number}
+                              {order.guest_count ? ` · ${order.guest_count} guests` : ''}
+                            </Badge>
+                          )}
                           {order.is_owner_request && <Badge variant="secondary">Owner's Request</Badge>}
                         </CardTitle>
                         <p className="text-xs text-muted-foreground">

@@ -17,6 +17,12 @@ TransactionStatus = Literal["open", "closed", "voided"]
 # 0013) -- see supabase/migrations/0014_phase2_order_fulfillment.sql and the
 # report for why this is added here rather than worked around.
 KitchenStatus = Literal["queued", "preparing", "ready", "completed"]
+OrderType = Literal["dine_in", "takeout"]
+# Distinct from PaymentMethod below (Literal["gcash", "cash"], used by
+# digital_orders) -- POS supports two more values (card, split), and
+# reusing/widening that type would change the digital-order schema's own
+# semantics.
+TransactionPaymentMethod = Literal["cash", "gcash", "card", "split"]
 MovementType = Literal["trans_in", "trans_out", "delivery", "transfer_in", "transfer_out", "count_adjustment"]
 LossReason = Literal["spoilage", "breakage", "comp", "prep_error", "shrinkage"]
 UtilityType = Literal["electricity", "water", "gas"]
@@ -155,6 +161,10 @@ class CreateTransactionRequest(BaseModel):
     owner_request_employee_number: str | None = None
     owner_request_pin: str | None = None
     owner_request_note: str | None = None
+    order_type: OrderType | None = None
+    table_number: int | None = Field(default=None, gt=0)
+    guest_count: int | None = Field(default=None, gt=0)
+    payment_method: TransactionPaymentMethod | None = None
 
 
 class TransactionItemAddonResponse(BaseModel):
@@ -195,6 +205,10 @@ class TransactionResponse(BaseModel):
     void_reason: str | None = None
     kitchen_status: KitchenStatus = "queued"
     kitchen_status_updated_at: datetime | None = None
+    order_type: OrderType | None = None
+    table_number: int | None = None
+    guest_count: int | None = None
+    payment_method: TransactionPaymentMethod | None = None
     items: list[TransactionItemResponse] = Field(default_factory=list)
 
 
