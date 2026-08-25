@@ -21,3 +21,12 @@ def ph_day_bounds_utc(d: date) -> tuple[str, str]:
     local_start = local_start.replace(tzinfo=timezone.utc)
     local_end = local_start + timedelta(days=1) - timedelta(microseconds=1)
     return local_start.isoformat(), local_end.isoformat()
+
+
+def today_ph() -> date:
+    """The current Philippines calendar date -- use this instead of
+    date.today() wherever "today" means the PH business day (e.g. a
+    count-entries endpoint's default date). Vercel's runtime clock is UTC,
+    and PH is UTC+8, so date.today() silently returns yesterday's PH date
+    for up to 8 hours a day (00:00-07:59 PH)."""
+    return (datetime.now(timezone.utc) + PH_UTC_OFFSET).date()

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.auth import CurrentUser, get_current_user, require_role
 from app.deps import get_supabase
+from app.ph_time import today_ph
 from app.schemas import (
     ExpiringIngredient,
     IngredientDailySummary,
@@ -176,7 +177,7 @@ def list_ingredient_count_entries(
     docstring above. Not station-scoped: ingredients aren't station-bound
     the way Station Items are."""
     if count_date is None:
-        count_date = date.today()
+        count_date = today_ph()
     supabase = get_supabase()
     ingredients = supabase.table("ingredients").select("id, current_stock").order("name").execute().data
     items = _ingredient_summary_items(ingredients)
@@ -343,7 +344,7 @@ def override_ingredient_field(
     if not existing or not existing.data:
         raise HTTPException(status_code=404, detail="Ingredient not found")
     ingredient = existing.data
-    count_date = body.count_date or date.today()
+    count_date = body.count_date or today_ph()
 
     if body.field == "beginning":
         # Beginning is informational carry-forward context -- it has never

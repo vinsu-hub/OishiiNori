@@ -35,7 +35,7 @@ from postgrest.exceptions import APIError
 
 from app.auth import CurrentUser, get_current_user, require_role
 from app.deps import get_supabase
-from app.ph_time import ph_day_bounds_utc
+from app.ph_time import ph_day_bounds_utc, today_ph
 from app.routers.inventory_movements import apply_inventory_movement
 from app.schemas import (
     FieldOverride,
@@ -517,7 +517,7 @@ def list_count_entries(
     """Hydrates a station's grid for a given day (defaults today) with the
     computed New Stocks/Beginning/Usage/Ending -- see module docstring."""
     if count_date is None:
-        count_date = date.today()
+        count_date = today_ph()
     supabase = get_supabase()
     items = (
         supabase.table("stock_items")
@@ -540,7 +540,7 @@ def update_stock_item_notes(
     if body.recorded_by != user.id:
         raise HTTPException(status_code=403, detail="Cannot log a note under another employee's id")
     supabase = get_supabase()
-    count_date = body.count_date or date.today()
+    count_date = body.count_date or today_ph()
 
     existing = (
         supabase.table("stock_count_entries")
@@ -635,7 +635,7 @@ def override_stock_item_field(
     if not item_result or not item_result.data:
         raise HTTPException(status_code=404, detail="Stock item not found")
     stock_item = item_result.data
-    count_date = body.count_date or date.today()
+    count_date = body.count_date or today_ph()
 
     if body.field == "beginning":
         # Beginning is informational carry-forward context -- it has never
