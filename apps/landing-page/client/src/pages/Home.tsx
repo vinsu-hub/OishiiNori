@@ -39,10 +39,19 @@ function toast(message: string, type: "success" | "error" | "info" = "info") {
   (window as any).toast?.(message, type);
 }
 
-export default function Home() {
+export interface HomeInitialData {
+  products: ApiProduct[];
+  hours: BusinessHours | null;
+}
+
+// initialData is only ever passed by scripts/prerender.mjs (a build-time-only
+// render pass) to seed real content into the shipped HTML for crawlers that
+// don't execute JS. The real browser bundle never passes it -- client
+// behavior (the useEffect fetches below) is unchanged either way.
+export default function Home({ initialData }: { initialData?: HomeInitialData } = {}) {
   // --- Live menu catalog ---
-  const [products, setProducts] = useState<ApiProduct[]>([]);
-  const [loadingMenu, setLoadingMenu] = useState(true);
+  const [products, setProducts] = useState<ApiProduct[]>(initialData?.products ?? []);
+  const [loadingMenu, setLoadingMenu] = useState(!initialData);
   const [menuOpen, setMenuOpen] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
   const [sent, setSent] = useState(false);
@@ -72,7 +81,7 @@ export default function Home() {
   }, [products]);
 
   // --- Business hours (real, from Settings -- see GET /public/business-hours) ---
-  const [hours, setHours] = useState<BusinessHours | null>(null);
+  const [hours, setHours] = useState<BusinessHours | null>(initialData?.hours ?? null);
 
   useEffect(() => {
     fetchBusinessHours()
@@ -103,7 +112,7 @@ export default function Home() {
             <button onClick={() => { scrollToId("contact"); setMenuOpen(false); }}>Contact</button>
           </nav>
           <button className="nav-logo" onClick={() => scrollToId("home")} aria-label="Oishii Nori home">
-            <img src={logo} alt="Oishii Nori logo" />
+            <img src={logo} alt="Oishii Nori logo" width={66} height={66} />
           </button>
           <nav className="nav-links nav-links-right">
             <button onClick={() => scrollToId("menu")}>Menu</button>
@@ -126,7 +135,7 @@ export default function Home() {
         </div>
         <div className="hero-visual">
           <div className="hero-red-disc" />
-          <img src={heroImage} alt="Assorted sushi rolls on a platter" />
+          <img src={heroImage} alt="Assorted sushi rolls on a platter" width={450} height={450} fetchPriority="high" />
           <div className="vertical-stamp">寿司<br /><small>good food, good mood</small></div>
         </div>
         <div className="hero-note">JAPANESE<br />FOOD STUDIO <span>✳</span></div>
@@ -156,7 +165,7 @@ export default function Home() {
               <article className="menu-card" key={product.id}>
                 <div className="menu-image-wrap">
                   {product.image_path ? (
-                    <img src={product.image_path} alt={product.name} />
+                    <img src={product.image_path} alt={product.name} width={340} height={185} loading="lazy" />
                   ) : (
                     <span className="menu-image-placeholder">{String(index + 1).padStart(2, "0")}</span>
                   )}
@@ -182,7 +191,7 @@ export default function Home() {
             <h2>Simple ideas.<br /><span>Sharp flavor.</span></h2>
             <p>From salmon and tuna to crunchy crabstick and avocado, our sushi is built around the things people actually want to eat: fresh, generous, and made for sharing.</p>
           </div>
-          <div className="about-photo"><img src={aboutImage} alt="Oishii Nori kitchen craft" /></div>
+          <div className="about-photo"><img src={aboutImage} alt="Oishii Nori kitchen craft" width={400} height={400} loading="lazy" /></div>
           <div className="about-copy about-copy-right">
             <p className="eyebrow">RAMEN / HOT LINE</p>
             <h2>Warm bowls.<br /><span>Good stories.</span></h2>
@@ -198,8 +207,37 @@ export default function Home() {
           <button className={`visit-pill ${mapOpen ? "is-open" : ""}`} onClick={() => setMapOpen((open) => !open)} aria-expanded={mapOpen}><MapPin /><span><b>{mapOpen ? "Hide map" : "Visit us"}</b><small>{mapOpen ? "Close location view" : "Open location view"}</small></span>{mapOpen ? <X /> : <ArrowRight />}</button>
           <div className="hours-card"><div><span className="hours-icon">◷</span><p><b>OPEN DAILY</b><small>{hoursLabel}</small></p></div><p className="hours-address">Pedro Guevara Ave<br />Santa Cruz, Laguna 4009</p></div>
         </div>
-        <div className="visit-art"><img src={visitImage} alt="Oishii Nori sushi platter" /><div className="art-ring">おいしい<br />OISHII NORI<br />おいしい</div></div>
+        <div className="visit-art"><img src={visitImage} alt="Oishii Nori sushi platter" width={420} height={420} loading="lazy" /><div className="art-ring">おいしい<br />OISHII NORI<br />おいしい</div></div>
         {mapOpen && <div className="map-panel"><div className="map-panel-head"><div><p className="eyebrow">FIND THE KITCHEN</p><h3>Oishii Nori<br /><span>Santa Cruz.</span></h3></div><a href="https://maps.app.goo.gl/9oACBZo6tUdzyabK7" target="_blank" rel="noreferrer">Open in Maps <ArrowRight size={13} /></a></div><MapView className="oishiinori-map" lat={shopLocation.lat} lng={shopLocation.lng} zoom={17} /></div>}
+      </section>
+
+      <section id="faq" className="faq-section section-pad">
+        <div className="section-heading-row">
+          <div className="section-seal">問<br /><small>FAQ</small></div>
+          <div>
+            <p className="eyebrow">GOOD TO KNOW</p>
+            <h2>Quick<br /><span>questions.</span></h2>
+          </div>
+          <p className="heading-aside">Everything you need<br />before you visit.</p>
+        </div>
+        <div className="faq-grid">
+          <div className="faq-item">
+            <h3>Do you take reservations?</h3>
+            <p>Yes — reserve a table online and we'll confirm it in real time.</p>
+          </div>
+          <div className="faq-item">
+            <h3>What are your hours?</h3>
+            <p>Open daily, {hoursLabel}.</p>
+          </div>
+          <div className="faq-item">
+            <h3>Where are you located?</h3>
+            <p>Pedro Guevara Ave, Santa Cruz, Laguna 4009, Philippines.</p>
+          </div>
+          <div className="faq-item">
+            <h3>What's on the menu?</h3>
+            <p>Sushi, ramen, tako/snacks, and cafe drinks, made fresh daily — see our full menu above.</p>
+          </div>
+        </div>
       </section>
 
       <section id="reserve" className="reserve-section section-pad">
@@ -228,7 +266,7 @@ export default function Home() {
       </section>
 
       <footer className="site-footer">
-        <div className="footer-brand"><img src={logo} alt="Oishii Nori logo" /><p>Good food, good mood.<br />See you at the table.</p></div>
+        <div className="footer-brand"><img src={logo} alt="Oishii Nori logo" width={78} height={78} loading="lazy" /><p>Good food, good mood.<br />See you at the table.</p></div>
         <div className="footer-links"><a href="https://instagram.com" target="_blank" rel="noreferrer"><Instagram size={14} /> Instagram</a><a href="tel:+630000000000"><Phone size={14} /> Call the kitchen</a></div>
         <div className="newsletter"><p>SUBSCRIBE TO OISHII NEWS</p><form onSubmit={(e) => { e.preventDefault(); setEmail(""); }}><input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="your email" aria-label="Email for newsletter" /><button aria-label="Subscribe"><ArrowRight size={15} /></button></form><small>Fresh dispatches from the kitchen.</small></div>
         <div className="footer-bottom"><span>© 2024 Oishii Nori</span><span>寿司の専門家</span><span>Made with appetite.</span></div>

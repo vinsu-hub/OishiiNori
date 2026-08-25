@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "dev": "vite --host --port 5176",
-    "build": "vite build",
+    "build": "vite build && node scripts/prerender.mjs",
     "preview": "vite preview --host --port 5176",
     "check": "tsc --noEmit"
   },

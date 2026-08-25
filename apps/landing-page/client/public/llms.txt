@@ -1,0 +1,21 @@
+# Oishii Nori
+
+> A Japanese food studio serving sushi, ramen, tako/snacks, and cafe drinks in Santa Cruz, Laguna, Philippines.
+
+Oishii Nori is a single-location restaurant known for baked sushi, maki rolls, ramen, and cafe drinks, made fresh daily. Good food, good mood.
+
+## Location
+
+Pedro Guevara Ave, Santa Cruz, Laguna 4009, Philippines
+
+## Hours
+
+Open daily. Current hours are shown live on the homepage (they're admin-configured and may change) -- see the Hours section at https://oishii-nori-landing.vercel.app/#reserve.
+
+## Menu
+
+Full current menu, prices, and categories: https://oishii-nori-landing.vercel.app/#menu
+
+## Reservations
+
+Book a table (real-time availability, instant confirmation workflow): https://oishii-nori-menu.vercel.app/?reserve=1
