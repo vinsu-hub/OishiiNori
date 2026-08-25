@@ -76,7 +76,11 @@ function notesDraftChanged(a: NotesDraft | undefined, b: NotesDraft | undefined)
 }
 
 interface StationsPanelProps {
-  onViewIngredients: () => void;
+  // Optional ingredientId: when set, the caller should also scroll to /
+  // highlight that specific ingredient on Recipe Ingredients -- this is
+  // the parity link for a linked item ("Edit in Recipe Ingredients →"),
+  // not just a generic tab switch.
+  onViewIngredients: (ingredientId?: string) => void;
 }
 
 export function StationsPanel({ onViewIngredients }: StationsPanelProps) {
@@ -215,7 +219,7 @@ export function StationsPanel({ onViewIngredients }: StationsPanelProps) {
                   <button
                     type="button"
                     className="text-primary underline underline-offset-2"
-                    onClick={onViewIngredients}
+                    onClick={() => onViewIngredients()}
                   >
                     View Recipe Ingredients &rarr;
                   </button>
@@ -263,6 +267,15 @@ export function StationsPanel({ onViewIngredients }: StationsPanelProps) {
                               )}
                             </div>
                             {item.unit && <p className="text-xs text-muted-foreground">{item.unit}</p>}
+                            {item.ingredient_id && (
+                              <button
+                                type="button"
+                                className="text-xs text-primary underline underline-offset-2"
+                                onClick={() => onViewIngredients(item.ingredient_id!)}
+                              >
+                                Edit in Recipe Ingredients &rarr;
+                              </button>
+                            )}
                           </TableCell>
                           <SummaryFieldCell
                             field="new_stocks"

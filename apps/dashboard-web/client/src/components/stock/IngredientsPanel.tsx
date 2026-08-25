@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { useDraftPersistence } from '@/hooks/useDraftPersistence';
@@ -91,9 +91,17 @@ function computeStatus(expected: number, counted: number | null): ItemStatus {
 
 interface IngredientsPanelProps {
   onViewStations: () => void;
+  // Edit-link parity with Station Items' "Edit in Recipe Ingredients →":
+  // when set, scroll that row into view, flash-highlight it, and (for an
+  // executive, who's the only role that can actually edit) open straight
+  // into its Edit dialog -- instead of leaving the user to hunt for one
+  // row in a 70+ item list. onFocusIngredientConsumed clears it in the
+  // parent so switching tabs away and back doesn't keep re-triggering it.
+  focusIngredientId?: string;
+  onFocusIngredientConsumed?: () => void;
 }
 
-export function IngredientsPanel({ onViewStations }: IngredientsPanelProps) {
+export function IngredientsPanel({ onViewStations, focusIngredientId, onFocusIngredientConsumed }: IngredientsPanelProps) {
   const { user } = useAuth();
   const [ingredients, setIngredients] = useState<ApiIngredient[]>([]);
   const [loading, setLoading] = useState(true);
@@ -121,6 +129,8 @@ export function IngredientsPanel({ onViewStations }: IngredientsPanelProps) {
   const [sortKey, setSortKey] = useState<SortKey>('name');
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [expiringSoon, setExpiringSoon] = useState<ApiExpiringIngredient[]>([]);
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const rowRefs = useRef<Record<string, HTMLTableRowElement | null>>({});
 
   // --- Edit ingredient (full catalog fields) ---
   const [editingIngredient, setEditingIngredient] = useState<ApiIngredient | null>(null);
@@ -220,6 +230,32 @@ export function IngredientsPanel({ onViewStations }: IngredientsPanelProps) {
       })
       .finally(() => setLoadingUsage(false));
   }
+
+  // Edit-link parity: Station Items' "Edit in Recipe Ingredients →" sets
+  // focusIngredientId. Once that ingredient's row actually exists (list
+  // loaded), scroll to it and flash-highlight it; an executive also gets
+  // dropped straight into Edit, since that's the only role that can act
+  // on it further. Runs once per focusIngredientId value via the "consumed"
+  // callback rather than a loop guard, so re-clicking the same link later
+  // (id unchanged in the DOM sense but a fresh state set) still re-fires.
+  useEffect(() => {
+    if (!focusIngredientId || loading) return;
+    const ingredient = ingredients.find((i) => i.id === focusIngredientId);
+    if (!ingredient) {
+      onFocusIngredientConsumed?.();
+      return;
+    }
+    const row = rowRefs.current[focusIngredientId];
+    row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlightedId(focusIngredientId);
+    const clearHighlight = setTimeout(() => setHighlightedId(null), 2500);
+    if (user?.role === 'executive') {
+      openEdit(ingredient);
+    }
+    onFocusIngredientConsumed?.();
+    return () => clearTimeout(clearHighlight);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusIngredientId, loading, ingredients]);
 
   const unitChanged = editingIngredient != null && editBaseUnit.trim() !== editingIngredient.base_unit;
 
@@ -600,7 +636,15 @@ export function IngredientsPanel({ onViewStations }: IngredientsPanelProps) {
                 </TableHeader>
                 <TableBody>
                   {sortedRows.map(({ ingredient, counted, variance, variancePercent, status }) => (
-                    <TableRow key={ingredient.id} className={STOCK_TABLE_ROW_CLASS}>
+                    <TableRow
+                      key={ingredient.id}
+                      ref={(el) => {
+                        rowRefs.current[ingredient.id] = el;
+                      }}
+                      className={`${STOCK_TABLE_ROW_CLASS} ${
+                        highlightedId === ingredient.id ? 'bg-accent-soft/60 transition-colors duration-1000' : ''
+                      }`}
+                    >
                       <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-medium`}>{ingredient.name}</TableCell>
                       <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-muted-foreground`}>{ingredient.category || '--'}</TableCell>
                       <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>

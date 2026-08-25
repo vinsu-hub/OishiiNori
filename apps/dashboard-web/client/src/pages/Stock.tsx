@@ -24,6 +24,12 @@ export default function Stock() {
   const [location] = useLocation();
   const search = useSearch();
   const [activeTab, setActiveTab] = useState<StockTab>(() => resolveTab(location, search));
+  // Set when Station Items' "Edit in Recipe Ingredients →" link is clicked
+  // for a linked item -- tells IngredientsPanel which row to scroll to /
+  // highlight (and, for an executive, open straight into Edit) instead of
+  // leaving the user to hunt for it in a 70+ row list. Cleared once
+  // consumed so revisiting the tab later doesn't keep re-triggering it.
+  const [focusIngredientId, setFocusIngredientId] = useState<string | undefined>();
 
   useEffect(() => {
     setActiveTab(resolveTab(location, search));
@@ -43,10 +49,19 @@ export default function Stock() {
             and doesn't lose in-progress work or re-fetch on every click --
             the whole point of merging these into one shell. */}
         <div className={activeTab === 'ingredients' ? '' : 'hidden'}>
-          <IngredientsPanel onViewStations={() => setActiveTab('stations')} />
+          <IngredientsPanel
+            onViewStations={() => setActiveTab('stations')}
+            focusIngredientId={activeTab === 'ingredients' ? focusIngredientId : undefined}
+            onFocusIngredientConsumed={() => setFocusIngredientId(undefined)}
+          />
         </div>
         <div className={activeTab === 'stations' ? '' : 'hidden'}>
-          <StationsPanel onViewIngredients={() => setActiveTab('ingredients')} />
+          <StationsPanel
+            onViewIngredients={(ingredientId) => {
+              setActiveTab('ingredients');
+              setFocusIngredientId(ingredientId);
+            }}
+          />
         </div>
       </div>
     </DashboardLayout>
