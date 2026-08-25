@@ -261,6 +261,13 @@ export function updateDiscountType(
   return request(`/discount-types/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
 }
 
+// menu_addons is the same shared price list the digital customer-menu app
+// reads via this identical public endpoint (see digital_menu.py) -- POS
+// Terminal reuses it rather than duplicating the addon catalog.
+export function fetchAddons(): Promise<ApiMenuAddon[]> {
+  return request('/public/addons');
+}
+
 // ---------------------------------------------------------------------------
 // Transactions
 // ---------------------------------------------------------------------------
@@ -268,10 +275,23 @@ export function updateDiscountType(
 export type KitchenStatus = 'queued' | 'preparing' | 'ready' | 'completed';
 export type TransactionStatus = 'open' | 'closed' | 'voided';
 
+export interface ApiMenuAddon {
+  id: string;
+  name: string;
+  price: number;
+  active: boolean;
+}
+
+export interface CreateTransactionItemAddon {
+  addon_id: string;
+  quantity: number;
+}
+
 export interface CreateTransactionItem {
   product_size_id: string;
   quantity: number;
   held_ingredients?: string[];
+  addons?: CreateTransactionItemAddon[];
 }
 
 export interface CreateTransactionRequest {
@@ -284,6 +304,15 @@ export interface CreateTransactionRequest {
   owner_request_note?: string | null;
 }
 
+export interface ApiTransactionItemAddon {
+  id: string;
+  transaction_item_id: string;
+  addon_id: string;
+  addon_name: string | null;
+  quantity: number;
+  unit_price: number;
+}
+
 export interface ApiTransactionItem {
   id: string;
   transaction_id: string;
@@ -292,6 +321,7 @@ export interface ApiTransactionItem {
   unit_price: number;
   held_ingredients: string[];
   bundle_fulfilled: boolean;
+  addons: ApiTransactionItemAddon[];
 }
 
 export interface ApiTransaction {

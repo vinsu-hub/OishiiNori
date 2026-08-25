@@ -135,10 +135,16 @@ class RecipeItemUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class TransactionItemAddonCreate(BaseModel):
+    addon_id: str
+    quantity: int = Field(gt=0)
+
+
 class TransactionItemCreate(BaseModel):
     product_size_id: str
     quantity: float = Field(gt=0)
     held_ingredients: list[str] = Field(default_factory=list)
+    addons: list[TransactionItemAddonCreate] = Field(default_factory=list)
 
 
 class CreateTransactionRequest(BaseModel):
@@ -151,6 +157,15 @@ class CreateTransactionRequest(BaseModel):
     owner_request_note: str | None = None
 
 
+class TransactionItemAddonResponse(BaseModel):
+    id: str
+    transaction_item_id: str
+    addon_id: str
+    addon_name: str | None = None
+    quantity: int
+    unit_price: float
+
+
 class TransactionItemResponse(BaseModel):
     id: str
     transaction_id: str
@@ -159,6 +174,7 @@ class TransactionItemResponse(BaseModel):
     unit_price: float
     held_ingredients: list[str] = Field(default_factory=list)
     bundle_fulfilled: bool = False
+    addons: list[TransactionItemAddonResponse] = Field(default_factory=list)
 
 
 class TransactionResponse(BaseModel):

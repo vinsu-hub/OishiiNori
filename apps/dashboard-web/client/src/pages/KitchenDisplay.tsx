@@ -406,6 +406,14 @@ export default function KitchenDisplay() {
                               {item.held_ingredients.length > 0 && (
                                 <p className="text-xs text-destructive">-- hold: {item.held_ingredients.join(', ')}</p>
                               )}
+                              {item.addons.length > 0 && (
+                                <p className="text-xs text-muted-foreground">
+                                  +{' '}
+                                  {item.addons
+                                    .map((a) => `${a.addon_name ?? 'Add-on'}${a.quantity > 1 ? ` x${a.quantity}` : ''}`)
+                                    .join(', ')}
+                                </p>
+                              )}
                               </li>
                             );
                           })}

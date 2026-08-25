@@ -21,11 +21,13 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Star } from 'lucide-react';
 import {
   ApiDiscountType,
+  ApiMenuAddon,
   ApiProduct,
   ApiProductSize,
   ApiRecipeItem,
   createTransaction,
   QueuedOfflineError,
+  fetchAddons,
   fetchBusinessSettings,
   fetchDiscountTypes,
   fetchProducts,
@@ -33,12 +35,20 @@ import {
 } from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
 
+interface CartLineAddon {
+  addon_id: string;
+  name: string;
+  price: number;
+  quantity: number;
+}
+
 interface CartLine {
   key: string;
   product: ApiProduct;
   size: ApiProductSize;
   quantity: number;
   held_ingredients: string[];
+  addons: CartLineAddon[];
 }
 
 interface HeldCart {
@@ -93,6 +103,7 @@ export default function POSTerminal() {
   const { user } = useAuth();
   const [products, setProducts] = useState<ApiProduct[]>([]);
   const [discountTypes, setDiscountTypes] = useState<ApiDiscountType[]>([]);
+  const [addons, setAddons] = useState<ApiMenuAddon[]>([]);
   // Default matches the DB seed default (business_settings.vat_rate) --
   // overwritten as soon as the real fetch below resolves, just avoids a
   // flash of "0% tax" in the cart preview before that completes.
@@ -115,7 +126,7 @@ export default function POSTerminal() {
 
   const [heldCarts, setHeldCarts] = useState<HeldCart[]>(() => loadHeldCarts());
   const [favorites, setFavorites] = useState<Set<string>>(() => loadFavorites());
-  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<string>('All');
 
   useEffect(() => {
     try {
@@ -127,11 +138,12 @@ export default function POSTerminal() {
   }, [heldCarts]);
 
   useEffect(() => {
-    Promise.all([fetchProducts(true), fetchDiscountTypes(true), fetchBusinessSettings()])
-      .then(([p, d, settings]) => {
+    Promise.all([fetchProducts(true), fetchDiscountTypes(true), fetchBusinessSettings(), fetchAddons()])
+      .then(([p, d, settings, a]) => {
         setProducts(p);
         setDiscountTypes(d);
         setVatRate(settings.vat_rate);
+        setAddons(a);
       })
       .catch((e) => toast.error(`Failed to load menu: ${e.message}`))
       .finally(() => setLoading(false));
@@ -167,9 +179,24 @@ export default function POSTerminal() {
   const selectedDiscount = discountTypes.find((d) => d.id === discountTypeId) || null;
 
   const subtotal = useMemo(
-    () => cart.reduce((sum, line) => sum + line.size.price * line.quantity, 0),
+    () =>
+      cart.reduce((sum, line) => {
+        const addonsTotal = line.addons.reduce((s, a) => s + a.price * a.quantity, 0);
+        return sum + line.size.price * line.quantity + addonsTotal;
+      }, 0),
     [cart]
   );
+
+  // Categories are pure business data (this catalog's category strings
+  // aren't enumerable from static code, see the UPSELL_CATEGORIES comment
+  // above) -- derive the tab list live from whatever products actually
+  // loaded, same pattern the customer-menu app already uses for its own
+  // category rail.
+  const categories = useMemo(
+    () => Array.from(new Set(products.map((p) => p.category))).sort(),
+    [products]
+  );
+  const pillCategories = useMemo(() => ['Favorites', ...categories, 'All'], [categories]);
 
   const upsellItems = useMemo(() => {
     const cartProductIds = new Set(cart.map((l) => l.product.id));
@@ -201,11 +228,13 @@ export default function POSTerminal() {
       // specific customization and shouldn't silently absorb a plain unit
       // meant for someone else (e.g. a second, unrelated order of the same
       // roll). A held line always gets its own new line instead.
-      const existing = prev.find((l) => l.size.id === size.id && l.held_ingredients.length === 0);
+      const existing = prev.find(
+        (l) => l.size.id === size.id && l.held_ingredients.length === 0 && l.addons.length === 0
+      );
       if (existing) {
         return prev.map((l) => (l.key === existing.key ? { ...l, quantity: l.quantity + 1 } : l));
       }
-      return [...prev, { key: generateId(), product, size, quantity: 1, held_ingredients: [] }];
+      return [...prev, { key: generateId(), product, size, quantity: 1, held_ingredients: [], addons: [] }];
     });
   }
 
@@ -223,6 +252,20 @@ export default function POSTerminal() {
       prev
         .map((l) => (l.key === key ? { ...l, quantity: l.quantity + delta } : l))
         .filter((l) => l.quantity > 0)
+    );
+  }
+
+  function setLineAddonQuantity(lineKey: string, addon: ApiMenuAddon, quantity: number) {
+    setCart((prev) =>
+      prev.map((l) => {
+        if (l.key !== lineKey) return l;
+        const others = l.addons.filter((a) => a.addon_id !== addon.id);
+        if (quantity <= 0) return { ...l, addons: others };
+        return {
+          ...l,
+          addons: [...others, { addon_id: addon.id, name: addon.name, price: addon.price, quantity }],
+        };
+      })
     );
   }
 
@@ -342,6 +385,7 @@ export default function POSTerminal() {
           product_size_id: l.size.id,
           quantity: l.quantity,
           held_ingredients: l.held_ingredients,
+          addons: l.addons.map((a) => ({ addon_id: a.addon_id, quantity: a.quantity })),
         })),
         discount_type_id: discountTypeId === 'none' ? undefined : discountTypeId,
         is_owner_request: !!ownerRequestConfirmed,
@@ -382,20 +426,38 @@ export default function POSTerminal() {
     <DashboardLayout title="POS Terminal">
       <div className="flex h-full overflow-hidden">
         <div className="flex-1 overflow-auto p-6">
-          <div className="flex items-center gap-2 mb-3">
-            <Button size="sm" variant={showFavoritesOnly ? 'outline' : 'default'} onClick={() => setShowFavoritesOnly(false)}>
-              All
-            </Button>
-            <Button size="sm" variant={showFavoritesOnly ? 'default' : 'outline'} onClick={() => setShowFavoritesOnly(true)}>
-              Favorites
-            </Button>
+          <div className="flex gap-2 overflow-x-auto pb-1 mb-3">
+            {pillCategories.map((cat) => (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => setSelectedCategory(cat)}
+                className={`shrink-0 px-4 py-1.5 rounded-full text-sm border transition-colors ${
+                  selectedCategory === cat
+                    ? 'bg-primary text-primary-foreground border-transparent'
+                    : 'bg-card text-muted-foreground border-border'
+                }`}
+              >
+                {cat === 'Favorites' && (
+                  <Star
+                    className="inline w-3.5 h-3.5 mr-1 -mt-0.5"
+                    fill={selectedCategory === 'Favorites' ? 'currentColor' : 'none'}
+                  />
+                )}
+                {cat}
+              </button>
+            ))}
           </div>
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading menu...</p>
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
               {products
-                .filter((product) => !showFavoritesOnly || favorites.has(product.id))
+                .filter((product) => {
+                  if (selectedCategory === 'Favorites') return favorites.has(product.id);
+                  if (selectedCategory === 'All') return true;
+                  return product.category === selectedCategory;
+                })
                 .map((product) => {
                 const cheapest = [...product.sizes].sort((a, b) => a.price - b.price)[0];
                 const allUnavailable = product.sizes.every((s) => s.availability === 'unavailable');
@@ -422,16 +484,20 @@ export default function POSTerminal() {
                         color={favorites.has(product.id) ? '#FFBF47' : 'currentColor'}
                       />
                     </button>
-                    {product.image_path ? (
-                      <img
-                        src={product.image_path}
-                        alt={product.name}
-                        className="w-full h-24 object-cover"
-                        loading="lazy"
-                      />
-                    ) : (
-                      <div className="w-full h-24 bg-muted" />
-                    )}
+                    <div className="aspect-square w-full bg-muted">
+                      {product.image_path ? (
+                        <img
+                          src={product.image_path}
+                          alt={product.name}
+                          className="w-full h-full object-cover"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-muted-foreground text-xs">
+                          No photo
+                        </div>
+                      )}
+                    </div>
                     <CardHeader className="pb-2">
                       <CardTitle className="text-sm font-corp-display">{product.name}</CardTitle>
                     </CardHeader>
@@ -523,27 +589,86 @@ export default function POSTerminal() {
           </div>
           <div className="flex-1 overflow-auto p-4 space-y-2">
             {cart.length === 0 && <p className="text-sm text-muted-foreground">No items yet.</p>}
-            {cart.map((line) => (
-              <div key={line.key} className="flex items-center justify-between text-sm border-b pb-2">
-                <div>
-                  <p className="font-medium">{line.product.name}</p>
-                  <p className="text-xs text-muted-foreground">{line.size.size_label}</p>
-                  {line.held_ingredients.length > 0 && (
-                    <p className="text-xs text-destructive">-- hold: {line.held_ingredients.join(', ')}</p>
+            {cart.map((line) => {
+              const lineAddonsTotal = line.addons.reduce((s, a) => s + a.price * a.quantity, 0);
+              return (
+                <div key={line.key} className="text-sm border-b pb-2 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium">{line.product.name}</p>
+                      <p className="text-xs text-muted-foreground">{line.size.size_label}</p>
+                      {line.held_ingredients.length > 0 && (
+                        <p className="text-xs text-destructive">-- hold: {line.held_ingredients.join(', ')}</p>
+                      )}
+                      {line.addons.length > 0 && (
+                        <p className="text-xs text-muted-foreground">
+                          +{' '}
+                          {line.addons
+                            .map((a) => `${a.name}${a.quantity > 1 ? ` x${a.quantity}` : ''}`)
+                            .join(', ')}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button size="icon" variant="outline" className="h-6 w-6" onClick={() => updateQuantity(line.key, -1)}>
+                        -
+                      </Button>
+                      <span>{line.quantity}</span>
+                      <Button size="icon" variant="outline" className="h-6 w-6" onClick={() => updateQuantity(line.key, 1)}>
+                        +
+                      </Button>
+                      <span className="w-14 text-right">
+                        {formatCurrency(line.size.price * line.quantity + lineAddonsTotal)}
+                      </span>
+                    </div>
+                  </div>
+                  {addons.length > 0 && (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button size="sm" variant="ghost" className="h-6 px-2 text-xs text-muted-foreground">
+                          + Add-ons
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-64">
+                        <div className="space-y-2">
+                          <p className="text-sm font-medium">Add-ons for {line.product.name}</p>
+                          {addons.map((addon) => {
+                            const current = line.addons.find((a) => a.addon_id === addon.id)?.quantity ?? 0;
+                            return (
+                              <div key={addon.id} className="flex items-center justify-between text-sm">
+                                <span>
+                                  {addon.name} <span className="text-muted-foreground">({formatCurrency(addon.price)})</span>
+                                </span>
+                                <div className="flex items-center gap-2">
+                                  <Button
+                                    size="icon"
+                                    variant="outline"
+                                    className="h-6 w-6"
+                                    onClick={() => setLineAddonQuantity(line.key, addon, current - 1)}
+                                    disabled={current === 0}
+                                  >
+                                    -
+                                  </Button>
+                                  <span className="w-4 text-center">{current}</span>
+                                  <Button
+                                    size="icon"
+                                    variant="outline"
+                                    className="h-6 w-6"
+                                    onClick={() => setLineAddonQuantity(line.key, addon, current + 1)}
+                                  >
+                                    +
+                                  </Button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </PopoverContent>
+                    </Popover>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
-                  <Button size="icon" variant="outline" className="h-6 w-6" onClick={() => updateQuantity(line.key, -1)}>
-                    -
-                  </Button>
-                  <span>{line.quantity}</span>
-                  <Button size="icon" variant="outline" className="h-6 w-6" onClick={() => updateQuantity(line.key, 1)}>
-                    +
-                  </Button>
-                  <span className="w-14 text-right">{formatCurrency(line.size.price * line.quantity)}</span>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="p-4 border-t space-y-3">

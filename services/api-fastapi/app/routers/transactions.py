@@ -47,6 +47,7 @@ def _get_vat_rate(supabase) -> float:
 _kitchen_status_supported: bool | None = None
 _bundle_fulfillments_supported: bool | None = None
 _held_ingredients_supported: bool | None = None
+_transaction_item_addons_supported: bool | None = None
 
 
 def _kitchen_status_supported_check(supabase) -> bool:
@@ -84,6 +85,43 @@ def _held_ingredients_supported_check(supabase) -> bool:
         except APIError:
             _held_ingredients_supported = False
     return _held_ingredients_supported
+
+
+def _transaction_item_addons_supported_check(supabase) -> bool:
+    """Migration 0026 feature-detection, same pattern as the checks above."""
+    global _transaction_item_addons_supported
+    if _transaction_item_addons_supported is None:
+        try:
+            supabase.table("transaction_item_addons").select("id").limit(1).execute()
+            _transaction_item_addons_supported = True
+        except APIError:
+            _transaction_item_addons_supported = False
+    return _transaction_item_addons_supported
+
+
+def _attach_item_addons(supabase, items: list[dict]) -> None:
+    """Batch-fetches transaction_item_addons (joined to menu_addons for the
+    display name) for the given transaction_items and attaches them as
+    item['addons'] -- mutates items in place. No-ops (leaves addons: [])
+    when migration 0026 hasn't been applied yet."""
+    for item in items:
+        item.setdefault("addons", [])
+    if not items or not _transaction_item_addons_supported_check(supabase):
+        return
+    item_ids = [i["id"] for i in items]
+    addons_result = (
+        supabase.table("transaction_item_addons")
+        .select("*, menu_addons(name)")
+        .in_("transaction_item_id", item_ids)
+        .execute()
+    )
+    addons_by_item: dict[str, list] = defaultdict(list)
+    for row in addons_result.data:
+        addon_info = row.pop("menu_addons", None) or {}
+        row["addon_name"] = addon_info.get("name")
+        addons_by_item[row["transaction_item_id"]].append(row)
+    for item in items:
+        item["addons"] = addons_by_item.get(item["id"], [])
 
 
 _MIGRATION_PENDING_DETAIL = (
@@ -197,6 +235,7 @@ def _fetch_transaction_with_items(supabase, transaction_id: str) -> dict | None:
     fulfilled_ids = _bundle_fulfilled_item_ids(supabase, [i["id"] for i in items])
     for item in items:
         item["bundle_fulfilled"] = item["id"] in fulfilled_ids
+    _attach_item_addons(supabase, items)
     transaction["items"] = items
     transaction.setdefault("kitchen_status", "queued")
     return transaction
@@ -241,6 +280,26 @@ def _create_transaction_row(
     if missing:
         raise HTTPException(status_code=404, detail=f"Product sizes not found: {missing}")
 
+    # Add-ons (0026): never trust a client-sent price -- look up the real
+    # price/active flag from menu_addons, same posture as digital_menu.py's
+    # submit_digital_order. Unlike that endpoint, addons here are folded
+    # into `subtotal` below *before* discount/tax is computed, so an addon
+    # on a discounted item is discounted/taxed consistently with the rest
+    # of the line instead of needing a post-hoc total patch.
+    addon_ids = [a.addon_id for item in items for a in item.addons]
+    addons_by_id: dict[str, dict] = {}
+    if addon_ids:
+        addons_result = (
+            supabase.table("menu_addons").select("id, price, active").in_("id", addon_ids).execute()
+        )
+        addons_by_id = {a["id"]: a for a in addons_result.data}
+        missing_addons = [aid for aid in addon_ids if aid not in addons_by_id]
+        if missing_addons:
+            raise HTTPException(status_code=404, detail=f"Add-ons not found: {missing_addons}")
+        inactive_addons = [aid for aid in addon_ids if not addons_by_id[aid]["active"]]
+        if inactive_addons:
+            raise HTTPException(status_code=400, detail=f"Add-ons no longer available: {inactive_addons}")
+
     discount = None
     discount_amount = 0.0
     vat_exempt = False
@@ -279,12 +338,16 @@ def _create_transaction_row(
 
     held_ingredients_supported = _held_ingredients_supported_check(supabase)
 
+    addons_supported = _transaction_item_addons_supported_check(supabase)
+
     subtotal = 0.0
     item_rows = []
     for item in items:
         size = sizes_by_id[item.product_size_id]
         unit_price = float(size["price"])
         subtotal += unit_price * item.quantity
+        for addon in item.addons:
+            subtotal += float(addons_by_id[addon.addon_id]["price"]) * addon.quantity
         row = {
             "transaction_id": transaction_id,
             "product_size_id": item.product_size_id,
@@ -295,7 +358,30 @@ def _create_transaction_row(
             row["held_ingredients"] = item.held_ingredients
         item_rows.append(row)
 
-    items_insert = supabase.table("transaction_items").insert(item_rows).execute()
+    if any(item.addons for item in items) and addons_supported:
+        # Insert one row at a time here (rather than the usual single bulk
+        # insert) -- each transaction_items row's real id is needed
+        # immediately after, to attach that specific item's addon rows, and
+        # a bulk insert's returned row order relative to the input isn't a
+        # guarantee worth relying on.
+        inserted_items = []
+        for item, row in zip(items, item_rows):
+            inserted = supabase.table("transaction_items").insert(row).execute().data[0]
+            inserted_items.append(inserted)
+            addon_rows = [
+                {
+                    "transaction_item_id": inserted["id"],
+                    "addon_id": addon.addon_id,
+                    "quantity": addon.quantity,
+                    "unit_price": float(addons_by_id[addon.addon_id]["price"]),
+                }
+                for addon in item.addons
+            ]
+            if addon_rows:
+                supabase.table("transaction_item_addons").insert(addon_rows).execute()
+    else:
+        inserted_items = supabase.table("transaction_items").insert(item_rows).execute().data
+    _attach_item_addons(supabase, inserted_items)
 
     for item in items:
         size = sizes_by_id[item.product_size_id]
@@ -330,7 +416,7 @@ def _create_transaction_row(
     )
     transaction = updated.data[0]
     transaction.setdefault("kitchen_status", "queued")
-    return TransactionResponse(**transaction, items=items_insert.data)
+    return TransactionResponse(**transaction, items=inserted_items)
 
 
 @router.post("/transactions", response_model=TransactionResponse)
@@ -397,6 +483,7 @@ def list_transactions(
     )
     all_items = items_result.data
     fulfilled_ids = _bundle_fulfilled_item_ids(supabase, [i["id"] for i in all_items])
+    _attach_item_addons(supabase, all_items)
     items_by_transaction: dict[str, list] = defaultdict(list)
     for item in all_items:
         item["bundle_fulfilled"] = item["id"] in fulfilled_ids
@@ -451,6 +538,11 @@ def void_transaction(
     (not a blind full-recipe restore, since bundles have no recipe of their
     own) and clears those fulfillment rows. A bundle item never fulfilled
     has nothing to restore.
+
+    Add-ons (0026) need no restore step here -- like menu_addons generally,
+    they carry no recipe_items/stock impact, so there's nothing to give
+    back. transaction_item_addons rows are left in place (cascade-deleted
+    only if the item itself is ever deleted, which void never does).
     """
     supabase = get_supabase()
 

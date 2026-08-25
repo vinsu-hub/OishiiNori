@@ -246,6 +246,9 @@ export default function OrderQueue() {
         {pageTransactions.map((t) => {
           const digitalOrder = digitalOrderLookup.get(t.id);
           const heldIngredients = Array.from(new Set(t.items.flatMap((i) => i.held_ingredients)));
+          const addonSummary = t.items
+            .flatMap((i) => i.addons)
+            .map((a) => `${a.addon_name ?? 'Add-on'}${a.quantity > 1 ? ` x${a.quantity}` : ''}`);
           return (
           <Card key={t.id}>
             <CardContent className="py-3 flex items-center justify-between">
@@ -268,6 +271,9 @@ export default function OrderQueue() {
                 )}
                 {heldIngredients.length > 0 && (
                   <p className="text-xs text-destructive">-- hold: {heldIngredients.join(', ')}</p>
+                )}
+                {addonSummary.length > 0 && (
+                  <p className="text-xs text-muted-foreground">+ {addonSummary.join(', ')}</p>
                 )}
                 {digitalOrder && <DigitalOrderInfo order={digitalOrder} />}
               </div>
