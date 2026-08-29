@@ -1129,10 +1129,25 @@ class BusinessSettingsUpdate(BaseModel):
 ReservationStatus = Literal["pending", "confirmed", "declined", "cancelled"]
 
 
+TableShape = Literal["square", "rectangle", "round"]
+
+# Layout fields shared by create/update/out -- see migration 0032. Writing any
+# of these via PATCH /tables/{id} also clears needs_layout_review.
+_LAYOUT_FIELDS = ("pos_x", "pos_y", "shape", "width", "height", "floor_group", "capacity_min", "capacity_max")
+
+
 class TableCreate(BaseModel):
     label: str
     capacity: int = Field(gt=0)
     pos_table_number: int | None = Field(default=None, gt=0)
+    pos_x: float | None = None
+    pos_y: float | None = None
+    shape: TableShape | None = None
+    width: float | None = Field(default=None, gt=0)
+    height: float | None = Field(default=None, gt=0)
+    floor_group: str | None = None
+    capacity_min: int | None = Field(default=None, gt=0)
+    capacity_max: int | None = Field(default=None, gt=0)
 
 
 class TableUpdate(BaseModel):
@@ -1142,6 +1157,14 @@ class TableUpdate(BaseModel):
     # Explicit sentinel is not needed: a client that wants to clear the link
     # sends null, which model_dump(exclude_unset=True) still includes.
     pos_table_number: int | None = Field(default=None, gt=0)
+    pos_x: float | None = None
+    pos_y: float | None = None
+    shape: TableShape | None = None
+    width: float | None = Field(default=None, gt=0)
+    height: float | None = Field(default=None, gt=0)
+    floor_group: str | None = None
+    capacity_min: int | None = Field(default=None, gt=0)
+    capacity_max: int | None = Field(default=None, gt=0)
 
 
 class TableOut(BaseModel):
@@ -1150,6 +1173,15 @@ class TableOut(BaseModel):
     capacity: int
     active: bool
     pos_table_number: int | None = None
+    pos_x: float | None = None
+    pos_y: float | None = None
+    shape: TableShape = "square"
+    width: float = 80
+    height: float = 80
+    floor_group: str = "Main Dining"
+    capacity_min: int | None = None
+    capacity_max: int | None = None
+    needs_layout_review: bool = False
     created_at: datetime
     updated_at: datetime
 

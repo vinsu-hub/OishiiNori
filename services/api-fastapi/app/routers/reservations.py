@@ -21,6 +21,7 @@ from app.auth import CurrentUser, get_current_user, require_role, verify_employe
 from app.deps import get_supabase
 from app.ph_time import PH_UTC_OFFSET
 from app.schemas import (
+    _LAYOUT_FIELDS,
     CreateReservationRequest,
     DeclineReservationRequest,
     PosTableOverrideRequest,
@@ -151,7 +152,7 @@ def _now_ph() -> datetime:
 def _table_by_pos_number(supabase, pos_table_number: int) -> Optional[dict]:
     result = (
         supabase.table("tables")
-        .select("id, label, capacity, active, pos_table_number")
+        .select("id, label, capacity, capacity_min, capacity_max, active, pos_table_number")
         .eq("pos_table_number", pos_table_number)
         .maybe_single()
         .execute()
@@ -282,9 +283,7 @@ def list_tables(user: CurrentUser = Depends(get_current_user)):
 @router.post("/tables", response_model=TableOut)
 def create_table(body: TableCreate, user: CurrentUser = Depends(get_current_user)):
     require_role(user, "manager", "executive")
-    payload = {"label": body.label, "capacity": body.capacity}
-    if body.pos_table_number is not None:
-        payload["pos_table_number"] = body.pos_table_number
+    payload = body.model_dump(exclude_unset=True, exclude_none=True)
     result = get_supabase().table("tables").insert(payload).execute()
     return result.data[0]
 
@@ -299,6 +298,13 @@ def update_table(table_id: str, body: TableUpdate, user: CurrentUser = Depends(g
 
     update_data = body.model_dump(exclude_unset=True)
     update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    # Touching any layout field via the floor-plan editor marks the table as
+    # positioned/verified, and keeps `capacity` (the availability engine's
+    # filter column) in step with the flexible max.
+    if any(f in update_data for f in _LAYOUT_FIELDS):
+        update_data["needs_layout_review"] = False
+        if update_data.get("capacity_max") is not None:
+            update_data["capacity"] = update_data["capacity_max"]
     result = supabase.table("tables").update(update_data).eq("id", table_id).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Table not found")

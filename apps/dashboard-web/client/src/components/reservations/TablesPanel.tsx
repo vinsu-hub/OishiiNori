@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { useLocation } from 'wouter';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent } from '@/components/ui/card';
@@ -19,6 +20,7 @@ import { ApiTable, createTable, fetchTables, updateTable } from '@/lib/api';
 export function TablesPanel() {
   const { user } = useAuth();
   const canManage = user?.role === 'manager' || user?.role === 'executive';
+  const [, navigate] = useLocation();
 
   const [tables, setTables] = useState<ApiTable[]>([]);
   const [loading, setLoading] = useState(true);
@@ -95,9 +97,14 @@ export function TablesPanel() {
   return (
     <div className="space-y-3">
       {canManage && (
-        <Button size="sm" onClick={openNew}>
-          Add table
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={openNew}>
+            Add table
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => navigate('/reservations?tab=floor-plan')}>
+            Edit Layout
+          </Button>
+        </div>
       )}
 
       <Card>
@@ -121,7 +128,13 @@ export function TablesPanel() {
                 {tables.map((t) => (
                   <TableRow key={t.id}>
                     <TableCell className="font-medium">{t.label}</TableCell>
-                    <TableCell>{t.capacity}</TableCell>
+                    <TableCell>
+                      {t.capacity_min != null &&
+                      t.capacity_max != null &&
+                      t.capacity_min !== t.capacity_max
+                        ? `${t.capacity_min}–${t.capacity_max}`
+                        : t.capacity}
+                    </TableCell>
                     <TableCell className="text-muted-foreground">
                       {t.pos_table_number ?? '--'}
                     </TableCell>

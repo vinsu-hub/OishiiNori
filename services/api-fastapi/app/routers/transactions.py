@@ -520,6 +520,16 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
     consumed_override_id = None
     if body.order_type == "dine_in":
         blocked_table = _table_by_pos_number(supabase, body.table_number)
+        if blocked_table and body.guest_count is not None:
+            # Flexible-capacity floor-plan tables (0032): a party larger than
+            # the table's max doesn't fit. Below the min is fine -- a small
+            # party can sit at a bigger table.
+            cap_max = blocked_table.get("capacity_max") or blocked_table["capacity"]
+            if body.guest_count > cap_max:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Party of {body.guest_count} exceeds table {blocked_table['label']}'s capacity of {cap_max}",
+                )
         blocking = _blocking_reservation(supabase, blocked_table["id"], _now_ph()) if blocked_table else None
         if blocking is not None:
             consumed_override_id = _validate_reservation_override(

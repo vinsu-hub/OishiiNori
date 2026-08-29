@@ -1390,31 +1390,52 @@ export function updateBusinessSettings(
 // Table reservations
 // ---------------------------------------------------------------------------
 
+export type TableShape = 'square' | 'rectangle' | 'round';
+
 export interface ApiTable {
   id: string;
   label: string;
   capacity: number;
   active: boolean;
   pos_table_number: number | null;
+  pos_x: number | null;
+  pos_y: number | null;
+  shape: TableShape;
+  width: number;
+  height: number;
+  floor_group: string;
+  capacity_min: number | null;
+  capacity_max: number | null;
+  needs_layout_review: boolean;
   created_at: string;
   updated_at: string;
+}
+
+export interface TableLayoutInput {
+  pos_x?: number;
+  pos_y?: number;
+  shape?: TableShape;
+  width?: number;
+  height?: number;
+  floor_group?: string;
+  capacity_min?: number;
+  capacity_max?: number;
 }
 
 export function fetchTables(): Promise<ApiTable[]> {
   return request('/tables');
 }
 
-export function createTable(body: {
-  label: string;
-  capacity: number;
-  pos_table_number?: number | null;
-}): Promise<ApiTable> {
+export function createTable(
+  body: { label: string; capacity: number; pos_table_number?: number | null } & TableLayoutInput
+): Promise<ApiTable> {
   return request('/tables', { method: 'POST', body: JSON.stringify(body) });
 }
 
 export function updateTable(
   id: string,
-  body: Partial<{ label: string; capacity: number; active: boolean; pos_table_number: number | null }>
+  body: Partial<{ label: string; capacity: number; active: boolean; pos_table_number: number | null }> &
+    TableLayoutInput
 ): Promise<ApiTable> {
   return request(`/tables/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
 }

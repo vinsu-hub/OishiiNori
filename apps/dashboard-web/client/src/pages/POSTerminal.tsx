@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useLocation, useSearch } from 'wouter';
 import { toast } from 'sonner';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -174,6 +175,24 @@ export default function POSTerminal() {
   const [overrideForm, setOverrideForm] = useState({ employeeNumber: '', pin: '', reason: '' });
   const [overrideBusy, setOverrideBusy] = useState(false);
   const tableBlocked = !!tableStatus?.blocked && !overrideId;
+
+  // Pre-seat from the Floor Plan: /pos?table=<posNumber>&guests=<n>. Applied
+  // once on mount, then the params are stripped so a refresh doesn't re-seat.
+  const search = useSearch();
+  const [, navigate] = useLocation();
+  useEffect(() => {
+    const params = new URLSearchParams(search);
+    const t = params.get('table');
+    const g = params.get('guests');
+    if (!t && !g) return;
+    if (t && /^\d+$/.test(t)) {
+      setOrderType('dine_in');
+      setTableNumber(t);
+    }
+    if (g && /^\d+$/.test(g)) setGuestCount(Math.max(1, Number(g)));
+    navigate('/pos', { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [availabilityFilter, setAvailabilityFilter] = useState<
