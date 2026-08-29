@@ -17,11 +17,15 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.auth import CurrentUser, get_current_user, require_role
+from app.auth import CurrentUser, get_current_user, require_role, verify_employee_pin
 from app.deps import get_supabase
+from app.ph_time import PH_UTC_OFFSET
 from app.schemas import (
     CreateReservationRequest,
     DeclineReservationRequest,
+    PosTableOverrideRequest,
+    PosTableOverrideResponse,
+    PosTableStatusResponse,
     PublicBusinessHoursResponse,
     ReservationAvailabilityResponse,
     ReservationOut,
@@ -41,6 +45,11 @@ router = APIRouter(tags=["reservations"])
 # minimalism: don't add a settings field nothing needs yet.
 RESERVATION_DURATION_MINUTES = 90
 SLOT_GRANULARITY_MINUTES = 30
+
+# The POS holds a confirmed reservation's table starting this many minutes
+# before the stated start_time, so staff keep it clear for the guest's
+# arrival. The block still ends exactly at end_time (no post-grace).
+RESERVATION_PREP_BUFFER_MINUTES = 15
 
 _HOLDING_STATUSES = ["pending", "confirmed"]
 
@@ -128,7 +137,49 @@ def _first_available(candidates: list[dict], occupied: dict, start: time, end: t
 def _to_reservation_out(row: dict) -> dict:
     table = row.pop("tables", None) or {}
     row["table_label"] = table.get("label")
+    row["overrides"] = row.pop("reservation_overrides", None) or []
     return row
+
+
+def _now_ph() -> datetime:
+    """Current wall-clock in the Philippines, as a naive datetime -- the
+    reservations table stores plain date/time, so comparisons happen in PH
+    local terms (same convention as ph_time.today_ph)."""
+    return (datetime.now(timezone.utc) + PH_UTC_OFFSET).replace(tzinfo=None)
+
+
+def _table_by_pos_number(supabase, pos_table_number: int) -> Optional[dict]:
+    result = (
+        supabase.table("tables")
+        .select("id, label, capacity, active, pos_table_number")
+        .eq("pos_table_number", pos_table_number)
+        .maybe_single()
+        .execute()
+    )
+    return result.data if result and result.data else None
+
+
+def _blocking_reservation(supabase, table_id: str, at: datetime) -> Optional[dict]:
+    """The confirmed reservation (if any) that blocks `table_id` at PH-local
+    datetime `at`: same calendar date, and `at`'s time falls in
+    [start_time - prep buffer, end_time)."""
+    at_date = at.date()
+    at_time = at.time().replace(second=0, microsecond=0)
+    rows = (
+        supabase.table("reservations")
+        .select("id, reservation_number, customer_name, party_size, start_time, end_time")
+        .eq("table_id", table_id)
+        .eq("reservation_date", at_date.isoformat())
+        .eq("status", "confirmed")
+        .execute()
+        .data
+    )
+    for r in rows:
+        start = _time_add_minutes(time.fromisoformat(r["start_time"]), -RESERVATION_PREP_BUFFER_MINUTES)
+        end = time.fromisoformat(r["end_time"])
+        if start <= at_time < end:
+            return r
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -231,7 +282,10 @@ def list_tables(user: CurrentUser = Depends(get_current_user)):
 @router.post("/tables", response_model=TableOut)
 def create_table(body: TableCreate, user: CurrentUser = Depends(get_current_user)):
     require_role(user, "manager", "executive")
-    result = get_supabase().table("tables").insert({"label": body.label, "capacity": body.capacity}).execute()
+    payload = {"label": body.label, "capacity": body.capacity}
+    if body.pos_table_number is not None:
+        payload["pos_table_number"] = body.pos_table_number
+    result = get_supabase().table("tables").insert(payload).execute()
     return result.data[0]
 
 
@@ -263,7 +317,9 @@ def list_reservations(
     limit: int = Query(200, le=500),
     user: CurrentUser = Depends(get_current_user),
 ):
-    query = get_supabase().table("reservations").select("*, tables(label)")
+    query = get_supabase().table("reservations").select(
+        "*, tables(label), reservation_overrides(reason, created_at, overridden_by)"
+    )
     if status_filter:
         query = query.eq("status", status_filter)
     if reservation_date:
@@ -335,6 +391,75 @@ def decline_reservation(
         .execute()
     )
     return _to_reservation_out({**updated.data[0], "tables": reservation.get("tables")})
+
+
+# ---------------------------------------------------------------------------
+# POS terminal integration -- is this table reservation-blocked right now?
+# ---------------------------------------------------------------------------
+
+
+@router.get("/pos/tables/status", response_model=PosTableStatusResponse)
+def pos_table_status(
+    table_number: int = Query(..., gt=0),
+    at: Optional[datetime] = Query(None),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Called by the POS when a cashier picks a table for a Dine In order.
+    `at` defaults to now (PH). A table_number with no `pos_table_number`
+    mapping is treated as unmanaged -> never blocked (same permissive
+    posture the POS had before this feature)."""
+    supabase = get_supabase()
+    when = at.replace(tzinfo=None) if at is not None else _now_ph()
+
+    table = _table_by_pos_number(supabase, table_number)
+    if not table:
+        return {"blocked": False, "pos_table_number": table_number}
+
+    reservation = _blocking_reservation(supabase, table["id"], when)
+    return {
+        "blocked": reservation is not None,
+        "pos_table_number": table_number,
+        "table_id": table["id"],
+        "table_label": table["label"],
+        "reservation": reservation,
+    }
+
+
+@router.post("/pos/tables/override", response_model=PosTableOverrideResponse)
+def pos_table_override(body: PosTableOverrideRequest, user: CurrentUser = Depends(get_current_user)):
+    """Manager-only: deliberately seat a walk-in on a reservation-blocked
+    table. Mirrors the Owner's Request re-verification in transactions.py --
+    the acting user re-enters their OWN kiosk credentials, and must be a
+    manager/executive. Writes an audit row consumed once by the next sale."""
+    require_role(user, "manager", "executive")
+
+    profile = verify_employee_pin(body.employee_number, body.pin)
+    if not profile or profile["id"] != user.id:
+        raise HTTPException(status_code=403, detail="Employee number/PIN did not match your logged-in account")
+
+    supabase = get_supabase()
+    table = _table_by_pos_number(supabase, body.table_number)
+    if not table:
+        raise HTTPException(status_code=404, detail="No reservation table is mapped to that POS number")
+
+    reservation = _blocking_reservation(supabase, table["id"], _now_ph())
+    if reservation is None:
+        raise HTTPException(status_code=404, detail="That table is not currently reservation-blocked")
+
+    inserted = (
+        supabase.table("reservation_overrides")
+        .insert(
+            {
+                "reservation_id": reservation["id"],
+                "table_id": table["id"],
+                "pos_table_number": body.table_number,
+                "overridden_by": user.id,
+                "reason": body.reason.strip(),
+            }
+        )
+        .execute()
+    )
+    return {"override_id": inserted.data[0]["id"]}
 
 
 @router.post("/reservations/{reservation_id}/cancel", response_model=ReservationOut)

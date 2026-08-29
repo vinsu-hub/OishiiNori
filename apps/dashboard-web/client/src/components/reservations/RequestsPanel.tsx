@@ -139,6 +139,11 @@ export function RequestsPanel() {
             </p>
             {r.customer_note && <p className="text-sm italic text-muted-foreground">Note: {r.customer_note}</p>}
             {r.declined_reason && <p className="text-sm text-destructive">Reason: {r.declined_reason}</p>}
+            {r.overrides?.map((o, i) => (
+              <p key={i} className="text-sm text-amber-600">
+                Overridden at the POS: {o.reason} ({new Date(o.created_at).toLocaleString()})
+              </p>
+            ))}
 
             {r.status === 'pending' && (
               <div className="flex items-center gap-2 pt-1">

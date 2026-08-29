@@ -7,6 +7,7 @@ from postgrest.exceptions import APIError
 from app.auth import CurrentUser, get_current_user, require_role, verify_employee_pin
 from app.deps import get_supabase
 from app.ph_time import ph_day_bounds_utc
+from app.routers.reservations import _blocking_reservation, _now_ph, _table_by_pos_number
 from app.routers.stock_items import adjust_stock_items_for_product_unit, adjust_stock_items_for_transaction
 from app.schemas import (
     BundleFulfillmentRequest,
@@ -513,7 +514,19 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
             raise HTTPException(status_code=403, detail="Employee ID/PIN did not match your logged-in account")
         owner_request_by = profile["id"]
 
-    return _create_transaction_row(
+    # Reservation block: a confirmed reservation holds its table in the POS
+    # for [start - prep buffer, end). A manager can override, which mints a
+    # single-use reservation_overrides row (see /pos/tables/override).
+    consumed_override_id = None
+    if body.order_type == "dine_in":
+        blocked_table = _table_by_pos_number(supabase, body.table_number)
+        blocking = _blocking_reservation(supabase, blocked_table["id"], _now_ph()) if blocked_table else None
+        if blocking is not None:
+            consumed_override_id = _validate_reservation_override(
+                supabase, body.reservation_override_id, blocked_table["id"], blocking
+            )
+
+    result = _create_transaction_row(
         supabase,
         employee_id=body.employee_id,
         items=body.items,
@@ -526,6 +539,48 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
         guest_count=body.guest_count,
         payment_method=body.payment_method,
     )
+
+    if consumed_override_id is not None:
+        supabase.table("reservation_overrides").update({"transaction_id": result.id}).eq(
+            "id", consumed_override_id
+        ).execute()
+
+    return result
+
+
+# Overrides must be redeemed promptly after a manager grants one -- long
+# enough for the cashier to finish ringing up, short enough that a stale
+# token can't be reused later in the shift.
+_OVERRIDE_FRESHNESS_SECONDS = 600
+
+
+def _validate_reservation_override(supabase, override_id, table_id, blocking_reservation) -> str:
+    if not override_id:
+        end = blocking_reservation["end_time"][:5]
+        raise HTTPException(
+            status_code=409,
+            detail=f"Table is reserved for {blocking_reservation['customer_name']} until {end}. "
+            "A manager override is required to seat here.",
+        )
+
+    row = (
+        supabase.table("reservation_overrides")
+        .select("id, table_id, reservation_id, transaction_id, created_at")
+        .eq("id", override_id)
+        .maybe_single()
+        .execute()
+    )
+    override = row.data if row and row.data else None
+    if not override or override["table_id"] != table_id or override["reservation_id"] != blocking_reservation["id"]:
+        raise HTTPException(status_code=403, detail="Override does not match this table's current reservation")
+    if override["transaction_id"] is not None:
+        raise HTTPException(status_code=403, detail="Override has already been used")
+
+    created = datetime.fromisoformat(override["created_at"])
+    if (datetime.now(created.tzinfo) - created).total_seconds() > _OVERRIDE_FRESHNESS_SECONDS:
+        raise HTTPException(status_code=403, detail="Override has expired -- ask a manager to override again")
+
+    return override["id"]
 
 
 @router.get("/transactions", response_model=list[TransactionResponse])

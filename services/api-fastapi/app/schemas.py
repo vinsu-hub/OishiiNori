@@ -172,6 +172,9 @@ class CreateTransactionRequest(BaseModel):
     table_number: int | None = Field(default=None, gt=0)
     guest_count: int | None = Field(default=None, gt=0)
     payment_method: TransactionPaymentMethod | None = None
+    # Set by the POS when a manager has overridden a reservation-blocked table
+    # (see /pos/tables/override). Consumed exactly once by this transaction.
+    reservation_override_id: str | None = None
 
 
 class TransactionItemAddonResponse(BaseModel):
@@ -1129,12 +1132,16 @@ ReservationStatus = Literal["pending", "confirmed", "declined", "cancelled"]
 class TableCreate(BaseModel):
     label: str
     capacity: int = Field(gt=0)
+    pos_table_number: int | None = Field(default=None, gt=0)
 
 
 class TableUpdate(BaseModel):
     label: str | None = None
     capacity: int | None = Field(default=None, gt=0)
     active: bool | None = None
+    # Explicit sentinel is not needed: a client that wants to clear the link
+    # sends null, which model_dump(exclude_unset=True) still includes.
+    pos_table_number: int | None = Field(default=None, gt=0)
 
 
 class TableOut(BaseModel):
@@ -1142,8 +1149,42 @@ class TableOut(BaseModel):
     label: str
     capacity: int
     active: bool
+    pos_table_number: int | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class PosTableReservationInfo(BaseModel):
+    reservation_number: int
+    customer_name: str
+    party_size: int
+    start_time: time
+    end_time: time
+
+
+class PosTableStatusResponse(BaseModel):
+    blocked: bool
+    pos_table_number: int
+    table_id: str | None = None
+    table_label: str | None = None
+    reservation: PosTableReservationInfo | None = None
+
+
+class PosTableOverrideRequest(BaseModel):
+    table_number: int = Field(gt=0)
+    employee_number: str = Field(min_length=1)
+    pin: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+
+class PosTableOverrideResponse(BaseModel):
+    override_id: str
+
+
+class ReservationOverrideOut(BaseModel):
+    reason: str
+    created_at: datetime
+    overridden_by: str | None = None
 
 
 class CreateReservationRequest(BaseModel):
@@ -1170,6 +1211,7 @@ class ReservationOut(BaseModel):
     customer_note: str | None = None
     declined_reason: str | None = None
     created_at: datetime
+    overrides: list[ReservationOverrideOut] = Field(default_factory=list)
 
 
 class ReservationStatusResponse(BaseModel):

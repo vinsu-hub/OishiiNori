@@ -36,6 +36,7 @@ import {
   ApiProductSize,
   ApiRecipeItem,
   OrderType,
+  PosTableStatus,
   TransactionPaymentMethod,
   createTransaction,
   QueuedOfflineError,
@@ -44,6 +45,8 @@ import {
   fetchDiscountTypes,
   fetchProducts,
   fetchRecipe,
+  overrideTableBlock,
+  posTableStatus,
 } from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
 
@@ -161,6 +164,17 @@ export default function POSTerminal() {
   const [guestCount, setGuestCount] = useState(2);
   const [paymentMethod, setPaymentMethod] = useState<TransactionPaymentMethod | null>(null);
 
+  // Reservation block: when the typed table has a live confirmed reservation
+  // the POS shows it as reserved and blocks the charge until a manager
+  // overrides (mirrors the Owner's Request PIN re-auth). overrideId is the
+  // single-use token returned by that override, passed to createTransaction.
+  const [tableStatus, setTableStatus] = useState<PosTableStatus | null>(null);
+  const [overrideId, setOverrideId] = useState<string | null>(null);
+  const [overrideOpen, setOverrideOpen] = useState(false);
+  const [overrideForm, setOverrideForm] = useState({ employeeNumber: '', pin: '', reason: '' });
+  const [overrideBusy, setOverrideBusy] = useState(false);
+  const tableBlocked = !!tableStatus?.blocked && !overrideId;
+
   const [searchQuery, setSearchQuery] = useState('');
   const [availabilityFilter, setAvailabilityFilter] = useState<
     'all' | 'available' | 'low_stock' | 'unavailable'
@@ -191,6 +205,33 @@ export default function POSTerminal() {
       .catch((e) => toast.error(`Failed to load menu: ${e.message}`))
       .finally(() => setLoading(false));
   }, []);
+
+  // Check the typed table against confirmed reservations. Debounced so a
+  // cashier typing "12" doesn't fire a request for "1" first. Any change to
+  // the table number invalidates a previously granted override.
+  useEffect(() => {
+    setOverrideId(null);
+    const raw = tableNumber.trim();
+    const n = Number(raw);
+    if (orderType !== 'dine_in' || raw === '' || !Number.isInteger(n) || n <= 0) {
+      setTableStatus(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      posTableStatus(n)
+        .then((s) => {
+          if (!cancelled) setTableStatus(s);
+        })
+        .catch(() => {
+          if (!cancelled) setTableStatus(null);
+        });
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [tableNumber, orderType]);
 
   // F3 scroll-to-discounts, F4 hold order, Esc clear order -- matches the
   // SMFC reference's shortcuts for these actions. F5 (free-text per-item
@@ -356,6 +397,30 @@ export default function POSTerminal() {
     setOwnerRequestOpen(false);
   }
 
+  async function submitTableOverride() {
+    if (!overrideForm.employeeNumber || !overrideForm.pin || !overrideForm.reason.trim()) {
+      toast.error('Employee number, PIN, and a reason are required');
+      return;
+    }
+    setOverrideBusy(true);
+    try {
+      const { override_id } = await overrideTableBlock({
+        table_number: Number(tableNumber),
+        employee_number: overrideForm.employeeNumber,
+        pin: overrideForm.pin,
+        reason: overrideForm.reason.trim(),
+      });
+      setOverrideId(override_id);
+      setOverrideOpen(false);
+      setOverrideForm({ employeeNumber: '', pin: '', reason: '' });
+      toast.success('Reservation override applied');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Override failed');
+    } finally {
+      setOverrideBusy(false);
+    }
+  }
+
   function clearOwnerRequest() {
     setOwnerRequestConfirmed(null);
     setOwnerRequestForm({ employeeNumber: '', pin: '', note: '' });
@@ -459,6 +524,10 @@ export default function POSTerminal() {
       toast.error('Table number is required for dine-in orders');
       return;
     }
+    if (tableBlocked) {
+      toast.error('This table is reserved -- a manager override is required to seat here');
+      return;
+    }
     setSubmitting(true);
     try {
       const transaction = await createTransaction({
@@ -478,6 +547,7 @@ export default function POSTerminal() {
         table_number: orderType === 'dine_in' ? Number(tableNumber) : null,
         guest_count: orderType === 'dine_in' ? guestCount : null,
         payment_method: paymentMethod ?? undefined,
+        reservation_override_id: overrideId ?? undefined,
       });
       toast.success(
         `Sale complete -- total ${formatCurrency(transaction.total_amount)} (discount ${formatCurrency(
@@ -486,6 +556,8 @@ export default function POSTerminal() {
       );
       clearOrder();
       setTableNumber('');
+      setTableStatus(null);
+      setOverrideId(null);
       setPaymentMethod(null);
     } catch (e) {
       if (e instanceof QueuedOfflineError) {
@@ -793,6 +865,29 @@ export default function POSTerminal() {
               </Button>
             </div>
           </div>
+          {orderType === 'dine_in' && tableStatus?.blocked && tableStatus.reservation && (
+            <div
+              className={`rounded-md border p-2 text-xs ${
+                overrideId
+                  ? 'border-amber-300 bg-amber-50 text-amber-800'
+                  : 'border-destructive/40 bg-destructive/10 text-destructive'
+              }`}
+            >
+              {overrideId ? (
+                <p>Override applied -- seating on reserved table {tableStatus.pos_table_number}.</p>
+              ) : (
+                <div className="flex items-center justify-between gap-2">
+                  <span>
+                    Table {tableStatus.pos_table_number} is reserved for {tableStatus.reservation.customer_name} (party
+                    of {tableStatus.reservation.party_size}) until {tableStatus.reservation.end_time.slice(0, 5)}.
+                  </span>
+                  <Button size="sm" variant="outline" className="h-7 shrink-0" onClick={() => setOverrideOpen(true)}>
+                    Override
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             {orderType === 'dine_in' ? (
               <>
@@ -996,8 +1091,13 @@ export default function POSTerminal() {
               </div>
             </div>
 
-            <Button className="w-full" size="lg" disabled={submitting || cart.length === 0} onClick={handleCharge}>
-              {submitting ? 'Charging...' : 'Charge'}
+            <Button
+              className="w-full"
+              size="lg"
+              disabled={submitting || cart.length === 0 || tableBlocked}
+              onClick={handleCharge}
+            >
+              {submitting ? 'Charging...' : tableBlocked ? 'Table reserved' : 'Charge'}
             </Button>
           </div>
         </div>
@@ -1064,6 +1164,49 @@ export default function POSTerminal() {
           </div>
           <DialogFooter>
             <Button onClick={confirmOwnerRequest}>Confirm</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reservation override -- manager seats a walk-in on a reserved table */}
+      <Dialog open={overrideOpen} onOpenChange={setOverrideOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Override reservation block</DialogTitle>
+            <DialogDescription>
+              {tableStatus?.reservation
+                ? `Table ${tableStatus.pos_table_number} is reserved for ${tableStatus.reservation.customer_name} until ${tableStatus.reservation.end_time.slice(0, 5)}. A manager must re-enter their own kiosk credentials to seat here anyway.`
+                : 'A manager must re-enter their own kiosk credentials to seat here anyway.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Employee number</Label>
+              <Input
+                value={overrideForm.employeeNumber}
+                onChange={(e) => setOverrideForm({ ...overrideForm, employeeNumber: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label>PIN</Label>
+              <Input
+                type="password"
+                value={overrideForm.pin}
+                onChange={(e) => setOverrideForm({ ...overrideForm, pin: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label>Reason</Label>
+              <Input
+                value={overrideForm.reason}
+                onChange={(e) => setOverrideForm({ ...overrideForm, reason: e.target.value })}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={submitTableOverride} disabled={overrideBusy}>
+              {overrideBusy ? 'Verifying...' : 'Override and continue'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

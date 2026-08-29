@@ -25,6 +25,7 @@ export function TablesPanel() {
   const [editTarget, setEditTarget] = useState<ApiTable | 'new' | null>(null);
   const [label, setLabel] = useState('');
   const [capacity, setCapacity] = useState('');
+  const [posTableNumber, setPosTableNumber] = useState('');
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(() => {
@@ -41,12 +42,14 @@ export function TablesPanel() {
   function openNew() {
     setLabel('');
     setCapacity('');
+    setPosTableNumber('');
     setEditTarget('new');
   }
 
   function openEdit(table: ApiTable) {
     setLabel(table.label);
     setCapacity(String(table.capacity));
+    setPosTableNumber(table.pos_table_number == null ? '' : String(table.pos_table_number));
     setEditTarget(table);
   }
 
@@ -56,13 +59,19 @@ export function TablesPanel() {
       toast.error('A label and a capacity greater than 0 are required');
       return;
     }
+    const trimmedPos = posTableNumber.trim();
+    const posNum = trimmedPos === '' ? null : Number(trimmedPos);
+    if (posNum !== null && (!Number.isInteger(posNum) || posNum <= 0)) {
+      toast.error('POS table number must be a positive whole number');
+      return;
+    }
     setSaving(true);
     try {
       if (editTarget === 'new') {
-        await createTable({ label: label.trim(), capacity: cap });
+        await createTable({ label: label.trim(), capacity: cap, pos_table_number: posNum });
         toast.success('Table added');
       } else if (editTarget) {
-        await updateTable(editTarget.id, { label: label.trim(), capacity: cap });
+        await updateTable(editTarget.id, { label: label.trim(), capacity: cap, pos_table_number: posNum });
         toast.success('Table updated');
       }
       setEditTarget(null);
@@ -103,6 +112,7 @@ export function TablesPanel() {
                 <TableRow>
                   <TableHead>Label</TableHead>
                   <TableHead>Capacity</TableHead>
+                  <TableHead>POS #</TableHead>
                   <TableHead>Active</TableHead>
                   {canManage && <TableHead />}
                 </TableRow>
@@ -112,6 +122,9 @@ export function TablesPanel() {
                   <TableRow key={t.id}>
                     <TableCell className="font-medium">{t.label}</TableCell>
                     <TableCell>{t.capacity}</TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {t.pos_table_number ?? '--'}
+                    </TableCell>
                     <TableCell>
                       {canManage ? (
                         <Switch checked={t.active} onCheckedChange={(checked) => toggleActive(t, checked)} />
@@ -153,6 +166,20 @@ export function TablesPanel() {
                 onChange={(e) => setCapacity(e.target.value)}
                 className="max-w-[120px]"
               />
+            </div>
+            <div className="space-y-1">
+              <Label>POS table number</Label>
+              <Input
+                type="number"
+                min={1}
+                value={posTableNumber}
+                onChange={(e) => setPosTableNumber(e.target.value)}
+                className="max-w-[120px]"
+                placeholder="e.g. 3"
+              />
+              <p className="text-xs text-muted-foreground">
+                The number cashiers type on the POS. Leave blank if this table isn't seated from the POS.
+              </p>
             </div>
           </div>
           <DialogFooter>

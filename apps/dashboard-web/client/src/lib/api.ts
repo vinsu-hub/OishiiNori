@@ -310,6 +310,7 @@ export interface CreateTransactionRequest {
   table_number?: number | null;
   guest_count?: number | null;
   payment_method?: TransactionPaymentMethod | null;
+  reservation_override_id?: string;
 }
 
 export interface ApiTransactionItemAddon {
@@ -1394,6 +1395,7 @@ export interface ApiTable {
   label: string;
   capacity: number;
   active: boolean;
+  pos_table_number: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -1402,15 +1404,46 @@ export function fetchTables(): Promise<ApiTable[]> {
   return request('/tables');
 }
 
-export function createTable(body: { label: string; capacity: number }): Promise<ApiTable> {
+export function createTable(body: {
+  label: string;
+  capacity: number;
+  pos_table_number?: number | null;
+}): Promise<ApiTable> {
   return request('/tables', { method: 'POST', body: JSON.stringify(body) });
 }
 
 export function updateTable(
   id: string,
-  body: Partial<{ label: string; capacity: number; active: boolean }>
+  body: Partial<{ label: string; capacity: number; active: boolean; pos_table_number: number | null }>
 ): Promise<ApiTable> {
   return request(`/tables/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+export interface PosTableStatus {
+  blocked: boolean;
+  pos_table_number: number;
+  table_id: string | null;
+  table_label: string | null;
+  reservation: {
+    reservation_number: number;
+    customer_name: string;
+    party_size: number;
+    start_time: string;
+    end_time: string;
+  } | null;
+}
+
+export function posTableStatus(tableNumber: number): Promise<PosTableStatus> {
+  return request(`/pos/tables/status?table_number=${tableNumber}`);
+}
+
+export function overrideTableBlock(body: {
+  table_number: number;
+  employee_number: string;
+  pin: string;
+  reason: string;
+}): Promise<{ override_id: string }> {
+  return request('/pos/tables/override', { method: 'POST', body: JSON.stringify(body) });
 }
 
 export type ReservationStatus = 'pending' | 'confirmed' | 'declined' | 'cancelled';
@@ -1430,6 +1463,7 @@ export interface ApiReservation {
   customer_note: string | null;
   declined_reason: string | null;
   created_at: string;
+  overrides: { reason: string; created_at: string; overridden_by: string | null }[];
 }
 
 export function fetchReservations(status?: ReservationStatus, date?: string): Promise<ApiReservation[]> {
