@@ -136,14 +136,27 @@ try:
         s_min = s.hour * 60 + s.minute - PREP_BUFFER_MIN
         e_min = e.hour * 60 + e.minute
         cur_min = cur.hour * 60 + cur.minute
-        if s_min <= cur_min < e_min:
+        inside = s_min <= cur_min < e_min if s_min <= e_min else (cur_min >= s_min or cur_min < e_min)
+        if inside:
             in_window = True
     check("floor plan would paint the table reserved right now", in_window, str(fp_rows))
 
 finally:
     print("\n=== Cleanup ===")
     if reservation_id:
-        requests.post(f"{API_BASE}/reservations/{reservation_id}/cancel", headers=headers, timeout=15)
+        # Best-effort via the API, then hard-guarantee via admin so a flaky
+        # cold-start response can't leave a "reserved" table on the floor plan.
+        try:
+            requests.post(f"{API_BASE}/reservations/{reservation_id}/cancel", headers=headers, timeout=15)
+        except Exception:
+            pass
+        still = (
+            admin.table("reservations").select("status").eq("id", reservation_id).maybe_single().execute().data
+        )
+        if still and still["status"] not in ("cancelled", "declined"):
+            admin.table("reservations").update(
+                {"status": "cancelled", "cancelled_at": datetime.now(timezone.utc).isoformat()}
+            ).eq("id", reservation_id).execute()
         print("cancelled the test reservation")
     restore = {k: v for k, v in original.items() if k in ("vat_rate", "open_time", "close_time", "closed_weekdays")}
     requests.patch(f"{API_BASE}/settings/business", headers=headers, json=restore, timeout=15)

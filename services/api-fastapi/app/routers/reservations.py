@@ -178,7 +178,13 @@ def _blocking_reservation(supabase, table_id: str, at: datetime) -> Optional[dic
     for r in rows:
         start = _time_add_minutes(time.fromisoformat(r["start_time"]), -RESERVATION_PREP_BUFFER_MINUTES)
         end = time.fromisoformat(r["end_time"])
-        if start <= at_time < end:
+        # The buffered window can run past midnight (late close + a near-close
+        # start); when it wraps, end < start and "inside" means at >= start OR
+        # at < end. (A booking whose start date is yesterday isn't matched here
+        # -- reservation_date is filtered to `at`'s date -- which is fine for
+        # the realistic same-evening case this guards.)
+        inside = start <= at_time < end if start <= end else (at_time >= start or at_time < end)
+        if inside:
             return r
     return None
 

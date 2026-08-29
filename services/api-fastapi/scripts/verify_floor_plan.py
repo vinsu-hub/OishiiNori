@@ -55,15 +55,16 @@ headers = {"Authorization": f"Bearer {token}"}
 print("logged in as qa.tester\n")
 
 # --- 1. migration applied -------------------------------------------------
-cols = admin.table("tables").select("id, pos_x, capacity_min, capacity_max, needs_layout_review").limit(1).execute().data
-check("0032 columns exist on tables", bool(cols) and "pos_x" in cols[0], str(cols[0] if cols else None))
-if cols:
-    row = cols[0]
-    check(
-        "existing rows backfilled (pos_x + capacity range + needs_layout_review)",
-        row["pos_x"] is not None and row["capacity_min"] is not None and row["needs_layout_review"] is True,
-        str(row),
-    )
+rows = (
+    admin.table("tables")
+    .select("id, label, pos_x, capacity_min, capacity_max, needs_layout_review")
+    .eq("active", True)
+    .execute()
+    .data
+)
+check("0032 columns exist on tables", bool(rows) and "pos_x" in rows[0], str(rows[0] if rows else None))
+bad = [r["label"] for r in rows if r["pos_x"] is None or r["capacity_min"] is None or r["capacity_max"] is None]
+check("every active table has a position + capacity range", not bad, f"missing on: {bad}")
 
 admin.table("tables").delete().eq("label", "QA-FloorPlan").execute()  # clear a leftover from a failed run
 test_table = admin.table("tables").insert(

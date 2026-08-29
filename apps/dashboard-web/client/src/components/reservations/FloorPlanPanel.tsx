@@ -144,20 +144,19 @@ export function FloorPlanPanel() {
       const openTxn = t.pos_table_number != null ? openTxnByPosNumber.get(t.pos_table_number) ?? null : null;
 
       let reservation: ApiReservation | null = null;
+      let breach = false;
       for (const r of reservations) {
         if (r.table_id !== t.id || r.reservation_date !== iso) continue;
-        const start = hhmmToMinutes(r.start_time);
+        const start = hhmmToMinutes(r.start_time) - RESERVATION_PREP_BUFFER_MIN;
         const end = hhmmToMinutes(r.end_time);
-        if (minutes >= start - RESERVATION_PREP_BUFFER_MIN && minutes < end) {
+        // Window can wrap past midnight (late close + a near-close start).
+        const inWindow = start <= end ? minutes >= start && minutes < end : minutes >= start || minutes < end;
+        if (inWindow) {
           reservation = r;
+          breach = !openTxn && minutes >= hhmmToMinutes(r.start_time) + RESERVATION_PREP_BUFFER_MIN;
           break;
         }
       }
-
-      const breach =
-        !!reservation &&
-        !openTxn &&
-        phNow().minutes >= hhmmToMinutes(reservation.start_time) + RESERVATION_PREP_BUFFER_MIN;
 
       const state: TableState = breach ? 'red' : openTxn || reservation ? 'orange' : 'white';
       return { state, openTxn, reservation, breach };

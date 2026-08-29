@@ -108,10 +108,18 @@ if not size_row:
     sys.exit(1)
 SIZE_ID = size_row[0]["id"]
 
-table = admin.table("tables").insert(
-    {"label": "QA-POS-Block", "capacity": 4, "pos_table_number": POS_NUMBER}
-).execute().data[0]
-print(f"created QA-POS-Block (cap 4, pos #{POS_NUMBER}, id {table['id']})\n")
+# Reuse a leftover QA-POS-Block row if one exists (older runs may leave it,
+# and FK on delete restrict blocks deleting a row that ever held a
+# reservation); otherwise create it.
+_spec = {"label": "QA-POS-Block", "capacity": 4, "capacity_min": 4, "capacity_max": 4,
+         "pos_table_number": POS_NUMBER, "active": True}
+_existing = admin.table("tables").select("id").eq("label", "QA-POS-Block").maybe_single().execute()
+if _existing and _existing.data:
+    table = admin.table("tables").update(_spec).eq("id", _existing.data["id"]).execute().data[0]
+    print(f"reused QA-POS-Block (pos #{POS_NUMBER}, id {table['id']})\n")
+else:
+    table = admin.table("tables").insert(_spec).execute().data[0]
+    print(f"created QA-POS-Block (pos #{POS_NUMBER}, id {table['id']})\n")
 
 created_reservation_id = None
 created_txn_ids: list[str] = []
@@ -236,6 +244,14 @@ finally:
             json={"reason": "QA verification"},
             timeout=15,
         )
+    # Cancel the test reservation so it doesn't linger as a "reserved" table
+    # on the floor plan / Requests list.
+    if created_reservation_id:
+        from datetime import datetime, timezone
+        admin.table("reservations").update(
+            {"status": "cancelled", "cancelled_at": datetime.now(timezone.utc).isoformat()}
+        ).eq("id", created_reservation_id).execute()
+        print("cancelled the test reservation")
     admin.table("tables").update({"active": False, "pos_table_number": None}).eq("id", table["id"]).execute()
     restore = {k: v for k, v in original_settings.items() if k in ("vat_rate", "open_time", "close_time", "closed_weekdays")}
     requests.patch(f"{API_BASE}/settings/business", headers=mgr_headers, json=restore, timeout=15)
