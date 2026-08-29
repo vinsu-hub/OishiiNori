@@ -33,7 +33,42 @@ import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 const RESERVATION_PREP_BUFFER_MIN = 15; // must match reservations.py
 
 const CANVAS_W = 1000;
-const CANVAS_H = 680;
+
+// Zoom control (bottom-left of the canvas). Persisted per browser session so
+// switching Reservations tabs doesn't reset it.
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 1.5;
+const ZOOM_STEP = 0.1;
+const ZOOM_KEY = 'floorplan-zoom';
+
+function readZoom(): number {
+  try {
+    const v = Number(sessionStorage.getItem(ZOOM_KEY));
+    if (v >= ZOOM_MIN && v <= ZOOM_MAX) return v;
+  } catch {
+    /* private mode / storage disabled */
+  }
+  return 1;
+}
+
+// Display-only minimum footprint so the label + seat count + order info fit.
+// Never written back to the DB -- the stored width/height is respected above
+// these floors.
+function renderSize(t: ApiTable): { w: number; h: number } {
+  if (t.shape === 'round') {
+    const d = Math.max(104, t.width, t.height);
+    return { w: d, h: d };
+  }
+  const w = Math.max(t.shape === 'rectangle' ? 148 : 104, t.width);
+  const h = Math.max(92, t.height);
+  return { w, h };
+}
+
+function seatLabel(t: ApiTable): string {
+  const lo = t.capacity_min ?? t.capacity;
+  const hi = t.capacity_max ?? t.capacity;
+  return lo !== hi ? `${lo}–${hi} seats` : `${hi} seat${hi === 1 ? '' : 's'}`;
+}
 
 function elapsedSeconds(since: string, now: Date): number {
   return Math.max(0, Math.floor((now.getTime() - new Date(since).getTime()) / 1000));
@@ -73,6 +108,72 @@ const STATE_CLASS: Record<TableState, string> = {
   red: 'bg-red-100 border-red-500 text-red-900',
 };
 
+// Chair-nub decorations along the top/bottom edge (or around a round table).
+// Purely visual -- the count is a cue, not a literal seat diagram.
+function ChairNubs({ shape }: { shape: TableShape }) {
+  const nub = 'pointer-events-none absolute rounded bg-current opacity-25';
+  if (shape === 'round') {
+    return (
+      <>
+        <span className={`${nub} left-1/2 -top-1.5 h-2 w-6 -translate-x-1/2`} />
+        <span className={`${nub} left-1/2 -bottom-1.5 h-2 w-6 -translate-x-1/2`} />
+        <span className={`${nub} -left-1.5 top-1/2 h-6 w-2 -translate-y-1/2`} />
+        <span className={`${nub} -right-1.5 top-1/2 h-6 w-2 -translate-y-1/2`} />
+      </>
+    );
+  }
+  const count = shape === 'rectangle' ? 3 : 2;
+  const pcts = count === 3 ? ['25%', '50%', '75%'] : ['33%', '67%'];
+  return (
+    <>
+      {pcts.map((p) => (
+        <span key={`t${p}`} className={`${nub} -top-1.5 h-2 w-7 -translate-x-1/2`} style={{ left: p }} />
+      ))}
+      {pcts.map((p) => (
+        <span key={`b${p}`} className={`${nub} -bottom-1.5 h-2 w-7 -translate-x-1/2`} style={{ left: p }} />
+      ))}
+    </>
+  );
+}
+
+function LegendBar() {
+  const swatch = 'inline-block h-3 w-4 shrink-0 rounded-sm border';
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border bg-card px-3 py-2 text-xs">
+      <span className="flex items-center gap-1.5">
+        <span className={`${swatch} bg-card border-border`} /> Available
+      </span>
+      <span className="flex items-center gap-1.5">
+        <span className={`${swatch} bg-orange-200 border-orange-400`} /> Occupied
+      </span>
+      <span className="flex items-center gap-1.5">
+        <span className={`${swatch} bg-orange-50 border-orange-300`} /> Reserved
+      </span>
+      <span className="flex items-center gap-1.5">
+        <span className={`${swatch} bg-red-100 border-red-500`} /> Needs Attention
+      </span>
+      <span className="flex items-center gap-1.5">
+        <span className="inline-block h-3 w-3 shrink-0 rounded-full bg-amber-400" /> Unverified
+      </span>
+      <span className="text-muted-foreground">
+        Occupied &amp; Reserved share the orange family &mdash; both mean &ldquo;something&rsquo;s happening here.&rdquo;
+      </span>
+    </div>
+  );
+}
+
+function EntranceMarker({ x, y }: { x: number; y: number }) {
+  return (
+    <div
+      className="pointer-events-none absolute flex items-end gap-2 text-muted-foreground"
+      style={{ left: x, top: y }}
+    >
+      <span className="relative block h-9 w-12 rounded-tl-full border-b-2 border-l-2 border-muted-foreground/60" />
+      <span className="pb-1 text-[11px] font-semibold uppercase tracking-wide">Entrance</span>
+    </div>
+  );
+}
+
 export function FloorPlanPanel() {
   const { user } = useAuth();
   const canManage = user?.role === 'manager' || user?.role === 'executive';
@@ -84,16 +185,19 @@ export function FloorPlanPanel() {
   const [loading, setLoading] = useState(true);
 
   const [now, setNow] = useState(() => new Date());
-  const [zone, setZone] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [seatGuests, setSeatGuests] = useState(2);
+  const [zoom, setZoom] = useState<number>(readZoom);
+  const [activeZone, setActiveZone] = useState<string | null>(null);
 
   // Optimistic positions during a drag, keyed by table id.
   const [posOverride, setPosOverride] = useState<Record<string, { x: number; y: number }>>({});
-  const dragRef = useRef<{ id: string; offX: number; offY: number } | null>(null);
-  const canvasRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{ id: string; zone: string; offX: number; offY: number } | null>(null);
+  const zoneCanvasRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const zoneSectionRefs = useRef<Record<string, HTMLElement | null>>({});
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(() => {
     const iso = todayIsoPH();
@@ -118,6 +222,14 @@ export function FloorPlanPanel() {
     return () => clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(ZOOM_KEY, String(zoom));
+    } catch {
+      /* private mode / storage disabled */
+    }
+  }, [zoom]);
+
   const zones = useMemo(() => {
     const set = new Set<string>();
     for (const t of tables) if (editing || t.active) set.add(t.floor_group || 'Main Dining');
@@ -125,8 +237,15 @@ export function FloorPlanPanel() {
   }, [tables, editing]);
 
   useEffect(() => {
-    if (zones.length && (zone === null || !zones.includes(zone))) setZone(zones[0]);
-  }, [zones, zone]);
+    if (zones.length && (activeZone === null || !zones.includes(activeZone))) setActiveZone(zones[0]);
+  }, [zones, activeZone]);
+
+  // The zone that gets the entrance marker: the first one whose name looks
+  // like the main room, else the last zone.
+  const entranceZone = useMemo(() => {
+    if (!zones.length) return null;
+    return zones.find((z) => /main|dining/i.test(z)) ?? zones[zones.length - 1];
+  }, [zones]);
 
   const openTxnByPosNumber = useMemo(() => {
     const map = new Map<number, ApiTransaction>();
@@ -164,34 +283,81 @@ export function FloorPlanPanel() {
     [openTxnByPosNumber, reservations]
   );
 
-  const visibleTables = useMemo(
-    () => tables.filter((t) => (editing || t.active) && (t.floor_group || 'Main Dining') === zone),
-    [tables, editing, zone]
+  const shownTables = useMemo(
+    () => tables.filter((t) => editing || t.active),
+    [tables, editing]
+  );
+  const tablesByZone = useMemo(() => {
+    const map: Record<string, ApiTable[]> = {};
+    for (const t of shownTables) {
+      const z = t.floor_group || 'Main Dining';
+      (map[z] ||= []).push(t);
+    }
+    return map;
+  }, [shownTables]);
+
+  // Per-zone canvas size: wide enough for CANVAS_W, tall enough for the
+  // lowest table in that zone plus room for the entrance marker.
+  const zoneDims = useCallback(
+    (zone: string): { w: number; h: number } => {
+      let maxX = 520;
+      let maxY = 240;
+      for (const t of tablesByZone[zone] ?? []) {
+        const { w, h } = renderSize(t);
+        const x = posOverride[t.id]?.x ?? t.pos_x ?? 40;
+        const y = posOverride[t.id]?.y ?? t.pos_y ?? 40;
+        maxX = Math.max(maxX, x + w + 48);
+        maxY = Math.max(maxY, y + h + 56);
+      }
+      return { w: Math.max(CANVAS_W, maxX), h: maxY + (zone === entranceZone ? 40 : 0) };
+    },
+    [tablesByZone, posOverride, entranceZone]
   );
 
   const unverifiedCount = useMemo(() => tables.filter((t) => t.needs_layout_review).length, [tables]);
+
+  function jumpToZone(zone: string) {
+    setActiveZone(zone);
+    zoneSectionRefs.current[zone]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function zoomBy(delta: number) {
+    setZoom((z) => {
+      const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round((z + delta) * 100) / 100));
+      return next;
+    });
+  }
 
   // ---- drag (editor) ----
   function onTablePointerDown(e: React.PointerEvent, t: ApiTable) {
     if (!editing) return;
     e.preventDefault();
     setSelectedId(t.id);
-    const rect = canvasRef.current!.getBoundingClientRect();
+    const zone = t.floor_group || 'Main Dining';
+    const canvas = zoneCanvasRefs.current[zone];
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
     const curX = posOverride[t.id]?.x ?? t.pos_x ?? 0;
     const curY = posOverride[t.id]?.y ?? t.pos_y ?? 0;
+    // rect is post-transform (zoomed) -- convert the pointer offset back to
+    // unscaled canvas units.
     dragRef.current = {
       id: t.id,
-      offX: e.clientX - rect.left - curX,
-      offY: e.clientY - rect.top - curY,
+      zone,
+      offX: (e.clientX - rect.left) / zoom - curX,
+      offY: (e.clientY - rect.top) / zoom - curY,
     };
     (e.target as Element).setPointerCapture(e.pointerId);
   }
   function onTablePointerMove(e: React.PointerEvent) {
     const d = dragRef.current;
-    if (!d || !canvasRef.current) return;
-    const rect = canvasRef.current.getBoundingClientRect();
-    const x = Math.max(0, Math.min(CANVAS_W - 20, e.clientX - rect.left - d.offX));
-    const y = Math.max(0, Math.min(CANVAS_H - 20, e.clientY - rect.top - d.offY));
+    if (!d) return;
+    const canvas = zoneCanvasRefs.current[d.zone];
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const dims = zoneDims(d.zone);
+    const x = Math.max(0, Math.min(dims.w - 20, (e.clientX - rect.left) / zoom - d.offX));
+    const y = Math.max(0, Math.min(dims.h - 20, (e.clientY - rect.top) / zoom - d.offY));
     setPosOverride((p) => ({ ...p, [d.id]: { x, y } }));
   }
   async function onTablePointerUp() {
@@ -225,12 +391,73 @@ export function FloorPlanPanel() {
     navigate(`/pos?table=${t.pos_table_number}&guests=${guests}`);
   }
 
+  function renderTable(t: ApiTable) {
+    const d = derive(t);
+    const { w, h } = renderSize(t);
+    const x = posOverride[t.id]?.x ?? t.pos_x ?? 40;
+    const y = posOverride[t.id]?.y ?? t.pos_y ?? 40;
+    return (
+      <button
+        key={t.id}
+        type="button"
+        onPointerDown={(e) => onTablePointerDown(e, t)}
+        onClick={() => {
+          if (editing) setSelectedId(t.id);
+          else {
+            setDetailId(t.id);
+            setSeatGuests(Math.min(2, t.capacity_max ?? t.capacity));
+          }
+        }}
+        className={[
+          'absolute flex flex-col items-center justify-center border-2 p-1 text-center text-[11px] leading-tight transition',
+          t.shape === 'round' ? 'rounded-full' : 'rounded-md',
+          STATE_CLASS[d.state],
+          editing ? 'cursor-move' : 'cursor-pointer hover:brightness-95',
+          selectedId === t.id && editing ? 'ring-2 ring-primary' : '',
+        ].join(' ')}
+        style={{ left: x, top: y, width: w, height: h }}
+      >
+        <ChairNubs shape={t.shape} />
+        <span className="font-semibold">{t.label}</span>
+        <span className="text-[10px] font-medium opacity-70">{seatLabel(t)}</span>
+        {d.openTxn && (
+          <>
+            <span className="mt-0.5 font-semibold">{formatCurrency(d.openTxn.total_amount)}</span>
+            <span className="text-[10px] opacity-80">
+              &#9201; {elapsedLabel(elapsedSeconds(d.openTxn.opened_at, now))}
+            </span>
+          </>
+        )}
+        {!d.openTxn && d.reservation && (
+          <>
+            <span className="mt-0.5 w-full truncate">{d.reservation.customer_name}</span>
+            <span className="text-[10px] opacity-80">
+              {d.reservation.party_size}p &middot; {hhmm(d.reservation.start_time)}
+            </span>
+          </>
+        )}
+        {d.breach && <span className="font-semibold">overdue</span>}
+        {t.needs_layout_review && (
+          <span
+            className="absolute -top-1.5 -right-1.5 h-3 w-3 rounded-full bg-amber-400"
+            title="Not verified on-site"
+          />
+        )}
+      </button>
+    );
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-1">
           {zones.map((z) => (
-            <Button key={z} size="sm" variant={z === zone ? 'default' : 'outline'} onClick={() => setZone(z)}>
+            <Button
+              key={z}
+              size="sm"
+              variant={z === activeZone ? 'default' : 'outline'}
+              onClick={() => jumpToZone(z)}
+            >
               {z}
             </Button>
           ))}
@@ -262,63 +489,63 @@ export function FloorPlanPanel() {
       )}
 
       <div className="flex gap-4">
-        <div className="overflow-auto rounded-md border bg-muted/20">
-          <div
-            ref={canvasRef}
-            className="relative"
-            style={{ width: CANVAS_W, height: CANVAS_H }}
-            onPointerMove={onTablePointerMove}
-            onPointerUp={onTablePointerUp}
-          >
-            {visibleTables.map((t) => {
-              const d = derive(t);
-              const x = posOverride[t.id]?.x ?? t.pos_x ?? 40;
-              const y = posOverride[t.id]?.y ?? t.pos_y ?? 40;
-              const w = t.shape === 'rectangle' ? Math.max(t.width, 120) : t.width;
-              const h = t.height;
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  onPointerDown={(e) => onTablePointerDown(e, t)}
-                  onClick={() => {
-                    if (editing) setSelectedId(t.id);
-                    else {
-                      setDetailId(t.id);
-                      setSeatGuests(Math.min(2, t.capacity_max ?? t.capacity));
-                    }
-                  }}
-                  className={[
-                    'absolute flex flex-col items-center justify-center border-2 p-1 text-center text-[11px] leading-tight transition',
-                    t.shape === 'round' ? 'rounded-full' : 'rounded-md',
-                    STATE_CLASS[d.state],
-                    editing ? 'cursor-move' : 'cursor-pointer hover:brightness-95',
-                    selectedId === t.id && editing ? 'ring-2 ring-primary' : '',
-                  ].join(' ')}
-                  style={{ left: x, top: y, width: w, height: h }}
-                >
-                  <span className="font-semibold">{t.label}</span>
-                  {d.openTxn && (
-                    <>
-                      <span>{formatCurrency(d.openTxn.total_amount)}</span>
-                      <span>{elapsedLabel(elapsedSeconds(d.openTxn.opened_at, now))}</span>
-                    </>
-                  )}
-                  {!d.openTxn && d.reservation && (
-                    <>
-                      <span className="w-full truncate">{d.reservation.customer_name}</span>
-                      <span>
-                        {d.reservation.party_size}p · {hhmm(d.reservation.start_time)}
-                      </span>
-                    </>
-                  )}
-                  {d.breach && <span className="font-semibold">overdue</span>}
-                  {t.needs_layout_review && (
-                    <span className="absolute -top-1.5 -right-1.5 h-3 w-3 rounded-full bg-amber-400" title="Not verified on-site" />
-                  )}
-                </button>
-              );
-            })}
+        <div className="relative min-w-0 flex-1">
+          <div ref={scrollRef} className="max-h-[70vh] overflow-auto rounded-md border bg-muted/20">
+            <div
+              className="origin-top-left p-4"
+              style={{ transform: `scale(${zoom})`, width: `${100 / zoom}%` }}
+              onPointerMove={onTablePointerMove}
+              onPointerUp={onTablePointerUp}
+            >
+              {zones.map((zone, i) => {
+                const dims = zoneDims(zone);
+                return (
+                  <section
+                    key={zone}
+                    ref={(el) => {
+                      zoneSectionRefs.current[zone] = el;
+                    }}
+                    className={i > 0 ? 'mt-6 border-t border-dashed pt-6' : ''}
+                  >
+                    <h3 className="mb-2 text-xs font-bold uppercase tracking-widest text-primary">{zone}</h3>
+                    <div
+                      ref={(el) => {
+                        zoneCanvasRefs.current[zone] = el;
+                      }}
+                      className="relative"
+                      style={{ width: dims.w, height: dims.h }}
+                    >
+                      {(tablesByZone[zone] ?? []).map(renderTable)}
+                      {zone === entranceZone && (
+                        <EntranceMarker x={dims.w - 150} y={dims.h - 52} />
+                      )}
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Zoom control -- bottom-left, over the scroll area (target design). */}
+          <div className="absolute bottom-3 left-3 flex flex-col overflow-hidden rounded-md border bg-card shadow-sm">
+            <button
+              type="button"
+              aria-label="Zoom in"
+              className="flex h-10 w-10 items-center justify-center text-lg hover:bg-muted disabled:opacity-40"
+              disabled={zoom >= ZOOM_MAX}
+              onClick={() => zoomBy(ZOOM_STEP)}
+            >
+              +
+            </button>
+            <button
+              type="button"
+              aria-label="Zoom out"
+              className="flex h-10 w-10 items-center justify-center border-t text-lg hover:bg-muted disabled:opacity-40"
+              disabled={zoom <= ZOOM_MIN}
+              onClick={() => zoomBy(-ZOOM_STEP)}
+            >
+              &minus;
+            </button>
           </div>
         </div>
 
@@ -333,6 +560,8 @@ export function FloorPlanPanel() {
           />
         )}
       </div>
+
+      {tables.length > 0 && <LegendBar />}
 
       {/* Table detail / seating (view mode) */}
       <Dialog open={!!detail} onOpenChange={(o) => !o && setDetailId(null)}>

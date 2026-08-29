@@ -13,3 +13,6 @@ graphify-out/
 supabase/.temp/
 walkthrough-screenshots/
 Oishii_Nori_System_Walkthrough.docx
+
+.vercel
+.env*
