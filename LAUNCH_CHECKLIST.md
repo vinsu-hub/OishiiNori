@@ -32,11 +32,12 @@ Station Items' Usage now auto-fills from sales the same way Recipe Ingredients d
 - **Where to fix it:** dashboard-web → Stock → Station Items → Manage Catalog, per item — pick "per product sold" (e.g. 1 can per Coke) or "per transaction" (e.g. 1 box per takeout order) and set the quantity.
 - This is expected to happen gradually as the client works through the real ~200-item list, not all before day one — an item with no rule yet just needs a manual **Log Loss**/flag entry if something moves, same as before this automation existed.
 
-## 5. Reservation tables — zero active tables right now
+## 5. Reservation tables — verify the seeded roster on-site
 
-The `tables` roster currently has 5 entries, all inactive, all leftover from feature testing (`Table 1`, `Table 2`, `Table 3`, `VIP Table 1`, plus one more). **No reservation can be confirmed until at least one table is active** — the availability engine has nothing to assign a party to.
+The `tables` roster was seeded on 2026-08-29 with 12 tables (Booth 1–4 + Table 1–7 + Round 1, POS numbers 1–12) estimated from two on-site photos — **every one is flagged "not verified on-site."** Reservations and the floor plan work, but positions, zones, and capacities are guesses.
 
-- **Where to fix it:** dashboard-web → Reservations → Tables tab (manager/executive). Either repurpose the existing test rows (rename, set the real capacity, toggle active) or add fresh ones — either way, make sure the final active roster matches your actual floor plan and seat counts.
+- **Where to fix it:** dashboard-web → Reservations → **Floor Plan** tab → **Edit Layout** (manager/executive). Walk the physical room: drag each table to where it actually is, confirm its zone (Booth Row / Main Dining), and set its real capacity (a single number, or a min–max range for the benches). Saving a table clears its unverified flag. Confirm the round table's real seat count and whether Booth 4 is a bench or fixed chairs. Also set each table's **POS table number** to whatever the staff actually call it, so the POS reservation-block matches.
+- Two inactive rows (`QA-FloorPlan`, `QA-POS-Block`) are leftover verification-script scratch tables; they're deactivated and never shown to staff, and can't be deleted because past test reservations reference them. Leave them or have a developer clean them up — they don't affect operation.
 
 ## 6. Business hours — confirm they're actually correct
 

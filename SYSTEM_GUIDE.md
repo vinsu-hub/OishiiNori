@@ -2,7 +2,7 @@
 
 **Audience:** anyone who needs a top-to-bottom map of the system — new staff, the client, or a developer picking this up cold.
 **Scope:** every app, every page, every role, and how to actually use each one. For chronological build history see `SESSION_HANDOFF.md`/`PROGRESS.md`; for inventory-specific depth see `INVENTORY_SYSTEM_GUIDE.md`.
-**Status:** functionally complete, all 5 apps live in production (see [Deployment & local dev](#6-deployment--local-dev) for URLs). Before opening for real business, see `LAUNCH_CHECKLIST.md` — several real operational values (menu photos, ingredient costs, table setup) are still placeholder/incomplete.
+**Status:** functionally complete, all 5 apps live in production (see [Deployment & local dev](#6-deployment--local-dev) for URLs). Before opening for real business, see `LAUNCH_CHECKLIST.md` — several real operational values (menu photos, ingredient costs) are still placeholder/incomplete, and the floor-plan table roster is a photo-based estimate awaiting an on-site walkthrough (3.15.1).
 
 ---
 
@@ -66,7 +66,7 @@ Prices are always recomputed server-side from the live catalog — never trusted
 
 **Who:** all roles. **Pages:** `/pos`, `/order-queue`, `/pending-orders`.
 
-**POS Terminal** is the checkout screen: a product/size grid, a cart, discount selection, and a Charge button. To hold an ingredient on a line ("no cucumber"), open the order editor and check the box for it — that ingredient is excluded from automatic stock deduction entirely, not deducted-then-restored. Other POS Terminal features: **Held Orders** (park a cart mid-sale, F4, resumes later from the same shift, sessionStorage-scoped), **Favorites** (star items, persists across sessions), an **upsell rail** suggesting up to 6 not-in-cart drinks/dessert/light-side items, an **Owner's Request** flow (a manager/executive PIN re-verification for actions like a manual discount override), and **offline resilience** — if a Charge fails because the device genuinely lost network (not a real rejection like insufficient stock), the sale queues locally in the browser and shows "Offline — order queued, will sync automatically," auto-flushing once the connection returns; the header's sync badge reflects real pending-sync count.
+**POS Terminal** is the checkout screen: a product/size grid, a cart, discount selection, and a Charge button. To hold an ingredient on a line ("no cucumber"), open the order editor and check the box for it — that ingredient is excluded from automatic stock deduction entirely, not deducted-then-restored. For a Dine In order the cashier enters a table number; if that table has a confirmed reservation in its window (3.15) it shows as **Reserved** and Charge is blocked until a manager clears it with a PIN override, and a party over the table's capacity is rejected. Other POS Terminal features: **Held Orders** (park a cart mid-sale, F4, resumes later from the same shift, sessionStorage-scoped), **Favorites** (star items, persists across sessions), an **upsell rail** suggesting up to 6 not-in-cart drinks/dessert/light-side items, an **Owner's Request** flow (a manager/executive PIN re-verification for actions like a manual discount override), and **offline resilience** — if a Charge fails because the device genuinely lost network (not a real rejection like insufficient stock), the sale queues locally in the browser and shows "Offline — order queued, will sync automatically," auto-flushing once the connection returns; the header's sync badge reflects real pending-sync count.
 
 **Order Queue** (`/order-queue`) is the live list of transactions: status + kitchen-status badges, search by order id/item, date/status filters, and a sound alert (mutable) when an order reaches "ready." Voiding a transaction here restores exactly the stock it deducted — no more, no less — and never restores anything that was held (since holds were never deducted).
 
@@ -181,15 +181,43 @@ Every screen after PIN entry auto-resets to idle after 30 seconds of no activity
 
 **Who:** any visitor (public, no login) to submit a request; any staff role to confirm/decline; manager/executive to manage the table roster. **Public entry points:** the Landing Page's "Reserve now" link, or Customer Menu with no `?table=` in the URL (or `?reserve=1` to skip straight to the form). **Staff page:** `/reservations` (dashboard-web).
 
-A real `tables` entity (label, capacity, active flag) backs full automatic conflict prevention — this isn't just a request form:
+A real `tables` entity backs full automatic conflict prevention — this isn't just a request form:
 1. Customer picks a party size, a date, and a real available time slot (fetched live — full/closed slots are never offered).
 2. On submit, the system auto-assigns the smallest table that fits the party and has no conflicting reservation for that window, and the request is created as **PENDING**. A `pending` reservation holds its slot exactly like a `confirmed` one — a second overlapping request is rejected (or routed to a different table) the instant it's submitted, not later at staff-review time.
 3. The confirmation screen polls automatically and updates in place to **CONFIRMED** or **DECLINED** the moment staff act — no reload needed.
-4. Staff work the queue from dashboard-web's **Reservations** page (two tabs): **Requests** — status-filtered list, Confirm/Decline (reason required)/Cancel actions; **Tables** — manager/executive-gated CRUD for the restaurant's real table roster (read-only for employees).
+4. Staff work the queue from dashboard-web's **Reservations** page (**three tabs**):
+   - **Requests** — status-filtered list; Confirm / Decline (reason required) / Cancel actions. A confirmed reservation that was overridden at the POS shows that override (reason + time) on its card.
+   - **Tables** — manager/executive-gated CRUD for the real table roster: label, capacity (or a min–max range for bench seating), a **POS table number** (the integer cashiers type on the POS Terminal — see below), and an Active toggle. Read-only for employees. An **Edit Layout** button jumps to the Floor Plan editor.
+   - **Floor Plan** — a spatial view of the room (see 3.15.1).
 
 Business hours (open/close time, closed weekdays — `/settings` → Business Hours, executive-only) are enforced on every request, both client- and server-side, and also drive the Landing Page's live hours display and the reservation slot picker.
 
-**Known gap, by design:** cancelling an already-submitted request is staff-initiated only — there's no customer self-service cancel/edit (matches the same limitation Digital Menu orders already have).
+**Confirming a reservation blocks that table at the POS.** Once a request is Confirmed, its table is held for `[start − 15 min, end]` (90-minute default turn) — a cashier who selects that table number for a Dine In order during the window sees it as **Reserved** and cannot ring up a walk-in there without a **manager PIN override** (same re-verification pattern as an Owner's Request). Every override is logged (`reservation_overrides`: who, why, when, and the sale it was used for) and surfaces on the reservation's Requests-tab card. The block is server-enforced, not just a UI warning — a dine-in charge on a blocked table is rejected `409` unless a fresh single-use override token is attached. The bridge between the two systems is `tables.pos_table_number`: a table only participates in this once a manager assigns its POS number.
+
+**Known gap, by design:** cancelling an already-submitted request is staff-initiated only — there's no customer self-service cancel/edit (matches the same limitation Digital Menu orders already have). Also, seating the reservation's *own* party currently goes through the same manager-override prompt — the block was built to stop walk-ins and doesn't yet distinguish the booked guest arriving.
+
+#### 3.15.1 Floor Plan
+
+**Who:** any staff role to view; manager/executive to edit the layout. **Page:** Reservations → **Floor Plan** tab.
+
+A live, colour-coded map of the dining room, grouped into **zone tabs** (`Booth Row`, `Main Dining` — free-text, editable). Each table is drawn at its saved position and shape (square / rectangle / round) and coloured by state, derived live (20-second poll + a 1-second tick for the timers) from open orders and confirmed reservations — nothing extra is stored:
+
+| Colour | Meaning |
+|---|---|
+| **White** | Free — no open order, no reservation in its window |
+| **Orange** | An open Dine In order (shows running total + elapsed time) **or** a confirmed reservation currently in its `[start − 15 min, end]` window (shows guest name, party size, time) |
+| **Red** | **Reservation overdue** — a confirmed reservation whose start time passed 15+ minutes ago with nobody seated |
+
+Tables flagged "not verified on-site" carry an amber dot and a header count.
+
+**Clicking a table:**
+- with an open order → its summary, an "Open in Order Queue" link, and a Void action
+- reserved → the reservation detail and a "Seat this reservation" button
+- free → a guest-count stepper (capped at the table's max) and "Seat party" — both routes hand off to the POS Terminal pre-seated at that table (`/pos?table=<n>&guests=<m>`), where the normal charge / capacity / reservation-block flow takes over. A party larger than the table's `capacity_max` is rejected at checkout.
+
+**Edit Layout** (manager/executive) toggles an editor: drag tables to reposition, and a side panel to set shape, size, zone, and capacity (a single number for fixed-chair tables, a min–max range for benches). Saving any table clears its "not verified on-site" flag.
+
+**Current roster (seeded 2026-08-29 from on-site photos — a starting estimate, every table flagged for on-site review):** Booth Row — Booth 1–3 (seat 4–6, bench), Booth 4 (seats 4); Main Dining — Table 1–3 (seat 4), Table 4–7 (seat 2), Round 1 (seats 4, capacity unconfirmed). POS numbers 1–12. A manager should walk the room with the editor open and correct positions, zones, and capacities before relying on it for service.
 
 ### 3.16 Landing Page & public SEO
 
@@ -212,7 +240,7 @@ See `LAUNCH_CHECKLIST.md` for what's still placeholder here (footer phone number
 Sidebar sections on the dashboard, exactly as gated:
 
 **All roles:**
-POS Terminal (`/pos`) · Order Queue (`/order-queue`) · Pending Orders (`/pending-orders`) · Kitchen Display (`/kitchen-display`) · Reservations (`/reservations`) · **Stock group:** Recipe Ingredients (`/stock`) · Station Items (`/stock?tab=stations`) · Receive Shipment (`/inventory-movements`) · Loss Log (`/loss-log`) · Utility Log (`/utility-log`) · Settings (`/settings`)
+POS Terminal (`/pos`) · Order Queue (`/order-queue`) · Pending Orders (`/pending-orders`) · Kitchen Display (`/kitchen-display`) · Reservations (`/reservations` — Requests / Tables / Floor Plan; the Tables roster + Floor Plan layout editor are manager/executive) · **Stock group:** Recipe Ingredients (`/stock`) · Station Items (`/stock?tab=stations`) · Receive Shipment (`/inventory-movements`) · Loss Log (`/loss-log`) · Utility Log (`/utility-log`) · Settings (`/settings`)
 
 **Manager + Executive:**
 **Stock group:** Overview (`/stock/overview`) · Alerts (`/stock/alerts`) · Variance Log (`/stock/variance-log`) · POS Management (`/pos-management`) · Employees (`/employees`) · HR Attendance (`/hr/attendance`) · Payroll (`/hr/payroll`) · Holiday Calendar (`/hr/holiday-calendar`) · Payroll Settings (`/hr/payroll-settings`)
@@ -240,10 +268,10 @@ One FastAPI service (`services/api-fastapi`), 19 routers, all registered in `app
 | `loss_records.py` | Log/list losses | Open |
 | `hr.py` | Attendance, payroll generation/records/PDFs, holidays, pay rules, overrides/audit, employee admin | Manager+/executive throughout |
 | `kiosk.py` | Staff Clock PIN verify/clock-in/clock-out | **Public** (PIN-authenticated per call) |
-| `transactions.py` | POS sale create/list/void/kitchen-status/bundle-fulfillment | Mostly open; void/status gated by ownership or manager+ |
+| `transactions.py` | POS sale create/list/void/kitchen-status/bundle-fulfillment. Create rejects a Dine In charge on a reservation-blocked or over-capacity table | Mostly open; void/status gated by ownership or manager+ |
 | `utility_logs.py` | Log/list utility readings | Open |
 | `digital_menu.py` | QR menu, add-ons, order submit/poll, staff approve/reject | `/public/*` open; staff endpoints authenticated, no extra role gate |
-| `reservations.py` | Table roster, availability, reservation submit/poll, staff confirm/decline/cancel | `/public/*` open; `/tables` write manager+; `/reservations` actions authenticated, no extra role gate |
+| `reservations.py` | Table roster + floor-plan layout, availability, reservation submit/poll, staff confirm/decline/cancel, POS table-status check + manager override | `/public/*` open; `/tables` write manager+; `/pos/tables/override` manager+; other `/reservations` actions authenticated, no extra role gate |
 | `dashboard_summary.py` | Command Center daily rollup | Executive only |
 | `analytics.py` | Sales trend, top products | Executive only |
 | `pnl.py` | P&L rollup | Executive only |
@@ -254,7 +282,7 @@ Plus `GET /health` (liveness, no auth).
 
 **Auth model:** a Bearer token is validated via Supabase Auth (`get_current_user`), then role/department/name is loaded from `profiles`. The backend uses a service-role Supabase client for every query — authorization lives entirely in FastAPI, not in Postgres row-level-security policies.
 
-**Database:** Supabase/Postgres, 25 applied migrations. Core tables: `profiles`, `products`/`product_sizes`/`bundle_components`, `ingredients`/`recipe_items`, `inventory_movements`, `transactions`/`transaction_items`/`bundle_fulfillments`, `discount_types`, `loss_records`, `utility_logs`, `stock_items`/`stock_count_entries`, `digital_orders`/`digital_order_items`/`digital_order_addons`, `menu_addons`, `attendance_logs`, `kiosks`, `holidays`, `pay_multiplier_rules`, `payroll_records`/`payroll_items`/`payroll_overrides`/`payroll_audit_log`, `ai_query_log`, `business_settings` (now also carries `open_time`/`close_time`/`closed_weekdays`), `tables`, `reservations`.
+**Database:** Supabase/Postgres, 32 applied migrations. Core tables: `profiles`, `products`/`product_sizes`/`bundle_components`, `ingredients`/`recipe_items`, `inventory_movements`, `transactions`/`transaction_items`/`bundle_fulfillments`, `discount_types`, `loss_records`, `utility_logs`, `stock_items`/`stock_count_entries`, `digital_orders`/`digital_order_items`/`digital_order_addons`, `menu_addons`, `attendance_logs`, `kiosks`, `holidays`, `pay_multiplier_rules`, `payroll_records`/`payroll_items`/`payroll_overrides`/`payroll_audit_log`, `ai_query_log`, `business_settings` (also carries `open_time`/`close_time`/`closed_weekdays`), `tables` (also carries `pos_table_number`, floor-plan position/shape/zone, `capacity_min`/`capacity_max`, `needs_layout_review`), `reservations`, `reservation_overrides`. Migrations are applied to the live DB with one-off `scripts/apply_00NN.py` scripts, not `supabase db push`.
 
 ---
 
@@ -303,6 +331,7 @@ Non-blocking backlog, not required for day-to-day operation:
 - `CORSMiddleware` still allows `allow_origins=["*"]`.
 - Groq (the AI provider)'s free tier has a real per-organization token-per-minute cap — the context payload was trimmed to fit comfortably, but may need revisiting if the business scales up significantly (more ingredients/employees/history).
 - No customer self-service cancel/edit for a submitted reservation (staff-initiated only — see 3.15).
+- The floor-plan roster (3.15.1) is a photo-based estimate — all 12 tables are flagged "not verified on-site." A manager needs to walk the room with the layout editor and confirm each table's position, zone, and capacity. Seating a reservation's own party still triggers the manager-override prompt.
 - Landing Page's general Contact form is local-only (not wired to the backend) and its footer phone number/Instagram link are still placeholders — see `LAUNCH_CHECKLIST.md`.
 - `oishii-nori-landing.vercel.app`'s custom alias currently needs re-pointing after each deploy unless it's added as a proper Domain in the Vercel dashboard (Settings → Domains) — `oishii-nori-landing-vince-tamis.vercel.app` always auto-tracks correctly in the meantime.
 
