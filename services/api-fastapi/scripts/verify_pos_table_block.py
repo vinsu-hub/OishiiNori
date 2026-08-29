@@ -87,6 +87,16 @@ emp_headers = {"Authorization": f"Bearer {emp_token}"}
 print("logged in as QA-EXEC (manager-tier) and QA-EMP (employee)\n")
 
 # Wide-open business hours so the reservation submit isn't rejected.
+REAL_HOURS = {"open_time": "10:00:00", "close_time": "22:00:00", "closed_weekdays": []}
+
+
+def _sane_restore(captured: dict) -> dict:
+    out = {k: v for k, v in captured.items() if k in ("vat_rate", "open_time", "close_time", "closed_weekdays")}
+    if out.get("open_time", "").startswith("00:") or out.get("close_time", "").startswith("23:"):
+        out.update(REAL_HOURS)
+    return out
+
+
 original_settings = requests.get(f"{API_BASE}/settings/business", headers=mgr_headers, timeout=15).json()
 requests.patch(
     f"{API_BASE}/settings/business",
@@ -253,8 +263,7 @@ finally:
         ).eq("id", created_reservation_id).execute()
         print("cancelled the test reservation")
     admin.table("tables").update({"active": False, "pos_table_number": None}).eq("id", table["id"]).execute()
-    restore = {k: v for k, v in original_settings.items() if k in ("vat_rate", "open_time", "close_time", "closed_weekdays")}
-    requests.patch(f"{API_BASE}/settings/business", headers=mgr_headers, json=restore, timeout=15)
+    requests.patch(f"{API_BASE}/settings/business", headers=mgr_headers, json=_sane_restore(original_settings), timeout=15)
     print("deactivated QA-POS-Block, restored business_settings")
 
 failed = [r for r in results if not r[1]]

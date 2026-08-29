@@ -56,6 +56,18 @@ today = now_ph.date().isoformat()
 start_dt = now_ph - timedelta(minutes=10)          # inside window, not yet a breach
 start_time = start_dt.strftime("%H:%M:00")
 
+# Oishii Nori's real hours (baked into the prerendered landing page). Used to
+# restore if the captured baseline looks like a leftover test override.
+REAL_HOURS = {"open_time": "10:00:00", "close_time": "22:00:00", "closed_weekdays": []}
+
+
+def _sane_restore(captured: dict) -> dict:
+    out = {k: v for k, v in captured.items() if k in ("vat_rate", "open_time", "close_time", "closed_weekdays")}
+    if out.get("open_time", "").startswith("00:") or out.get("close_time", "").startswith("23:"):
+        out.update(REAL_HOURS)
+    return out
+
+
 original = requests.get(f"{API_BASE}/settings/business", headers=headers, timeout=15).json()
 requests.patch(
     f"{API_BASE}/settings/business",
@@ -158,8 +170,7 @@ finally:
                 {"status": "cancelled", "cancelled_at": datetime.now(timezone.utc).isoformat()}
             ).eq("id", reservation_id).execute()
         print("cancelled the test reservation")
-    restore = {k: v for k, v in original.items() if k in ("vat_rate", "open_time", "close_time", "closed_weekdays")}
-    requests.patch(f"{API_BASE}/settings/business", headers=headers, json=restore, timeout=15)
+    requests.patch(f"{API_BASE}/settings/business", headers=headers, json=_sane_restore(original), timeout=15)
     print("restored business_settings")
 
 failed = [r for r in results if not r[1]]
