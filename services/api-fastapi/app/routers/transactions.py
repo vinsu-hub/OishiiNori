@@ -654,17 +654,24 @@ def get_transaction(transaction_id: str, user: CurrentUser = Depends(get_current
 
 @router.post("/transactions/{transaction_id}/close", response_model=TransactionResponse)
 def close_transaction(transaction_id: str, user: CurrentUser = Depends(get_current_user)):
+    """Settle an order and free its table -- the Floor Plan's "Diner done".
+    The order was already paid when it was rung up at the POS, so this just
+    moves it out of `open` (which is what the floor-plan occupancy logic keys
+    on) and completes its kitchen ticket so it leaves the Kitchen Display."""
     supabase = get_supabase()
     transaction = _fetch_transaction_with_items(supabase, transaction_id)
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
+    if transaction["status"] != "open":
+        raise HTTPException(status_code=409, detail=f"Order is already {transaction['status']}")
 
-    updated = (
-        supabase.table("transactions")
-        .update({"status": "closed", "closed_at": datetime.now(timezone.utc).isoformat()})
-        .eq("id", transaction_id)
-        .execute()
-    )
+    now_iso = datetime.now(timezone.utc).isoformat()
+    patch = {"status": "closed", "closed_at": now_iso}
+    if _kitchen_status_supported_check(supabase) and transaction.get("kitchen_status") != "completed":
+        patch["kitchen_status"] = "completed"
+        patch["kitchen_status_updated_at"] = now_iso
+
+    updated = supabase.table("transactions").update(patch).eq("id", transaction_id).execute()
     updated_row = updated.data[0]
     updated_row.setdefault("kitchen_status", "queued")
     updated_row.setdefault("order_type", None)

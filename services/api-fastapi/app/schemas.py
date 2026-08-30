@@ -1202,6 +1202,18 @@ class PosTableStatusResponse(BaseModel):
     reservation: PosTableReservationInfo | None = None
 
 
+class PosTableOverview(BaseModel):
+    """One row per active, POS-mapped table for the POS Terminal's table
+    picker: enough to render an option and know whether it can be chosen."""
+    pos_table_number: int
+    label: str
+    capacity_min: int | None = None
+    capacity_max: int
+    occupied: bool
+    reserved: bool
+    reservation: PosTableReservationInfo | None = None
+
+
 class PosTableOverrideRequest(BaseModel):
     table_number: int = Field(gt=0)
     employee_number: str = Field(min_length=1)

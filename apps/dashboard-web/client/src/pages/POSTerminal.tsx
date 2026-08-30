@@ -37,6 +37,7 @@ import {
   ApiProductSize,
   ApiRecipeItem,
   OrderType,
+  PosTableOverview,
   PosTableStatus,
   TransactionPaymentMethod,
   createTransaction,
@@ -44,6 +45,7 @@ import {
   fetchAddons,
   fetchBusinessSettings,
   fetchDiscountTypes,
+  fetchPosTablesOverview,
   fetchProducts,
   fetchRecipe,
   overrideTableBlock,
@@ -162,6 +164,8 @@ export default function POSTerminal() {
   // fact, not a terminal-wide setting.
   const [orderType, setOrderType] = useState<OrderType>('dine_in');
   const [tableNumber, setTableNumber] = useState('');
+  // Floor-plan tables for the Dine In picker (label + live occupied/reserved).
+  const [tableOptions, setTableOptions] = useState<PosTableOverview[]>([]);
   const [guestCount, setGuestCount] = useState(2);
   const [paymentMethod, setPaymentMethod] = useState<TransactionPaymentMethod | null>(null);
 
@@ -224,6 +228,23 @@ export default function POSTerminal() {
       .catch((e) => toast.error(`Failed to load menu: ${e.message}`))
       .finally(() => setLoading(false));
   }, []);
+
+  // Dine In table picker options -- refreshed on mount, whenever the order
+  // type returns to Dine In, and after a charge (a just-seated table should
+  // immediately read as occupied).
+  const loadTableOptions = React.useCallback(() => {
+    fetchPosTablesOverview()
+      .then(setTableOptions)
+      .catch(() => {
+        // Leave the picker empty rather than blocking Dine In; the charge-time
+        // reservation check still runs regardless.
+        toast.error('Could not load the table list -- pick the table on the Floor Plan or retry.');
+      });
+  }, []);
+
+  useEffect(() => {
+    if (orderType === 'dine_in') loadTableOptions();
+  }, [orderType, loadTableOptions]);
 
   // Check the typed table against confirmed reservations. Debounced so a
   // cashier typing "12" doesn't fire a request for "1" first. Any change to
@@ -578,6 +599,7 @@ export default function POSTerminal() {
       setTableStatus(null);
       setOverrideId(null);
       setPaymentMethod(null);
+      loadTableOptions();
     } catch (e) {
       if (e instanceof QueuedOfflineError) {
         // A real network failure, not a rejection -- the sale is safely
@@ -838,12 +860,35 @@ export default function POSTerminal() {
             <h3 className="font-corp-display font-semibold">Current Order</h3>
             <div className="flex items-center gap-2">
               {orderType === 'dine_in' && (
-                <Input
-                  className="w-24 h-8 text-sm text-right"
-                  placeholder="Table #"
-                  value={tableNumber}
-                  onChange={(e) => setTableNumber(e.target.value)}
-                />
+                <Select value={tableNumber} onValueChange={setTableNumber}>
+                  <SelectTrigger className="w-32 h-8 text-sm">
+                    <SelectValue placeholder="Table" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {tableOptions.length === 0 && (
+                      <SelectItem value="__none" disabled>
+                        No tables
+                      </SelectItem>
+                    )}
+                    {tableOptions.map((o) => {
+                      const seats =
+                        o.capacity_min && o.capacity_min !== o.capacity_max
+                          ? `${o.capacity_min}–${o.capacity_max}`
+                          : `${o.capacity_max}`;
+                      const status = o.occupied ? ' · Occupied' : o.reserved ? ' · Reserved' : '';
+                      return (
+                        <SelectItem
+                          key={o.pos_table_number}
+                          value={String(o.pos_table_number)}
+                          disabled={o.occupied}
+                        >
+                          {o.label} · seats {seats}
+                          {status}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
               )}
               <Popover>
                 <PopoverTrigger asChild>

@@ -1500,6 +1500,29 @@ export function posTableStatus(tableNumber: number): Promise<PosTableStatus> {
   return request(`/pos/tables/status?table_number=${tableNumber}`);
 }
 
+export interface PosTableOverview {
+  pos_table_number: number;
+  label: string;
+  capacity_min: number | null;
+  capacity_max: number;
+  occupied: boolean;
+  reserved: boolean;
+  reservation: {
+    reservation_number: number;
+    customer_name: string;
+    party_size: number;
+    start_time: string;
+    end_time: string;
+  } | null;
+}
+
+/** Every active, POS-mapped table + its live state, for the Dine In table
+ * picker. One call for the whole floor; the per-table block/override check
+ * still runs at charge time (posTableStatus). */
+export function fetchPosTablesOverview(): Promise<PosTableOverview[]> {
+  return request('/pos/tables/overview');
+}
+
 export function overrideTableBlock(body: {
   table_number: number;
   employee_number: string;

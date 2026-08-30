@@ -20,6 +20,8 @@ import {
   ApiTable,
   ApiTransaction,
   TableShape,
+  closeTransaction,
+  describeError,
   fetchReservations,
   fetchTables,
   fetchTransactions,
@@ -591,9 +593,25 @@ export function FloorPlanPanel() {
                     {detailDerived.openTxn.items.length === 1 ? '' : 's'} · opened{' '}
                     {new Date(detailDerived.openTxn.opened_at).toLocaleTimeString()}
                   </p>
-                  <div className="flex gap-2 pt-1">
+                  <div className="flex flex-wrap gap-2 pt-1">
                     <Button size="sm" onClick={() => navigate('/order-queue')}>
                       Open in Order Queue
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={async () => {
+                        try {
+                          await closeTransaction(detailDerived.openTxn!.id);
+                          toast.success('Table cleared');
+                          setDetailId(null);
+                          load();
+                        } catch (e) {
+                          toast.error(describeError(e, 'Could not clear the table'));
+                        }
+                      }}
+                    >
+                      Diner done
                     </Button>
                     <Button
                       size="sm"

@@ -1,6 +1,6 @@
 fastapi>=0.115
 uvicorn[standard]>=0.30
-supabase>=2.9
+supabase>=2.15
 python-dotenv>=1.0
 bcrypt>=4.2
 pydantic>=2.9

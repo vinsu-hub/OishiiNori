@@ -77,11 +77,37 @@ requests.patch(
     timeout=15,
 ).raise_for_status()
 
-small_table = admin.table("tables").insert({"label": "QA-Small", "capacity": 2}).execute().data[0]
-large_table = admin.table("tables").insert({"label": "QA-Large", "capacity": 6}).execute().data[0]
-print(f"created QA-Small (cap 2, id {small_table['id']}), QA-Large (cap 6, id {large_table['id']})\n")
+def ensure_table(label: str, capacity: int) -> dict:
+    """Reuse the QA row across runs -- cleanup only deactivates it (a hard
+    delete is blocked by any reservation that still references it), so a
+    plain insert would hit tables_label_key on the second run."""
+    existing = admin.table("tables").select("id").eq("label", label).execute().data
+    payload = {"capacity": capacity, "active": True, "capacity_min": None, "capacity_max": None}
+    if existing:
+        return admin.table("tables").update(payload).eq("id", existing[0]["id"]).execute().data[0]
+    return admin.table("tables").insert({"label": label, **payload}).execute().data[0]
+
+
+small_table = ensure_table("QA-Small", 2)
+# cap 20 so no real floor-plan table (max seats 6) can absorb the large-party
+# bookings below -- this test needs QA-Large to be the *only* candidate.
+large_table = ensure_table("QA-Large", 20)
+print(f"created QA-Small (cap 2, id {small_table['id']}), QA-Large (cap 20, id {large_table['id']})\n")
 
 created_reservation_ids: list[str] = []
+
+
+def free_qa_reservations():
+    """Force every reservation on the QA tables to 'cancelled' via the admin
+    client. Cleanup below only leaves reservations in their final state, so a
+    prior run's still-pending booking would otherwise hold a slot on the
+    shared DB and break this run's conflict assertions."""
+    admin.table("reservations").update({"status": "cancelled"}).in_(
+        "table_id", [small_table["id"], large_table["id"]]
+    ).in_("status", ["pending", "confirmed"]).execute()
+
+
+free_qa_reservations()
 
 
 def submit(party_size, start_time, name="QA Tester", phone="09171234567"):
@@ -99,37 +125,37 @@ def submit(party_size, start_time, name="QA Tester", phone="09171234567"):
 
 
 print("=== Scenario 1: auto-assign + full conflict prevention ===")
-r1 = submit(5, "18:00:00")
-check("party-of-5 @ 18:00 succeeds (only QA-Large fits)", r1.status_code == 200, f"status {r1.status_code} body {r1.text}")
+r1 = submit(8, "18:00:00")
+check("party-of-8 @ 18:00 succeeds (only QA-Large fits)", r1.status_code == 200, f"status {r1.status_code} body {r1.text}")
 res1 = r1.json() if r1.status_code == 200 else None
 if res1:
     created_reservation_ids.append(res1["id"])
-    check("auto-assigned table is QA-Large", res1.get("party_size") == 5, res1)
+    check("auto-assigned table is QA-Large", res1.get("party_size") == 8, res1)
 
-r2 = submit(5, "18:30:00")
+r2 = submit(8, "18:30:00")
 check(
-    "overlapping party-of-5 @ 18:30 is rejected (QA-Large held by pending r1)",
+    "overlapping party-of-8 @ 18:30 is rejected (QA-Large held by pending r1)",
     r2.status_code == 409,
     f"status {r2.status_code} body {r2.text}",
 )
 
 avail = requests.get(
     f"{API_BASE}/public/tables/availability",
-    params={"date": test_date.isoformat(), "party_size": 5},
+    params={"date": test_date.isoformat(), "party_size": 8},
     timeout=15,
 ).json()
 slot_1800 = next((s for s in avail["slots"] if s["time"] == "18:00"), None)
-check("availability shows 18:00 unavailable for party of 5", slot_1800 is not None and slot_1800["available"] is False, slot_1800)
+check("availability shows 18:00 unavailable for party of 8", slot_1800 is not None and slot_1800["available"] is False, slot_1800)
 slot_2000 = next((s for s in avail["slots"] if s["time"] == "20:00"), None)
-check("availability shows 20:00 still available for party of 5", slot_2000 is not None and slot_2000["available"] is True, slot_2000)
+check("availability shows 20:00 still available for party of 8", slot_2000 is not None and slot_2000["available"] is True, slot_2000)
 
 if res1:
     confirm_resp = requests.post(f"{API_BASE}/reservations/{res1['id']}/confirm", headers=headers, timeout=15)
     check("confirm succeeds", confirm_resp.status_code == 200, confirm_resp.text)
 
-    r3 = submit(5, "18:15:00")
+    r3 = submit(8, "18:15:00")
     check(
-        "overlapping party-of-5 @ 18:15 still rejected once r1 is CONFIRMED (not just pending)",
+        "overlapping party-of-8 @ 18:15 still rejected once r1 is CONFIRMED (not just pending)",
         r3.status_code == 409,
         f"status {r3.status_code} body {r3.text}",
     )
@@ -147,14 +173,14 @@ if res1:
 
     avail_after_cancel = requests.get(
         f"{API_BASE}/public/tables/availability",
-        params={"date": test_date.isoformat(), "party_size": 5},
+        params={"date": test_date.isoformat(), "party_size": 8},
         timeout=15,
     ).json()
     slot_1800_after = next((s for s in avail_after_cancel["slots"] if s["time"] == "18:00"), None)
     check("18:00 is available again after cancel", slot_1800_after is not None and slot_1800_after["available"] is True, slot_1800_after)
 
-r4 = submit(5, "19:00:00")
-check("fresh party-of-5 @ 19:00 succeeds (slot freed by the cancel above)", r4.status_code == 200, f"status {r4.status_code} body {r4.text}")
+r4 = submit(8, "19:00:00")
+check("fresh party-of-8 @ 19:00 succeeds (slot freed by the cancel above)", r4.status_code == 200, f"status {r4.status_code} body {r4.text}")
 if r4.status_code == 200:
     res4 = r4.json()
     created_reservation_ids.append(res4["id"])
@@ -166,8 +192,8 @@ if r4.status_code == 200:
     )
     check("decline of a pending reservation succeeds", decline4.status_code == 200, decline4.text)
 
-    r5 = submit(5, "19:15:00")
-    check("overlapping party-of-5 @ 19:15 succeeds after r4 was DECLINED (slot freed)", r5.status_code == 200, f"status {r5.status_code} body {r5.text}")
+    r5 = submit(8, "19:15:00")
+    check("overlapping party-of-8 @ 19:15 succeeds after r4 was DECLINED (slot freed)", r5.status_code == 200, f"status {r5.status_code} body {r5.text}")
     if r5.status_code == 200:
         created_reservation_ids.append(r5.json()["id"])
 
@@ -196,9 +222,10 @@ avail_closed = requests.get(
 check("availability reports closed=true for the closed weekday", avail_closed.get("closed") is True, avail_closed)
 
 print("\n=== Cleanup ===")
+free_qa_reservations()
 admin.table("tables").update({"active": False}).eq("id", small_table["id"]).execute()
 admin.table("tables").update({"active": False}).eq("id", large_table["id"]).execute()
-print(f"deactivated QA-Small/QA-Large ({len(created_reservation_ids)} test reservations left in their final state)")
+print(f"deactivated QA-Small/QA-Large ({len(created_reservation_ids)} test reservations cancelled)")
 
 restore = {k: v for k, v in original_settings.items() if k in ("vat_rate", "open_time", "close_time", "closed_weekdays")}
 requests.patch(f"{API_BASE}/settings/business", headers=headers, json=restore, timeout=15).raise_for_status()

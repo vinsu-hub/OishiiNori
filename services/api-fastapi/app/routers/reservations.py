@@ -27,6 +27,7 @@ from app.schemas import (
     DeclineReservationRequest,
     PosTableOverrideRequest,
     PosTableOverrideResponse,
+    PosTableOverview,
     PosTableStatusResponse,
     PublicBusinessHoursResponse,
     ReservationAvailabilityResponse,
@@ -450,6 +451,52 @@ def pos_table_status(
         "table_label": table["label"],
         "reservation": reservation,
     }
+
+
+@router.get("/pos/tables/overview", response_model=list[PosTableOverview])
+def pos_tables_overview(user: CurrentUser = Depends(get_current_user)):
+    """Every active, POS-mapped table plus its live state, for the POS
+    Terminal's Dine In table picker. `occupied` = has an open dine-in
+    transaction; `reserved` = a confirmed reservation is in its blocking
+    window right now (same rule as GET /pos/tables/status, one call for the
+    whole floor). The authoritative block/override check still happens per
+    table at charge time -- this is a selection aid, not a gate."""
+    supabase = get_supabase()
+    tables = (
+        supabase.table("tables")
+        .select("id, label, capacity, capacity_min, capacity_max, pos_table_number")
+        .eq("active", True)
+        .not_.is_("pos_table_number", "null")
+        .order("pos_table_number")
+        .execute()
+        .data
+    )
+    open_txn_tables = {
+        r["table_number"]
+        for r in supabase.table("transactions")
+        .select("table_number")
+        .eq("status", "open")
+        .eq("order_type", "dine_in")
+        .execute()
+        .data
+        if r.get("table_number") is not None
+    }
+    now = _now_ph()
+    overview = []
+    for t in tables:
+        blocking = _blocking_reservation(supabase, t["id"], now)
+        overview.append(
+            {
+                "pos_table_number": t["pos_table_number"],
+                "label": t["label"],
+                "capacity_min": t.get("capacity_min"),
+                "capacity_max": t.get("capacity_max") or t["capacity"],
+                "occupied": t["pos_table_number"] in open_txn_tables,
+                "reserved": blocking is not None,
+                "reservation": blocking,
+            }
+        )
+    return overview
 
 
 @router.post("/pos/tables/override", response_model=PosTableOverrideResponse)
