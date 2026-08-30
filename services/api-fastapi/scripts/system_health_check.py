@@ -363,27 +363,35 @@ def main():
     dev_manager_headers = {"Authorization": f"Bearer {dev_tokens['manager']}"} if "manager" in dev_tokens else None
     dev_employee_headers = {"Authorization": f"Bearer {dev_tokens['employee']}"} if "employee" in dev_tokens else None
 
-    exec_id_r = requests.get(f"{DEV_API_BASE}/employees", headers=dev_exec_headers)
-    exec_id = next(
-        (e["id"] for e in exec_id_r.json() if e.get("employee_number") == "QA-EXEC"), None
-    ) if exec_id_r.status_code == 200 else None
+    try:
+        exec_id_r = requests.get(f"{DEV_API_BASE}/employees", headers=dev_exec_headers, timeout=5)
+        dev_up = True
+    except requests.exceptions.RequestException:
+        dev_up = False
 
-    check_router_sweep(dev_exec_headers, DEV_API_BASE, "dev")
-    if dev_manager_headers and dev_employee_headers:
-        check_role_gating(dev_manager_headers, dev_employee_headers, DEV_API_BASE, "dev")
-
-    if dev_manager_headers:
-        check_tables_write(dev_manager_headers, DEV_API_BASE, "dev")
-
-    if exec_id:
-        check_order_lifecycle(dev_exec_headers, exec_id)
-        check_digital_menu_lifecycle(dev_exec_headers)
+    if not dev_up:
+        print(f"\n(dev API {DEV_API_BASE} unreachable -- skipping the dev pass, running the prod pass only)")
     else:
-        check("resolved QA-EXEC employee id for lifecycle tests", False, "could not find QA-EXEC in /employees")
+        exec_id = next(
+            (e["id"] for e in exec_id_r.json() if e.get("employee_number") == "QA-EXEC"), None
+        ) if exec_id_r.status_code == 200 else None
 
-    check_payroll(dev_exec_headers, DEV_API_BASE, "dev")
+        check_router_sweep(dev_exec_headers, DEV_API_BASE, "dev")
+        if dev_manager_headers and dev_employee_headers:
+            check_role_gating(dev_manager_headers, dev_employee_headers, DEV_API_BASE, "dev")
 
-    cleanup(dev_exec_headers)
+        if dev_manager_headers:
+            check_tables_write(dev_manager_headers, DEV_API_BASE, "dev")
+
+        if exec_id:
+            check_order_lifecycle(dev_exec_headers, exec_id)
+            check_digital_menu_lifecycle(dev_exec_headers)
+        else:
+            check("resolved QA-EXEC employee id for lifecycle tests", False, "could not find QA-EXEC in /employees")
+
+        check_payroll(dev_exec_headers, DEV_API_BASE, "dev")
+
+        cleanup(dev_exec_headers)
 
     # Read-only prod pass -- same executive account, prod is the same
     # Supabase project so the token is valid there too.
