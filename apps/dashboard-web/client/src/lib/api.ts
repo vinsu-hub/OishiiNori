@@ -27,9 +27,51 @@ export class QueuedOfflineError extends Error {
   }
 }
 
+/**
+ * Human-readable text for an error headed to a toast. A bare fetch rejection
+ * ("NetworkError when attempting to fetch resource" / "Failed to fetch") means
+ * the request never reached the server -- surface an action, not the browser's
+ * internal phrasing, which users read as a bug in the app.
+ */
+export function describeError(err: unknown, fallback = 'Something went wrong'): string {
+  if (isNetworkError(err)) {
+    return "Couldn't reach the server. Check your connection and try again.";
+  }
+  return err instanceof Error ? err.message : fallback;
+}
+
 // ---------------------------------------------------------------------------
 // Core request helper
 // ---------------------------------------------------------------------------
+
+/**
+ * fetch() that rides out a transient connection failure. A browser fetch
+ * rejects with a bare `TypeError` ("NetworkError when attempting to fetch
+ * resource") when the request never reached the server -- a Vercel edge blip,
+ * a deploy mid-propagation, a flaky Wi-Fi moment. Those clear on their own, so
+ * retry a couple of times with a short backoff before giving up. A resolved
+ * 4xx/5xx is a real answer and is returned immediately, never retried.
+ *
+ * Retrying is safe here: the one non-idempotent write that must never double
+ * (createTransaction) tolerates it -- after the retries are exhausted the
+ * original network-level TypeError is re-thrown unchanged, so that path's
+ * `isNetworkError` check still fires and the sale still falls through to the
+ * offline queue. The remaining POSTs are guarded server-side (e.g.
+ * tables.label is unique -- a retried create that already landed comes back
+ * as a plain 4xx, not a duplicate row).
+ */
+async function fetchWithRetry(url: string, init: RequestInit, attempts = 3): Promise<Response> {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fetch(url, init);
+    } catch (err) {
+      if (!isNetworkError(err) || i === attempts - 1) throw err;
+      await new Promise((r) => setTimeout(r, 400 * (i + 1)));
+    }
+  }
+  // Unreachable -- the loop either returns or throws on the last attempt.
+  throw new Error('unreachable');
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const {
@@ -39,7 +81,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error('Not signed in');
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetchWithRetry(`${API_BASE_URL}${path}`, {
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${session.access_token}`,
@@ -67,7 +109,7 @@ async function requestMultipart<T>(path: string, formData: FormData, method = 'P
   // Deliberately omits Content-Type -- the browser sets the multipart
   // boundary itself when given a FormData body; setting it manually breaks
   // the upload.
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetchWithRetry(`${API_BASE_URL}${path}`, {
     method,
     headers: { Authorization: `Bearer ${session.access_token}` },
     body: formData,
@@ -87,7 +129,7 @@ async function requestBlob(path: string): Promise<Blob> {
     throw new Error('Not signed in');
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetchWithRetry(`${API_BASE_URL}${path}`, {
     headers: { Authorization: `Bearer ${session.access_token}` },
   });
   if (!response.ok) {

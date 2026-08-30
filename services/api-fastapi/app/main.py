@@ -1,5 +1,9 @@
-from fastapi import FastAPI
+import logging
+import traceback
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.routers import (
     analytics,
@@ -31,6 +35,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+logger = logging.getLogger("uvicorn.error")
+
+
+@app.exception_handler(Exception)
+def unhandled_exception_handler(request: Request, exc: Exception):
+    """Turn any unhandled error into a JSON 500 that still carries CORS headers.
+
+    Starlette's ServerErrorMiddleware sits *outside* CORSMiddleware, so a raw
+    crash returns a 500 with no Access-Control-Allow-Origin -- the browser then
+    reports it as "NetworkError when attempting to fetch resource" and the real
+    cause is invisible. Handling it here keeps the response inside the CORS
+    layer so the dashboard shows the actual message.
+    """
+    logger.error("Unhandled error on %s %s\n%s", request.method, request.url.path,
+                 "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {type(exc).__name__}: {exc}"},
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
 
 app.include_router(products.router)
 app.include_router(recipes.router)

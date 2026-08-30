@@ -15,7 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { ApiTable, createTable, fetchTables, updateTable } from '@/lib/api';
+import { ApiTable, createTable, describeError, fetchTables, updateTable } from '@/lib/api';
 
 export function TablesPanel() {
   const { user } = useAuth();
@@ -33,7 +33,7 @@ export function TablesPanel() {
   const load = useCallback(() => {
     fetchTables()
       .then(setTables)
-      .catch((e) => toast.error(`Failed to load tables: ${e instanceof Error ? e.message : 'Unknown error'}`))
+      .catch((e) => toast.error(`Failed to load tables: ${describeError(e, 'Unknown error')}`))
       .finally(() => setLoading(false));
   }, []);
 
@@ -79,7 +79,7 @@ export function TablesPanel() {
       setEditTarget(null);
       load();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to save table');
+      toast.error(describeError(e, 'Failed to save table'));
     } finally {
       setSaving(false);
     }
@@ -90,7 +90,7 @@ export function TablesPanel() {
       await updateTable(table.id, { active });
       setTables((prev) => prev.map((t) => (t.id === table.id ? { ...t, active } : t)));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to update table');
+      toast.error(describeError(e, 'Failed to update table'));
     }
   }
 

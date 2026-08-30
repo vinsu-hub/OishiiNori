@@ -16,6 +16,7 @@ from datetime import date, datetime, time, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from postgrest.exceptions import APIError
 
 from app.auth import CurrentUser, get_current_user, require_role, verify_employee_pin
 from app.deps import get_supabase
@@ -290,7 +291,21 @@ def list_tables(user: CurrentUser = Depends(get_current_user)):
 def create_table(body: TableCreate, user: CurrentUser = Depends(get_current_user)):
     require_role(user, "manager", "executive")
     payload = body.model_dump(exclude_unset=True, exclude_none=True)
-    result = get_supabase().table("tables").insert(payload).execute()
+    label = (payload.get("label") or "").strip()
+    if not label:
+        raise HTTPException(status_code=422, detail="Table label is required")
+    payload["label"] = label
+    try:
+        result = get_supabase().table("tables").insert(payload).execute()
+    except APIError as e:
+        # tables.label is UNIQUE (0025) -- a retried or duplicate create lands
+        # here. Return a real 4xx (with CORS headers, via the middleware) so the
+        # dashboard shows a readable toast instead of a masked "NetworkError".
+        if e.code == "23505":
+            raise HTTPException(status_code=409, detail=f'A table named "{label}" already exists')
+        raise HTTPException(status_code=502, detail=f"Could not create table: {e.message}")
+    if not result.data:
+        raise HTTPException(status_code=502, detail="Table insert returned no row")
     return result.data[0]
 
 

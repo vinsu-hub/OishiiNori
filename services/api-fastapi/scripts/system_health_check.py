@@ -33,7 +33,6 @@ from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
-from supabase import create_client
 
 sys.stdout.reconfigure(encoding="utf-8")
 
@@ -67,12 +66,22 @@ def check(name: str, condition: bool, detail: str = ""):
 
 
 def login(email: str, password: str) -> str | None:
-    auth_client = create_client(SUPABASE_URL, SUPABASE_SECRET_KEY)
+    # Call GoTrue directly -- the installed supabase-py (2.9.0) rejects the
+    # newer sb_secret_ API key format in create_client() before any request.
     try:
-        session = auth_client.auth.sign_in_with_password({"email": email, "password": password})
-        return session.session.access_token
-    except Exception as e:
-        print(f"  login failed for {email}: {e}")
+        r = requests.post(
+            f"{SUPABASE_URL}/auth/v1/token",
+            params={"grant_type": "password"},
+            headers={"apikey": SUPABASE_SECRET_KEY, "Content-Type": "application/json"},
+            json={"email": email, "password": password},
+            timeout=30,
+        )
+        if r.status_code != 200:
+            print(f"  login failed for {email}: {r.status_code} {r.text[:300]}")
+            return None
+        return r.json()["access_token"]
+    except requests.exceptions.RequestException as e:
+        print(f"  login failed for {email}: {e!r}")
         return None
 
 
@@ -260,6 +269,46 @@ def check_digital_menu_lifecycle(exec_headers: dict):
     check("digital order correlates back to its transaction (table 99)", correlatable)
 
 
+# --- 6b. Tables create/retire (dev + prod, self-cleaning) -------------------
+def check_tables_write(manager_headers: dict, base: str, label: str):
+    print(f"\n-- 6b. Tables create/retire ({label}) --")
+    origin = {"Origin": PROD_APPS["dashboard"]}
+    temp_label = f"HEALTHCHECK {int(time.time())}"
+
+    r = requests.post(
+        f"{base}/tables",
+        json={"label": temp_label, "capacity": 2},
+        headers={**manager_headers, **origin},
+        timeout=20,
+    )
+    ok = r.status_code == 200
+    check(f"{label}: manager POST /tables -> 200", ok, f"got {r.status_code}: {r.text[:200]}")
+    # The "NetworkError" the dashboard reported == a response with no CORS
+    # header. Assert it's present on the real POST, not just the preflight.
+    check(
+        f"{label}: POST /tables response carries Access-Control-Allow-Origin",
+        r.headers.get("access-control-allow-origin") == "*",
+        f"got {r.headers.get('access-control-allow-origin')!r}",
+    )
+    if not ok:
+        return
+    table_id = r.json()["id"]
+
+    dup = requests.post(
+        f"{base}/tables", json={"label": temp_label, "capacity": 2}, headers=manager_headers, timeout=20
+    )
+    check(
+        f"{label}: duplicate label -> 409 (not 500/NetworkError)",
+        dup.status_code == 409,
+        f"got {dup.status_code}: {dup.text[:200]}",
+    )
+
+    retire = requests.patch(
+        f"{base}/tables/{table_id}", json={"active": False}, headers=manager_headers, timeout=20
+    )
+    check(f"{label}: retire health-check table {table_id[:8]}", retire.status_code == 200, retire.text[:200])
+
+
 # --- 7. Payroll consistency (dev + prod, read-only) -------------------------
 def check_payroll(exec_headers: dict, base: str, label: str):
     print(f"\n-- 7. Payroll demo data consistency ({label}) --")
@@ -323,6 +372,9 @@ def main():
     if dev_manager_headers and dev_employee_headers:
         check_role_gating(dev_manager_headers, dev_employee_headers, DEV_API_BASE, "dev")
 
+    if dev_manager_headers:
+        check_tables_write(dev_manager_headers, DEV_API_BASE, "dev")
+
     if exec_id:
         check_order_lifecycle(dev_exec_headers, exec_id)
         check_digital_menu_lifecycle(dev_exec_headers)
@@ -337,6 +389,8 @@ def main():
     # Supabase project so the token is valid there too.
     time.sleep(1)
     check_router_sweep(dev_exec_headers, PROD_API_BASE, "prod")
+    if dev_manager_headers:
+        check_tables_write(dev_manager_headers, PROD_API_BASE, "prod")
     check_payroll(dev_exec_headers, PROD_API_BASE, "prod")
 
     print("\n" + "=" * 60)
