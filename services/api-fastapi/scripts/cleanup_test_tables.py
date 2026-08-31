@@ -74,11 +74,11 @@ try:
 
         # transactions has no table_id FK (order_type/table_number are plain
         # columns), so only reservations can hold a FK to these rows.
-        cur.execute("select count(*) from reservations where table_id = any(%s)", (ids,))
+        cur.execute("select count(*) from reservations where table_id = any(%s::uuid[])", (ids,))
         child_reservations = cur.fetchone()[0]
 
-        cur.execute("delete from reservations where table_id = any(%s)", (ids,))
-        cur.execute("delete from tables where id = any(%s)", (ids,))
+        cur.execute("delete from reservations where table_id = any(%s::uuid[])", (ids,))
+        cur.execute("delete from tables where id = any(%s::uuid[])", (ids,))
 
     conn.commit()
     print(f"Deleted {len(ids)} test table(s) and {child_reservations} child reservation(s):")
