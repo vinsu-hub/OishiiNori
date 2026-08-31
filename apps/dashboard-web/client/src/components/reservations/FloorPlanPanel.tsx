@@ -16,12 +16,15 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
+  ApiProduct,
+  ApiProductSize,
   ApiReservation,
   ApiTable,
   ApiTransaction,
   TableShape,
   closeTransaction,
   describeError,
+  fetchProducts,
   fetchReservations,
   fetchTables,
   fetchTransactions,
@@ -184,6 +187,7 @@ export function FloorPlanPanel() {
   const [tables, setTables] = useState<ApiTable[]>([]);
   const [transactions, setTransactions] = useState<ApiTransaction[]>([]);
   const [reservations, setReservations] = useState<ApiReservation[]>([]);
+  const [products, setProducts] = useState<ApiProduct[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [now, setNow] = useState(() => new Date());
@@ -207,11 +211,13 @@ export function FloorPlanPanel() {
       fetchTables(),
       fetchTransactions({ date: iso }),
       fetchReservations('confirmed', iso),
+      fetchProducts(true),
     ])
-      .then(([t, tx, r]) => {
+      .then(([t, tx, r, p]) => {
         setTables(t);
         setTransactions(tx);
         setReservations(r);
+        setProducts(p);
       })
       .catch((e) => toast.error(`Failed to load floor plan: ${e instanceof Error ? e.message : 'Unknown error'}`))
       .finally(() => setLoading(false));
@@ -248,6 +254,16 @@ export function FloorPlanPanel() {
     if (!zones.length) return null;
     return zones.find((z) => /main|dining/i.test(z)) ?? zones[zones.length - 1];
   }, [zones]);
+
+  // size.id -> {product, size}, so an open order's line items can be shown by
+  // name in the detail dialog (same lookup KitchenDisplay / OrderQueue use).
+  const sizeIndex = useMemo(() => {
+    const map = new Map<string, { product: ApiProduct; size: ApiProductSize }>();
+    for (const product of products) {
+      for (const size of product.sizes) map.set(size.id, { product, size });
+    }
+    return map;
+  }, [products]);
 
   const openTxnByPosNumber = useMemo(() => {
     const map = new Map<number, ApiTransaction>();
@@ -424,7 +440,10 @@ export function FloorPlanPanel() {
         <span className="text-[10px] font-medium opacity-70">{seatLabel(t)}</span>
         {d.openTxn && (
           <>
-            <span className="mt-0.5 font-semibold">{formatCurrency(d.openTxn.total_amount)}</span>
+            <span className="mt-0.5 font-semibold">
+              {d.openTxn.order_number != null ? `#${d.openTxn.order_number} · ` : ''}
+              {formatCurrency(d.openTxn.total_amount)}
+            </span>
             <span className="text-[10px] opacity-80">
               &#9201; {elapsedLabel(elapsedSeconds(d.openTxn.opened_at, now))}
             </span>
@@ -584,15 +603,45 @@ export function FloorPlanPanel() {
 
               {detailDerived.openTxn ? (
                 <div className="space-y-2 text-sm">
-                  <p>
-                    Open order · {formatCurrency(detailDerived.openTxn.total_amount)} ·{' '}
+                  <p className="font-semibold">
+                    {detailDerived.openTxn.order_number != null
+                      ? `Order #${detailDerived.openTxn.order_number}`
+                      : 'Open order'}{' '}
+                    · {formatCurrency(detailDerived.openTxn.total_amount)} ·{' '}
                     {elapsedLabel(elapsedSeconds(detailDerived.openTxn.opened_at, now))} elapsed
                   </p>
-                  <p className="text-muted-foreground">
-                    {detailDerived.openTxn.items.length} item
-                    {detailDerived.openTxn.items.length === 1 ? '' : 's'} · opened{' '}
-                    {new Date(detailDerived.openTxn.opened_at).toLocaleTimeString()}
+                  <p className="text-xs text-muted-foreground">
+                    opened {new Date(detailDerived.openTxn.opened_at).toLocaleTimeString()}
+                    {detailDerived.openTxn.guest_count ? ` · ${detailDerived.openTxn.guest_count} guests` : ''}
                   </p>
+                  <ul className="space-y-1 rounded-md border bg-muted/30 p-2">
+                    {detailDerived.openTxn.items.map((item) => {
+                      const resolved = sizeIndex.get(item.product_size_id);
+                      const name = resolved
+                        ? `${resolved.product.name} (${resolved.size.size_label})`
+                        : 'Item';
+                      return (
+                        <li key={item.id}>
+                          <span className="font-medium">
+                            {item.quantity}× {name}
+                          </span>
+                          {item.held_ingredients.length > 0 && (
+                            <span className="block text-xs text-destructive">
+                              hold: {item.held_ingredients.join(', ')}
+                            </span>
+                          )}
+                          {item.addons.length > 0 && (
+                            <span className="block text-xs text-muted-foreground">
+                              +{' '}
+                              {item.addons
+                                .map((a) => `${a.addon_name ?? 'Add-on'}${a.quantity > 1 ? ` x${a.quantity}` : ''}`)
+                                .join(', ')}
+                            </span>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
                   <div className="flex flex-wrap gap-2 pt-1">
                     <Button size="sm" onClick={() => navigate('/order-queue')}>
                       Open in Order Queue

@@ -311,7 +311,9 @@ export default function KitchenDisplay() {
             <CardContent className="py-3">
               <p className="text-xs text-muted-foreground">Longest order</p>
               <p className="text-2xl font-semibold">
-                {longestOrder ? `${longestOrder.id.slice(0, 8)} (${elapsedLabel(elapsedSeconds(longestOrder.opened_at, now))})` : '--'}
+                {longestOrder
+                  ? `${longestOrder.order_number != null ? `#${longestOrder.order_number}` : longestOrder.id.slice(0, 8)} (${elapsedLabel(elapsedSeconds(longestOrder.opened_at, now))})`
+                  : '--'}
               </p>
             </CardContent>
           </Card>
@@ -338,7 +340,9 @@ export default function KitchenDisplay() {
                     <Card key={order.id}>
                       <CardHeader className="pb-2">
                         <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
-                          <span className="font-mono text-xs text-muted-foreground">{order.id.slice(0, 8)}</span>
+                          <span className="font-corp-display text-sm font-semibold" title={order.id}>
+                            {order.order_number != null ? `#${order.order_number}` : order.id.slice(0, 8)}
+                          </span>
                           {order.table_number != null && (
                             <Badge variant="outline">
                               Table {order.table_number}

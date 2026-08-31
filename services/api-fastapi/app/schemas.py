@@ -199,6 +199,7 @@ class TransactionItemResponse(BaseModel):
 
 class TransactionResponse(BaseModel):
     id: str
+    order_number: int | None = None
     employee_id: str
     status: TransactionStatus
     opened_at: datetime

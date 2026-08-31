@@ -29,6 +29,8 @@ import {
   X,
   Grid2x2,
   List as ListIcon,
+  CheckCircle2,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   ApiDiscountType,
@@ -306,6 +308,14 @@ export default function POSTerminal() {
   }, [cart, sizePickerProduct, ownerRequestOpen, editOrderOpen]);
 
   const selectedDiscount = discountTypes.find((d) => d.id === discountTypeId) || null;
+
+  // Dine In table selection -- surfaced as an explicit confirmation line so a
+  // cashier can verify at a glance they assigned the order to the right table.
+  const selectedTable =
+    tableOptions.find((o) => String(o.pos_table_number) === tableNumber) ?? null;
+  const selectedTableLabel =
+    selectedTable?.label ?? (tableNumber ? `Table ${tableNumber}` : null);
+  const overCapacity = selectedTable != null && guestCount > selectedTable.capacity_max;
 
   const subtotal = useMemo(
     () =>
@@ -590,9 +600,9 @@ export default function POSTerminal() {
         reservation_override_id: overrideId ?? undefined,
       });
       toast.success(
-        `Sale complete -- total ${formatCurrency(transaction.total_amount)} (discount ${formatCurrency(
-          transaction.discount_amount
-        )}, tax ${formatCurrency(transaction.tax_amount)})`
+        `${transaction.order_number != null ? `Order #${transaction.order_number} -- ` : ''}Sale complete -- total ${formatCurrency(
+          transaction.total_amount
+        )} (discount ${formatCurrency(transaction.discount_amount)}, tax ${formatCurrency(transaction.tax_amount)})`
       );
       clearOrder();
       setTableNumber('');
@@ -859,37 +869,6 @@ export default function POSTerminal() {
           <div className="flex items-center justify-between gap-2">
             <h3 className="font-corp-display font-semibold">Current Order</h3>
             <div className="flex items-center gap-2">
-              {orderType === 'dine_in' && (
-                <Select value={tableNumber} onValueChange={setTableNumber}>
-                  <SelectTrigger className="w-32 h-8 text-sm">
-                    <SelectValue placeholder="Table" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {tableOptions.length === 0 && (
-                      <SelectItem value="__none" disabled>
-                        No tables
-                      </SelectItem>
-                    )}
-                    {tableOptions.map((o) => {
-                      const seats =
-                        o.capacity_min && o.capacity_min !== o.capacity_max
-                          ? `${o.capacity_min}–${o.capacity_max}`
-                          : `${o.capacity_max}`;
-                      const status = o.occupied ? ' · Occupied' : o.reserved ? ' · Reserved' : '';
-                      return (
-                        <SelectItem
-                          key={o.pos_table_number}
-                          value={String(o.pos_table_number)}
-                          disabled={o.occupied}
-                        >
-                          {o.label} · seats {seats}
-                          {status}
-                        </SelectItem>
-                      );
-                    })}
-                  </SelectContent>
-                </Select>
-              )}
               <Popover>
                 <PopoverTrigger asChild>
                   <Button size="sm" variant="outline">
@@ -929,6 +908,57 @@ export default function POSTerminal() {
               </Button>
             </div>
           </div>
+          {orderType === 'dine_in' && (
+            <Select value={tableNumber} onValueChange={setTableNumber}>
+              <SelectTrigger className="w-full h-8 text-sm">
+                <SelectValue placeholder="Pick a table" />
+              </SelectTrigger>
+              <SelectContent>
+                {tableOptions.length === 0 && (
+                  <SelectItem value="__none" disabled>
+                    No tables
+                  </SelectItem>
+                )}
+                {tableOptions.map((o) => {
+                  const seats =
+                    o.capacity_min && o.capacity_min !== o.capacity_max
+                      ? `${o.capacity_min}–${o.capacity_max}`
+                      : `${o.capacity_max}`;
+                  const status = o.occupied ? ' · Occupied' : o.reserved ? ' · Reserved' : '';
+                  return (
+                    <SelectItem key={o.pos_table_number} value={String(o.pos_table_number)} disabled={o.occupied}>
+                      {o.label} · seats {seats}
+                      {status}
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+          )}
+          {orderType === 'dine_in' && (
+            selectedTableLabel ? (
+              <div
+                className={`flex items-center gap-2 rounded-md border p-2 text-xs ${
+                  overCapacity
+                    ? 'border-amber-300 bg-amber-50 text-amber-800'
+                    : 'border-green-300 bg-green-50 text-green-800'
+                }`}
+              >
+                {overCapacity ? (
+                  <AlertTriangle className="h-4 w-4 shrink-0" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4 shrink-0" />
+                )}
+                <span>
+                  Seated at <span className="font-semibold">{selectedTableLabel}</span>
+                  {selectedTable ? ` · ${selectedTable.capacity_max} seats · ${guestCount} guests` : ''}
+                  {overCapacity ? ' — over capacity' : ''}
+                </span>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">Pick a table to assign this order.</p>
+            )
+          )}
           {orderType === 'dine_in' && tableStatus?.blocked && tableStatus.reservation && (
             <div
               className={`rounded-md border p-2 text-xs ${
@@ -957,6 +987,11 @@ export default function POSTerminal() {
               <>
                 <Users className="w-4 h-4" />
                 <span>Dine In</span>
+                {selectedTableLabel && (
+                  <Badge variant="secondary" className="font-normal">
+                    {selectedTableLabel}
+                  </Badge>
+                )}
                 <div className="ml-auto flex items-center gap-2">
                   <Button
                     size="icon"

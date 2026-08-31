@@ -136,6 +136,8 @@ export default function OrderQueue() {
       list = list.filter(
         (t) =>
           t.id.toLowerCase().includes(q) ||
+          `#${t.order_number ?? ''}`.includes(q) ||
+          String(t.order_number ?? '').includes(q) ||
           t.items.some((i) => (productNameById.get(i.product_size_id) || '').toLowerCase().includes(q))
       );
     }
@@ -254,7 +256,9 @@ export default function OrderQueue() {
             <CardContent className="py-3 flex items-center justify-between">
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
-                  <span className="font-mono text-xs text-muted-foreground">{t.id.slice(0, 8)}</span>
+                  <span className="font-corp-display text-sm font-semibold" title={t.id}>
+                    {t.order_number != null ? `#${t.order_number}` : t.id.slice(0, 8)}
+                  </span>
                   <Badge variant={STATUS_VARIANT[t.status]}>{t.status}</Badge>
                   <Badge variant={KITCHEN_STATUS_VARIANT[t.kitchen_status]}>{t.kitchen_status}</Badge>
                   {t.table_number != null && (
@@ -321,7 +325,9 @@ export default function OrderQueue() {
       <Dialog open={!!voidTarget} onOpenChange={(open) => !open && setVoidTarget(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Void order {voidTarget?.id.slice(0, 8)}</DialogTitle>
+            <DialogTitle>
+              Void order {voidTarget?.order_number != null ? `#${voidTarget.order_number}` : voidTarget?.id.slice(0, 8)}
+            </DialogTitle>
           </DialogHeader>
           <Input
             placeholder="Reason for voiding"

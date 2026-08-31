@@ -204,6 +204,11 @@ def check_order_lifecycle(exec_headers: dict, exec_id: str):
     tx_id = txn["id"]
     voided_transaction_ids.append(tx_id)
     check("new transaction starts kitchen_status=queued", txn["kitchen_status"] == "queued")
+    check(
+        "new transaction has a daily order_number >= 1001",
+        isinstance(txn.get("order_number"), int) and txn["order_number"] >= 1001,
+        f"got {txn.get('order_number')!r}",
+    )
 
     for next_status in ["preparing", "ready", "completed"]:
         r = requests.patch(
@@ -270,6 +275,27 @@ def check_digital_menu_lifecycle(exec_headers: dict):
 
 
 # --- 6b. Tables create/retire (dev + prod, self-cleaning) -------------------
+def _purge_healthcheck_tables():
+    """Hard-delete every HEALTHCHECK * row (this run's and any left by older
+    runs) straight through PostgREST with the service key -- the API has no
+    DELETE /tables, and a soft-deactivated row still clutters the Tables list.
+    Called after each pass so the script leaves nothing behind."""
+    svc = {"apikey": SUPABASE_SECRET_KEY, "Authorization": f"Bearer {SUPABASE_SECRET_KEY}"}
+    try:
+        rows = requests.get(
+            f"{SUPABASE_URL}/rest/v1/tables?select=id&label=like.HEALTHCHECK%20*",
+            headers=svc, timeout=20,
+        ).json()
+        for row in rows:
+            requests.delete(
+                f"{SUPABASE_URL}/rest/v1/tables?id=eq.{row['id']}", headers=svc, timeout=20
+            )
+        if rows:
+            print(f"  (cleaned up {len(rows)} HEALTHCHECK table row(s))")
+    except requests.exceptions.RequestException as e:
+        print(f"  (HEALTHCHECK table cleanup skipped: {e!r})")
+
+
 def check_tables_write(manager_headers: dict, base: str, label: str):
     print(f"\n-- 6b. Tables create/retire ({label}) --")
     origin = {"Origin": PROD_APPS["dashboard"]}
@@ -307,6 +333,9 @@ def check_tables_write(manager_headers: dict, base: str, label: str):
         f"{base}/tables/{table_id}", json={"active": False}, headers=manager_headers, timeout=20
     )
     check(f"{label}: retire health-check table {table_id[:8]}", retire.status_code == 200, retire.text[:200])
+
+    # Don't leave the row behind (soft-deactivated still clutters the Tables list).
+    _purge_healthcheck_tables()
 
 
 # --- 7. Payroll consistency (dev + prod, read-only) -------------------------

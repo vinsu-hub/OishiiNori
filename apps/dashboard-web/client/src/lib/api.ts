@@ -377,6 +377,7 @@ export interface ApiTransactionItem {
 
 export interface ApiTransaction {
   id: string;
+  order_number: number | null;
   employee_id: string;
   status: TransactionStatus;
   opened_at: string;

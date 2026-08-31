@@ -51,6 +51,7 @@ _bundle_fulfillments_supported: bool | None = None
 _held_ingredients_supported: bool | None = None
 _transaction_item_addons_supported: bool | None = None
 _transaction_order_context_supported: bool | None = None
+_transaction_order_number_supported: bool | None = None
 
 
 def _kitchen_status_supported_check(supabase) -> bool:
@@ -114,6 +115,18 @@ def _transaction_order_context_supported_check(supabase) -> bool:
         except APIError:
             _transaction_order_context_supported = False
     return _transaction_order_context_supported
+
+
+def _transaction_order_number_supported_check(supabase) -> bool:
+    """Migration 0033 feature-detection, same pattern as the checks above."""
+    global _transaction_order_number_supported
+    if _transaction_order_number_supported is None:
+        try:
+            supabase.table("transactions").select("order_number").limit(1).execute()
+            _transaction_order_number_supported = True
+        except APIError:
+            _transaction_order_number_supported = False
+    return _transaction_order_number_supported
 
 
 def _attach_item_addons(supabase, items: list[dict]) -> None:
@@ -280,6 +293,7 @@ def _fetch_transaction_with_items(supabase, transaction_id: str) -> dict | None:
     _attach_item_addons(supabase, items)
     transaction["items"] = items
     transaction.setdefault("kitchen_status", "queued")
+    transaction.setdefault("order_number", None)
     transaction.setdefault("order_type", None)
     transaction.setdefault("table_number", None)
     transaction.setdefault("guest_count", None)
@@ -483,6 +497,7 @@ def _create_transaction_row(
     )
     transaction = updated.data[0]
     transaction.setdefault("kitchen_status", "queued")
+    transaction.setdefault("order_number", None)
     transaction.setdefault("order_type", None)
     transaction.setdefault("table_number", None)
     transaction.setdefault("guest_count", None)
@@ -600,12 +615,15 @@ def list_transactions(
     user: CurrentUser = Depends(get_current_user),
 ):
     supabase = get_supabase()
-    query = supabase.table("transactions").select(
+    columns = (
         "id, employee_id, status, opened_at, closed_at, total_amount, discount_type_id, "
         "discount_amount, tax_amount, is_owner_request, owner_request_by, owner_request_note, "
         "voided_by, voided_at, void_reason, kitchen_status, kitchen_status_updated_at, "
         "order_type, table_number, guest_count, payment_method"
     )
+    if _transaction_order_number_supported_check(supabase):
+        columns += ", order_number"
+    query = supabase.table("transactions").select(columns)
     if on_date:
         start, end = ph_day_bounds_utc(on_date)
         query = query.gte("opened_at", start).lte("opened_at", end)
@@ -634,6 +652,7 @@ def list_transactions(
     out = []
     for t in transactions:
         t.setdefault("kitchen_status", "queued")
+        t.setdefault("order_number", None)
         t.setdefault("order_type", None)
         t.setdefault("table_number", None)
         t.setdefault("guest_count", None)
