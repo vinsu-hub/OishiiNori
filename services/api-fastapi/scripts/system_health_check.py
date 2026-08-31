@@ -57,6 +57,7 @@ PAYROLL_PERIOD_END = "2026-06-15"
 
 results: list[tuple[str, bool, str]] = []
 voided_transaction_ids: list[str] = []
+created_digital_order_ids: list[str] = []
 
 
 def check(name: str, condition: bool, detail: str = ""):
@@ -262,6 +263,7 @@ def check_digital_menu_lifecycle(exec_headers: dict):
     if order_r.status_code != 200:
         return
     digital_order = order_r.json()
+    created_digital_order_ids.append(digital_order["id"])
 
     pending_r = requests.get(f"{DEV_API_BASE}/digital-orders?status=pending", headers=exec_headers)
     check(
@@ -382,6 +384,10 @@ def check_payroll(exec_headers: dict, base: str, label: str):
 # --- 8. Cleanup --------------------------------------------------------------
 def cleanup(exec_headers: dict):
     print("\n-- 8. Cleanup --")
+    # Void through the API first (exercises the void path + restores stock),
+    # then hard-delete the rows straight through PostgREST so a prod run leaves
+    # nothing behind -- local dev and prod share one DB (see the shared-Supabase
+    # note), so even a "dev only" lifecycle test pollutes the live boards.
     for tx_id in voided_transaction_ids:
         r = requests.post(
             f"{DEV_API_BASE}/transactions/{tx_id}/void",
@@ -389,6 +395,24 @@ def cleanup(exec_headers: dict):
             headers=exec_headers,
         )
         check(f"voided health-check transaction {tx_id[:8]}", r.status_code == 200, r.text)
+
+    svc = {"apikey": SUPABASE_SECRET_KEY, "Authorization": f"Bearer {SUPABASE_SECRET_KEY}"}
+    deleted = 0
+    try:
+        for oid in created_digital_order_ids:
+            requests.delete(
+                f"{SUPABASE_URL}/rest/v1/digital_orders?id=eq.{oid}", headers=svc, timeout=20
+            )
+            deleted += 1
+        for tx_id in voided_transaction_ids:
+            requests.delete(
+                f"{SUPABASE_URL}/rest/v1/transactions?id=eq.{tx_id}", headers=svc, timeout=20
+            )
+            deleted += 1
+        if deleted:
+            print(f"  (hard-deleted {deleted} health-check order row(s))")
+    except requests.exceptions.RequestException as e:
+        print(f"  (health-check order cleanup skipped: {e!r})")
 
 
 def main():
