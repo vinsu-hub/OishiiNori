@@ -515,6 +515,10 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
         raise HTTPException(status_code=403, detail="Cannot record a sale under another employee's id")
     if body.order_type == "dine_in" and not body.table_number:
         raise HTTPException(status_code=400, detail="Table number is required for dine-in orders")
+    # Payment method is a hard requirement at the POS (unlike a discount) so the
+    # till reconciles. The digital-order approval path doesn't come through here.
+    if not body.payment_method:
+        raise HTTPException(status_code=400, detail="Payment method is required")
 
     supabase = get_supabase()
 

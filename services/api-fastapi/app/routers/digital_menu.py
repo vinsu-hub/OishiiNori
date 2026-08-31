@@ -235,6 +235,9 @@ def approve_digital_order(order_id: str, user: CurrentUser = Depends(get_current
             )
             for i in order["items"]
         ],
+        # The customer already chose cash/gcash at QR-order time -- carry it
+        # through so every real sale has a payment method recorded.
+        payment_method=order.get("payment_method"),
     )
 
     # Add-ons aren't real catalog products, so they were never part of

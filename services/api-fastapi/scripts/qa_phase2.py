@@ -204,6 +204,7 @@ def main():
                 "employee_id": exec_id,
                 "items": [{"product_size_id": target_size["id"], "quantity": 1}],
                 "discount_type_id": discount_id,
+                "payment_method": "cash",
             },
             headers=exec_headers,
         )
@@ -227,6 +228,7 @@ def main():
                 "employee_id": exec_id,
                 "items": [{"product_size_id": target_size["id"], "quantity": 1}],
                 "discount_type_id": discount_id,
+                "payment_method": "cash",
             },
             headers=exec_headers,
         )

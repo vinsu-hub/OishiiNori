@@ -185,6 +185,7 @@ try:
             "order_type": "dine_in",
             "table_number": POS_NUMBER,
             "guest_count": 4,
+            "payment_method": "cash",
         }
         if override_id:
             payload["reservation_override_id"] = override_id

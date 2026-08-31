@@ -192,9 +192,21 @@ def check_order_lifecycle(exec_headers: dict, exec_id: str):
             headers=exec_headers,
         )
 
+    sale_body = {
+        "employee_id": exec_id,
+        "items": [{"product_size_id": target_size["id"], "quantity": 1}],
+    }
+
+    no_pay = requests.post(f"{DEV_API_BASE}/transactions", json=sale_body, headers=exec_headers)
+    check(
+        "POST /transactions without payment_method -> 400",
+        no_pay.status_code == 400,
+        f"got {no_pay.status_code}: {no_pay.text[:200]}",
+    )
+
     r = requests.post(
         f"{DEV_API_BASE}/transactions",
-        json={"employee_id": exec_id, "items": [{"product_size_id": target_size["id"], "quantity": 1}]},
+        json={**sale_body, "payment_method": "cash"},
         headers=exec_headers,
     )
     check("POST /transactions -> 200", r.status_code == 200, r.text)

@@ -317,6 +317,17 @@ export default function POSTerminal() {
     selectedTable?.label ?? (tableNumber ? `Table ${tableNumber}` : null);
   const overCapacity = selectedTable != null && guestCount > selectedTable.capacity_max;
 
+  // Everything that must be true before a sale can be charged. Discount, guest
+  // count, and Owner's Request are deliberately not here -- they're optional.
+  const chargeBlockers = useMemo(() => {
+    const b: string[] = [];
+    if (cart.length === 0) b.push('Add at least one item');
+    if (orderType === 'dine_in' && !tableNumber.trim()) b.push('Pick a table');
+    if (tableBlocked) b.push('Table is reserved — manager override required');
+    if (!paymentMethod) b.push('Select a payment method');
+    return b;
+  }, [cart.length, orderType, tableNumber, tableBlocked, paymentMethod]);
+
   const subtotal = useMemo(
     () =>
       cart.reduce((sum, line) => {
@@ -566,16 +577,8 @@ export default function POSTerminal() {
 
   async function handleCharge() {
     if (!user) return;
-    if (cart.length === 0) {
-      toast.error('Cart is empty');
-      return;
-    }
-    if (orderType === 'dine_in' && !tableNumber.trim()) {
-      toast.error('Table number is required for dine-in orders');
-      return;
-    }
-    if (tableBlocked) {
-      toast.error('This table is reserved -- a manager override is required to seat here');
+    if (chargeBlockers.length > 0) {
+      toast.error(`Can't charge yet: ${chargeBlockers[0]}`);
       return;
     }
     setSubmitting(true);
@@ -596,7 +599,7 @@ export default function POSTerminal() {
         order_type: orderType,
         table_number: orderType === 'dine_in' ? Number(tableNumber) : null,
         guest_count: orderType === 'dine_in' ? guestCount : null,
-        payment_method: paymentMethod ?? undefined,
+        payment_method: paymentMethod ?? undefined, // guaranteed set past chargeBlockers
         reservation_override_id: overrideId ?? undefined,
       });
       toast.success(
@@ -1125,8 +1128,14 @@ export default function POSTerminal() {
             </div>
 
             <div>
-              <Label className="text-xs">Payment Method</Label>
-              <div className="grid grid-cols-4 gap-1.5 mt-1">
+              <Label className="text-xs">
+                Payment Method <span className="text-destructive">*</span>
+              </Label>
+              <div
+                className={`grid grid-cols-4 gap-1.5 mt-1 ${
+                  cart.length > 0 && !paymentMethod ? 'rounded ring-1 ring-destructive/50 p-1' : ''
+                }`}
+              >
                 {(['cash', 'gcash', 'card', 'split'] as const).map((m) => (
                   <button
                     key={m}
@@ -1142,6 +1151,9 @@ export default function POSTerminal() {
                   </button>
                 ))}
               </div>
+              {cart.length > 0 && !paymentMethod && (
+                <p className="mt-1 text-xs text-destructive">Required before charging.</p>
+              )}
             </div>
 
             <Button
@@ -1190,13 +1202,22 @@ export default function POSTerminal() {
               </div>
             </div>
 
+            {cart.length > 0 && chargeBlockers.length > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Before charging: {chargeBlockers.join(' · ')}
+              </p>
+            )}
             <Button
               className="w-full"
               size="lg"
-              disabled={submitting || cart.length === 0 || tableBlocked}
+              disabled={submitting || chargeBlockers.length > 0}
               onClick={handleCharge}
             >
-              {submitting ? 'Charging...' : tableBlocked ? 'Table reserved' : 'Charge'}
+              {submitting
+                ? 'Charging...'
+                : chargeBlockers.length > 0
+                  ? chargeBlockers[0]
+                  : 'Charge'}
             </Button>
           </div>
         </div>

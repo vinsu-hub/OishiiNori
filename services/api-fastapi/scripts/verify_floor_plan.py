@@ -106,6 +106,7 @@ try:
                     "order_type": "dine_in",
                     "table_number": POS_NUMBER,
                     "guest_count": guests,
+                    "payment_method": "cash",
                 },
                 timeout=15,
             )

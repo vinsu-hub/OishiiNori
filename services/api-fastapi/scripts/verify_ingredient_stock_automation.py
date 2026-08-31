@@ -86,7 +86,11 @@ before_counts = {iid: len(movements_for(iid, "sale_consumption")) for iid in ing
 # --- place a real sale --------------------------------------------------
 sale_r = requests.post(
     f"{API_BASE}/transactions",
-    json={"employee_id": exec_id, "items": [{"product_size_id": target_size["id"], "quantity": 1}]},
+    json={
+        "employee_id": exec_id,
+        "items": [{"product_size_id": target_size["id"], "quantity": 1}],
+        "payment_method": "cash",
+    },
     headers=headers,
 )
 check("POST /transactions -> 200", sale_r.status_code == 200, sale_r.text)

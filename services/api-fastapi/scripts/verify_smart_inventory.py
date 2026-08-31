@@ -162,6 +162,7 @@ def main():
                         "held_ingredients": [held_name],
                     }
                 ],
+                "payment_method": "cash",
             },
             headers=exec_headers,
         )
