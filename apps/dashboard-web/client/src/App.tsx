@@ -1,4 +1,5 @@
-import { lazy, Suspense } from 'react';
+import { Suspense } from 'react';
+import { lazyWithReload } from '@/lib/lazyWithReload';
 import { Loader2 } from 'lucide-react';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -15,33 +16,36 @@ import { InventoryAlertsProvider } from './contexts/InventoryAlertsContext';
 // code its role can actually reach (e.g. an employee never fetches P&L,
 // Command Center, Menu Editing, or Oishii AI's chunk).
 import Login from './pages/Login';
-const Home = lazy(() => import('./pages/Home'));
-const POSTerminal = lazy(() => import('./pages/POSTerminal'));
-const OrderQueue = lazy(() => import('./pages/OrderQueue'));
-const PendingOrders = lazy(() => import('./pages/PendingOrders'));
-const KitchenDisplay = lazy(() => import('./pages/KitchenDisplay'));
-const Reservations = lazy(() => import('./pages/Reservations'));
-const POSManagement = lazy(() => import('./pages/POSManagement'));
-const CommandCenter = lazy(() => import('./pages/CommandCenter'));
-const TrendAnalysis = lazy(() => import('./pages/TrendAnalysis'));
-const MenuEditing = lazy(() => import('./pages/MenuEditing'));
-const PnL = lazy(() => import('./pages/PnL'));
-const OishiAi = lazy(() => import('./pages/OishiAi'));
-const Help = lazy(() => import('./pages/Help'));
-const Stock = lazy(() => import('./pages/Stock'));
-const StockOverview = lazy(() => import('./pages/StockOverview'));
-const StockAlerts = lazy(() => import('./pages/StockAlerts'));
-const StockVarianceLog = lazy(() => import('./pages/StockVarianceLog'));
-const InventoryMovements = lazy(() => import('./pages/InventoryMovements'));
-const LossLog = lazy(() => import('./pages/LossLog'));
-const UtilityLog = lazy(() => import('./pages/UtilityLog'));
-const HRAttendance = lazy(() => import('./pages/HRAttendance'));
-const HRPayroll = lazy(() => import('./pages/HRPayroll'));
-const HolidayCalendar = lazy(() => import('./pages/HolidayCalendar'));
-const PayrollSettings = lazy(() => import('./pages/PayrollSettings'));
-const Employees = lazy(() => import('./pages/Employees'));
-const Settings = lazy(() => import('./pages/Settings'));
-const NotFound = lazy(() => import('./pages/NotFound'));
+// lazyWithReload (not bare React.lazy): a chunk fetch that fails because a new
+// deploy replaced the old hashed filenames triggers one full reload to pick up
+// the current index.html, instead of dropping to the ErrorBoundary.
+const Home = lazyWithReload(() => import('./pages/Home'), 'Home');
+const POSTerminal = lazyWithReload(() => import('./pages/POSTerminal'), 'POSTerminal');
+const OrderQueue = lazyWithReload(() => import('./pages/OrderQueue'), 'OrderQueue');
+const PendingOrders = lazyWithReload(() => import('./pages/PendingOrders'), 'PendingOrders');
+const KitchenDisplay = lazyWithReload(() => import('./pages/KitchenDisplay'), 'KitchenDisplay');
+const Reservations = lazyWithReload(() => import('./pages/Reservations'), 'Reservations');
+const POSManagement = lazyWithReload(() => import('./pages/POSManagement'), 'POSManagement');
+const CommandCenter = lazyWithReload(() => import('./pages/CommandCenter'), 'CommandCenter');
+const TrendAnalysis = lazyWithReload(() => import('./pages/TrendAnalysis'), 'TrendAnalysis');
+const MenuEditing = lazyWithReload(() => import('./pages/MenuEditing'), 'MenuEditing');
+const PnL = lazyWithReload(() => import('./pages/PnL'), 'PnL');
+const OishiAi = lazyWithReload(() => import('./pages/OishiAi'), 'OishiAi');
+const Help = lazyWithReload(() => import('./pages/Help'), 'Help');
+const Stock = lazyWithReload(() => import('./pages/Stock'), 'Stock');
+const StockOverview = lazyWithReload(() => import('./pages/StockOverview'), 'StockOverview');
+const StockAlerts = lazyWithReload(() => import('./pages/StockAlerts'), 'StockAlerts');
+const StockVarianceLog = lazyWithReload(() => import('./pages/StockVarianceLog'), 'StockVarianceLog');
+const InventoryMovements = lazyWithReload(() => import('./pages/InventoryMovements'), 'InventoryMovements');
+const LossLog = lazyWithReload(() => import('./pages/LossLog'), 'LossLog');
+const UtilityLog = lazyWithReload(() => import('./pages/UtilityLog'), 'UtilityLog');
+const HRAttendance = lazyWithReload(() => import('./pages/HRAttendance'), 'HRAttendance');
+const HRPayroll = lazyWithReload(() => import('./pages/HRPayroll'), 'HRPayroll');
+const HolidayCalendar = lazyWithReload(() => import('./pages/HolidayCalendar'), 'HolidayCalendar');
+const PayrollSettings = lazyWithReload(() => import('./pages/PayrollSettings'), 'PayrollSettings');
+const Employees = lazyWithReload(() => import('./pages/Employees'), 'Employees');
+const Settings = lazyWithReload(() => import('./pages/Settings'), 'Settings');
+const NotFound = lazyWithReload(() => import('./pages/NotFound'), 'NotFound');
 
 function RouteFallback() {
   return (
