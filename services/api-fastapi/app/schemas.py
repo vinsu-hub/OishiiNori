@@ -175,6 +175,10 @@ class CreateTransactionRequest(BaseModel):
     # Set by the POS when a manager has overridden a reservation-blocked table
     # (see /pos/tables/override). Consumed exactly once by this transaction.
     reservation_override_id: str | None = None
+    # Set by the POS when this dine-in order is seating a specific confirmed
+    # reservation (Floor Plan "Seat this reservation"). Links the reservation
+    # to this transaction and stamps seated_at. Ignored if it doesn't match.
+    reservation_id: str | None = None
 
 
 class TransactionItemAddonResponse(BaseModel):
@@ -1255,6 +1259,8 @@ class ReservationOut(BaseModel):
     customer_phone: str
     customer_note: str | None = None
     declined_reason: str | None = None
+    seated_at: datetime | None = None
+    transaction_id: str | None = None
     created_at: datetime
     overrides: list[ReservationOverrideOut] = Field(default_factory=list)
 

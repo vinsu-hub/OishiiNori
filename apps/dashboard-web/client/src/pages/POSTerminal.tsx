@@ -176,6 +176,10 @@ export default function POSTerminal() {
   // overrides (mirrors the Owner's Request PIN re-auth). overrideId is the
   // single-use token returned by that override, passed to createTransaction.
   const [tableStatus, setTableStatus] = useState<PosTableStatus | null>(null);
+  // Set when the Floor Plan sent us here to seat a specific reservation
+  // (/pos?...&reservation=<id>). Linked to the sale at charge time so the
+  // reservation is marked seated; cleared after a successful charge.
+  const [reservationId, setReservationId] = useState<string | null>(null);
   const [overrideId, setOverrideId] = useState<string | null>(null);
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [overrideForm, setOverrideForm] = useState({ employeeNumber: '', pin: '', reason: '' });
@@ -190,12 +194,14 @@ export default function POSTerminal() {
     const params = new URLSearchParams(search);
     const t = params.get('table');
     const g = params.get('guests');
-    if (!t && !g) return;
+    const r = params.get('reservation');
+    if (!t && !g && !r) return;
     if (t && /^\d+$/.test(t)) {
       setOrderType('dine_in');
       setTableNumber(t);
     }
     if (g && /^\d+$/.test(g)) setGuestCount(Math.max(1, Number(g)));
+    if (r) setReservationId(r);
     navigate('/pos', { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -601,6 +607,7 @@ export default function POSTerminal() {
         guest_count: orderType === 'dine_in' ? guestCount : null,
         payment_method: paymentMethod ?? undefined, // guaranteed set past chargeBlockers
         reservation_override_id: overrideId ?? undefined,
+        reservation_id: orderType === 'dine_in' ? reservationId ?? undefined : undefined,
       });
       toast.success(
         `${transaction.order_number != null ? `Order #${transaction.order_number} -- ` : ''}Sale complete -- total ${formatCurrency(
@@ -611,6 +618,7 @@ export default function POSTerminal() {
       setTableNumber('');
       setTableStatus(null);
       setOverrideId(null);
+      setReservationId(null);
       setPaymentMethod(null);
       loadTableOptions();
     } catch (e) {

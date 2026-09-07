@@ -5,7 +5,6 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Dialog,
@@ -28,6 +27,7 @@ import {
   fetchReservations,
   fetchTables,
   fetchTransactions,
+  seatReservation,
   updateTable,
   voidTransaction,
 } from '@/lib/api';
@@ -97,6 +97,40 @@ function hhmmToMinutes(t: string): number {
 function hhmm(t: string): string {
   return t.slice(0, 5);
 }
+
+// Where a reservation sits in its lifecycle, for the seating panel + detail
+// list. Derived (nothing but `seated`/`completed` is persisted) -- see plan.
+type ReservationPhase = 'completed' | 'seated' | 'overdue' | 'due' | 'no_show' | 'upcoming';
+
+function reservationPhase(
+  r: ApiReservation,
+  isToday: boolean,
+  nowMinutes: number,
+  txnById: Map<string, ApiTransaction>
+): ReservationPhase {
+  const linked = r.transaction_id ? txnById.get(r.transaction_id) ?? null : null;
+  if (linked && linked.status === 'closed') return 'completed';
+  if (r.seated_at || (linked && linked.status === 'open')) return 'seated';
+  if (!isToday) return 'upcoming';
+  const start = hhmmToMinutes(r.start_time);
+  const end = hhmmToMinutes(r.end_time);
+  if (nowMinutes >= end) return 'no_show';
+  if (nowMinutes >= start + RESERVATION_PREP_BUFFER_MIN) return 'overdue';
+  if (nowMinutes >= start - RESERVATION_PREP_BUFFER_MIN) return 'due';
+  return 'upcoming';
+}
+
+const PHASE_META: Record<ReservationPhase, { label: string; className: string }> = {
+  completed: { label: 'Done', className: 'bg-muted text-muted-foreground' },
+  seated: { label: 'Seated', className: 'bg-green-100 text-green-800 border border-green-300' },
+  overdue: { label: 'Overdue', className: 'bg-red-100 text-red-800 border border-red-400' },
+  due: { label: 'Due now', className: 'bg-orange-100 text-orange-900 border border-orange-300' },
+  no_show: { label: 'No-show', className: 'bg-red-50 text-red-700 border border-red-200' },
+  upcoming: { label: 'Upcoming', className: 'bg-card text-muted-foreground border border-border' },
+};
+
+// Phases that still need a table found for them.
+const NEEDS_SEATING: ReservationPhase[] = ['overdue', 'due', 'upcoming'];
 
 type TableState = 'white' | 'orange' | 'red';
 
@@ -179,10 +213,11 @@ function EntranceMarker({ x, y }: { x: number; y: number }) {
   );
 }
 
-export function FloorPlanPanel() {
+export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
   const { user } = useAuth();
   const canManage = user?.role === 'manager' || user?.role === 'executive';
   const [, navigate] = useLocation();
+  const isToday = selectedDay === todayIsoPH();
 
   const [tables, setTables] = useState<ApiTable[]>([]);
   const [transactions, setTransactions] = useState<ApiTransaction[]>([]);
@@ -195,6 +230,7 @@ export function FloorPlanPanel() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [seatGuests, setSeatGuests] = useState(2);
+  const [seatBusyId, setSeatBusyId] = useState<string | null>(null);
   const [zoom, setZoom] = useState<number>(readZoom);
   const [activeZone, setActiveZone] = useState<string | null>(null);
 
@@ -206,11 +242,10 @@ export function FloorPlanPanel() {
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(() => {
-    const iso = todayIsoPH();
     Promise.all([
       fetchTables(),
-      fetchTransactions({ date: iso }),
-      fetchReservations('confirmed', iso),
+      fetchTransactions({ date: selectedDay }),
+      fetchReservations('confirmed', selectedDay),
       fetchProducts(true),
     ])
       .then(([t, tx, r, p]) => {
@@ -221,7 +256,7 @@ export function FloorPlanPanel() {
       })
       .catch((e) => toast.error(`Failed to load floor plan: ${e instanceof Error ? e.message : 'Unknown error'}`))
       .finally(() => setLoading(false));
-  }, []);
+  }, [selectedDay]);
 
   useVisiblePolling(load, POLL_INTERVAL_MS);
 
@@ -265,6 +300,12 @@ export function FloorPlanPanel() {
     return map;
   }, [products]);
 
+  const txnById = useMemo(() => {
+    const map = new Map<string, ApiTransaction>();
+    for (const tx of transactions) map.set(tx.id, tx);
+    return map;
+  }, [transactions]);
+
   const openTxnByPosNumber = useMemo(() => {
     const map = new Map<number, ApiTransaction>();
     for (const tx of transactions) {
@@ -278,19 +319,33 @@ export function FloorPlanPanel() {
   const derive = useCallback(
     (t: ApiTable): Derived => {
       const { iso, minutes } = phNow();
+      const tableReservations = reservations.filter(
+        (r) => r.table_id === t.id && r.reservation_date === selectedDay
+      );
+
+      // For a day other than today there's no live "now" and transactions
+      // aren't meaningful -- just show which tables carry a booking.
+      if (!isToday) {
+        const reservation = tableReservations[0] ?? null;
+        return { state: reservation ? 'orange' : 'white', openTxn: null, reservation, breach: false };
+      }
+
       const openTxn = t.pos_table_number != null ? openTxnByPosNumber.get(t.pos_table_number) ?? null : null;
 
       let reservation: ApiReservation | null = null;
       let breach = false;
-      for (const r of reservations) {
-        if (r.table_id !== t.id || r.reservation_date !== iso) continue;
+      for (const r of tableReservations) {
+        if (r.reservation_date !== iso) continue;
         const start = hhmmToMinutes(r.start_time) - RESERVATION_PREP_BUFFER_MIN;
         const end = hhmmToMinutes(r.end_time);
         // Window can wrap past midnight (late close + a near-close start).
         const inWindow = start <= end ? minutes >= start && minutes < end : minutes >= start || minutes < end;
         if (inWindow) {
           reservation = r;
-          breach = !openTxn && minutes >= hhmmToMinutes(r.start_time) + RESERVATION_PREP_BUFFER_MIN;
+          const seated =
+            !!r.seated_at || (!!r.transaction_id && txnById.get(r.transaction_id)?.status === 'open');
+          breach =
+            !openTxn && !seated && minutes >= hhmmToMinutes(r.start_time) + RESERVATION_PREP_BUFFER_MIN;
           break;
         }
       }
@@ -298,7 +353,7 @@ export function FloorPlanPanel() {
       const state: TableState = breach ? 'red' : openTxn || reservation ? 'orange' : 'white';
       return { state, openTxn, reservation, breach };
     },
-    [openTxnByPosNumber, reservations]
+    [openTxnByPosNumber, reservations, selectedDay, isToday, txnById]
   );
 
   const shownTables = useMemo(
@@ -401,13 +456,45 @@ export function FloorPlanPanel() {
   const detail = tables.find((t) => t.id === detailId) ?? null;
   const detailDerived = detail ? derive(detail) : null;
 
-  function seatWalkIn(t: ApiTable, guests: number) {
+  function seatWalkIn(t: ApiTable, guests: number, reservationId?: string) {
     if (t.pos_table_number == null) {
       toast.error('Assign a POS number to this table in the Tables tab first');
       return;
     }
-    navigate(`/pos?table=${t.pos_table_number}&guests=${guests}`);
+    const q = reservationId ? `&reservation=${reservationId}` : '';
+    navigate(`/pos?table=${t.pos_table_number}&guests=${guests}${q}`);
   }
+
+  async function markSeated(reservationId: string) {
+    setSeatBusyId(reservationId);
+    try {
+      await seatReservation(reservationId);
+      toast.success('Marked as seated');
+      load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not mark seated');
+    } finally {
+      setSeatBusyId(null);
+    }
+  }
+
+  // Seating queue for the selected day: every confirmed reservation with its
+  // derived lifecycle phase. `reservations` is already date-scoped by load().
+  const nowMinutes = phNow().minutes;
+  const seatingQueue = [...reservations]
+    .sort((a, b) => a.start_time.localeCompare(b.start_time))
+    .map((r) => ({ r, phase: reservationPhase(r, isToday, nowMinutes, txnById) }));
+  const toSeat = seatingQueue.filter((q) => (isToday ? NEEDS_SEATING.includes(q.phase) : true));
+  const coversToSeat = toSeat.reduce((sum, q) => sum + q.r.party_size, 0);
+  const activeTables = tables.filter((t) => t.active);
+  const freeTableCount = activeTables.filter((t) => derive(t).state === 'white').length;
+  const tableById = new Map(tables.map((t) => [t.id, t]));
+
+  const detailReservations = detailId ? seatingQueue.filter((q) => q.r.table_id === detailId) : [];
+  const detailActionable =
+    detailReservations.find((q) => q.phase === 'overdue' || q.phase === 'due') ??
+    detailReservations.find((q) => q.phase === 'upcoming') ??
+    null;
 
   function renderTable(t: ApiTable) {
     const d = derive(t);
@@ -580,6 +667,83 @@ export function FloorPlanPanel() {
             }}
           />
         )}
+
+        {!editing && (
+          <div className="w-72 shrink-0 space-y-3">
+            <div className="rounded-md border bg-card p-3 text-sm">
+              {isToday ? (
+                <>
+                  <p className="font-semibold">
+                    To seat: {toSeat.length} {toSeat.length === 1 ? 'party' : 'parties'}
+                    <span className="font-normal text-muted-foreground"> · {coversToSeat} covers</span>
+                  </p>
+                  <p className="text-muted-foreground">
+                    Tables free: <span className="font-semibold text-foreground">{freeTableCount}</span> / {activeTables.length}
+                  </p>
+                </>
+              ) : (
+                <p className="font-semibold">
+                  {seatingQueue.length} {seatingQueue.length === 1 ? 'party' : 'parties'} booked
+                  <span className="font-normal text-muted-foreground">
+                    {' '}· {seatingQueue.reduce((s, q) => s + q.r.party_size, 0)} covers
+                  </span>
+                </p>
+              )}
+            </div>
+
+            <div className="rounded-md border bg-card">
+              <p className="border-b px-3 py-2 text-xs font-bold uppercase tracking-widest text-primary">
+                Reservations
+              </p>
+              {seatingQueue.length === 0 ? (
+                <p className="px-3 py-4 text-sm text-muted-foreground">No confirmed reservations for this day.</p>
+              ) : (
+                <ul className="max-h-[55vh] divide-y overflow-auto">
+                  {seatingQueue.map(({ r, phase }) => {
+                    const table = tableById.get(r.table_id);
+                    return (
+                      <li key={r.id} className="px-3 py-2 text-sm">
+                        <button
+                          type="button"
+                          className="flex w-full items-center justify-between gap-2 text-left hover:opacity-80"
+                          onClick={() => {
+                            setDetailId(r.table_id);
+                            if (table) jumpToZone(table.floor_group || 'Main Dining');
+                          }}
+                        >
+                          <span className="min-w-0">
+                            <span className="font-corp-mono font-semibold">
+                              {hhmm(r.start_time)}–{hhmm(r.end_time)}
+                            </span>{' '}
+                            <span className="truncate">{r.customer_name}</span>
+                          </span>
+                          <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${PHASE_META[phase].className}`}>
+                            {PHASE_META[phase].label}
+                          </span>
+                        </button>
+                        <div className="mt-0.5 flex items-center justify-between text-xs text-muted-foreground">
+                          <span>
+                            {r.party_size}p · {table?.label ?? r.table_label ?? 'Unassigned'}
+                          </span>
+                          {isToday && NEEDS_SEATING.includes(phase) && (
+                            <button
+                              type="button"
+                              className="rounded border px-1.5 py-0.5 font-medium text-foreground hover:bg-muted disabled:opacity-50"
+                              disabled={seatBusyId === r.id}
+                              onClick={() => markSeated(r.id)}
+                            >
+                              {seatBusyId === r.id ? '…' : 'Mark seated'}
+                            </button>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {tables.length > 0 && <LegendBar />}
@@ -682,29 +846,57 @@ export function FloorPlanPanel() {
                     </Button>
                   </div>
                 </div>
-              ) : detailDerived.reservation ? (
-                <div className="space-y-2 text-sm">
-                  {detailDerived.breach && (
-                    <Badge variant="destructive">Reservation overdue — party not yet seated</Badge>
-                  )}
-                  <p>
-                    Reserved for {detailDerived.reservation.customer_name} · party of{' '}
-                    {detailDerived.reservation.party_size} · {hhmm(detailDerived.reservation.start_time)}–
-                    {hhmm(detailDerived.reservation.end_time)}
-                  </p>
-                  <p className="text-muted-foreground">{detailDerived.reservation.customer_phone}</p>
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      seatWalkIn(detail, detailDerived.reservation!.party_size);
-                      setDetailId(null);
-                    }}
-                  >
-                    Seat this reservation
-                  </Button>
+              ) : detailReservations.length > 0 ? (
+                <div className="space-y-3 text-sm">
                   <p className="text-xs text-muted-foreground">
-                    The table is reservation-blocked at the POS; a manager PIN override will be requested.
+                    {detailReservations.length} reservation{detailReservations.length === 1 ? '' : 's'} on{' '}
+                    {selectedDay}
                   </p>
+                  <ul className="divide-y rounded-md border">
+                    {detailReservations.map(({ r, phase }) => (
+                      <li key={r.id} className="space-y-1 p-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-corp-mono font-semibold">
+                            {hhmm(r.start_time)}–{hhmm(r.end_time)}
+                          </span>
+                          <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${PHASE_META[phase].className}`}>
+                            {PHASE_META[phase].label}
+                          </span>
+                        </div>
+                        <p>
+                          {r.customer_name} · party of {r.party_size}
+                        </p>
+                        <p className="text-muted-foreground">{r.customer_phone}</p>
+                        {isToday && phase !== 'seated' && phase !== 'completed' && (
+                          <div className="flex flex-wrap gap-2 pt-1">
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                seatWalkIn(detail, r.party_size, r.id);
+                                setDetailId(null);
+                              }}
+                            >
+                              Seat via POS
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={seatBusyId === r.id}
+                              onClick={() => markSeated(r.id)}
+                            >
+                              Mark seated
+                            </Button>
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                  {detailActionable && (
+                    <p className="text-xs text-muted-foreground">
+                      "Seat via POS" opens the terminal pre-set to this table; the reservation is marked
+                      seated when the order is charged.
+                    </p>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-3 text-sm">

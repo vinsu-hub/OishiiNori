@@ -574,6 +574,30 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
             "id", consumed_override_id
         ).execute()
 
+    # Seat-tracking: if this dine-in order is fulfilling a specific confirmed
+    # reservation (Floor Plan "Seat this reservation" -> /pos?...&reservation=),
+    # link the reservation to this transaction and stamp seated_at. A stale or
+    # mismatched id is ignored -- it must never fail an otherwise-valid sale.
+    if body.order_type == "dine_in" and body.reservation_id and blocked_table:
+        reservation = (
+            supabase.table("reservations")
+            .select("id, status, table_id, reservation_date, seated_at")
+            .eq("id", body.reservation_id)
+            .maybe_single()
+            .execute()
+        )
+        r = reservation.data if reservation and reservation.data else None
+        if (
+            r
+            and r["status"] == "confirmed"
+            and r["table_id"] == blocked_table["id"]
+            and r["reservation_date"] == _now_ph().date().isoformat()
+        ):
+            patch = {"transaction_id": result.id}
+            if not r.get("seated_at"):
+                patch["seated_at"] = datetime.now(timezone.utc).isoformat()
+            supabase.table("reservations").update(patch).eq("id", r["id"]).execute()
+
     return result
 
 

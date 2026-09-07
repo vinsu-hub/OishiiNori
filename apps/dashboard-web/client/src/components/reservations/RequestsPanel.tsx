@@ -31,8 +31,9 @@ const STATUS_LABELS: Record<ReservationStatus, string> = {
   cancelled: 'Cancelled',
 };
 
-export function RequestsPanel() {
+export function RequestsPanel({ selectedDay }: { selectedDay: string }) {
   const [statusFilter, setStatusFilter] = useState<ReservationStatus>('pending');
+  const [dateFilterOn, setDateFilterOn] = useState(true);
   const [reservations, setReservations] = useState<ApiReservation[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -43,11 +44,11 @@ export function RequestsPanel() {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
-    fetchReservations(statusFilter)
+    fetchReservations(statusFilter, dateFilterOn ? selectedDay : undefined)
       .then(setReservations)
       .catch((e) => toast.error(`Failed to load reservations: ${e instanceof Error ? e.message : 'Unknown error'}`))
       .finally(() => setLoading(false));
-  }, [statusFilter]);
+  }, [statusFilter, dateFilterOn, selectedDay]);
 
   useVisiblePolling(load, POLL_INTERVAL_MS);
 
@@ -103,17 +104,28 @@ export function RequestsPanel() {
 
   return (
     <div className="space-y-3">
-      <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as ReservationStatus)}>
-        <SelectTrigger className="w-48">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="pending">Pending</SelectItem>
-          <SelectItem value="confirmed">Confirmed</SelectItem>
-          <SelectItem value="declined">Declined</SelectItem>
-          <SelectItem value="cancelled">Cancelled</SelectItem>
-        </SelectContent>
-      </Select>
+      <div className="flex flex-wrap items-center gap-3">
+        <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as ReservationStatus)}>
+          <SelectTrigger className="w-48">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="pending">Pending</SelectItem>
+            <SelectItem value="confirmed">Confirmed</SelectItem>
+            <SelectItem value="declined">Declined</SelectItem>
+            <SelectItem value="cancelled">Cancelled</SelectItem>
+          </SelectContent>
+        </Select>
+        <label className="flex items-center gap-2 text-sm text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={!dateFilterOn}
+            onChange={(e) => setDateFilterOn(!e.target.checked)}
+          />
+          All dates
+        </label>
+        {dateFilterOn && <span className="text-xs text-muted-foreground">Showing {selectedDay}</span>}
+      </div>
 
       {loading && <p className="text-sm text-muted-foreground">Loading reservations...</p>}
       {!loading && reservations.length === 0 && (

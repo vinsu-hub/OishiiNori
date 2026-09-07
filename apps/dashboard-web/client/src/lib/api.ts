@@ -353,6 +353,7 @@ export interface CreateTransactionRequest {
   guest_count?: number | null;
   payment_method?: TransactionPaymentMethod | null;
   reservation_override_id?: string;
+  reservation_id?: string;
 }
 
 export interface ApiTransactionItemAddon {
@@ -1549,6 +1550,8 @@ export interface ApiReservation {
   customer_phone: string;
   customer_note: string | null;
   declined_reason: string | null;
+  seated_at: string | null;
+  transaction_id: string | null;
   created_at: string;
   overrides: { reason: string; created_at: string; overridden_by: string | null }[];
 }
@@ -1571,4 +1574,12 @@ export function declineReservation(id: string, reason: string): Promise<ApiReser
 
 export function cancelReservation(id: string): Promise<ApiReservation> {
   return request(`/reservations/${id}/cancel`, { method: 'POST' });
+}
+
+export function seatReservation(id: string): Promise<ApiReservation> {
+  return request(`/reservations/${id}/seat`, { method: 'POST' });
+}
+
+export function unseatReservation(id: string): Promise<ApiReservation> {
+  return request(`/reservations/${id}/unseat`, { method: 'POST' });
 }

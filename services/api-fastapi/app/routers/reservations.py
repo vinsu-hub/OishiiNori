@@ -421,6 +421,51 @@ def decline_reservation(
     return _to_reservation_out({**updated.data[0], "tables": reservation.get("tables")})
 
 
+@router.post("/reservations/{reservation_id}/seat", response_model=ReservationOut)
+def seat_reservation(reservation_id: str, user: CurrentUser = Depends(get_current_user)):
+    """Mark a confirmed reservation as seated without (yet) ringing up an
+    order -- the Floor Plan's manual "Mark seated" action, for parties seated
+    outside the POS "Seat this reservation" flow that would otherwise link a
+    transaction. Idempotent: re-seating keeps the original seated_at."""
+    supabase = get_supabase()
+    reservation = _fetch_reservation_with_table(supabase, reservation_id)
+    if reservation["status"] != "confirmed":
+        raise HTTPException(status_code=400, detail=f"Only a confirmed reservation can be seated (currently {reservation['status']})")
+
+    if reservation.get("seated_at"):
+        return _to_reservation_out(reservation)
+
+    updated = (
+        supabase.table("reservations")
+        .update({"seated_at": datetime.now(timezone.utc).isoformat()})
+        .eq("id", reservation_id)
+        .execute()
+    )
+    return _to_reservation_out({**updated.data[0], "tables": reservation.get("tables")})
+
+
+@router.post("/reservations/{reservation_id}/unseat", response_model=ReservationOut)
+def unseat_reservation(reservation_id: str, user: CurrentUser = Depends(get_current_user)):
+    """Undo a mis-tapped seating. Refused while a live (non-voided) linked
+    transaction exists -- clear the order first."""
+    supabase = get_supabase()
+    reservation = _fetch_reservation_with_table(supabase, reservation_id)
+
+    txn_id = reservation.get("transaction_id")
+    if txn_id:
+        txn = supabase.table("transactions").select("status").eq("id", txn_id).maybe_single().execute()
+        if txn and txn.data and txn.data["status"] != "voided":
+            raise HTTPException(status_code=400, detail="This reservation has an active order -- void or close it first")
+
+    updated = (
+        supabase.table("reservations")
+        .update({"seated_at": None, "transaction_id": None})
+        .eq("id", reservation_id)
+        .execute()
+    )
+    return _to_reservation_out({**updated.data[0], "tables": reservation.get("tables")})
+
+
 # ---------------------------------------------------------------------------
 # POS terminal integration -- is this table reservation-blocked right now?
 # ---------------------------------------------------------------------------
