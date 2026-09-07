@@ -1,7 +1,7 @@
 # Oishii Nori Command Suite — Session Handoff
 
-**Date:** 2026-08-20 (build session) · **Updated:** 2026-08-26 (this update: Ingredient Stock -- formerly "Recipe Ingredients" -- got the same sale-driven automation Station Items got the day before, plus a real PH-timezone bug caught and fixed during production verification. **Deployed and production-verified**.)
-**Repo:** `D:\ioshinori\oishii-nori-command-suite` — pushed to GitHub: `https://github.com/vinsu-hub/OishiiNori` (private, `main` branch), commit `e3ac6d6`. Everything described in this document is committed and pushed as of this write-up — nothing is sitting as local-only changes.
+**Date:** 2026-08-20 (build session) · **Updated:** 2026-09-07 (this update: Reservations Floor Plan gains a seating side panel + a page-level day selector shared with the Requests tab, and reservations are now linked to the transaction that seated them (`seated_at` + `transaction_id`). **Deployed and production-verified.**)
+**Repo:** `D:\ioshinori\oishii-nori-command-suite` — pushed to GitHub: `https://github.com/vinsu-hub/OishiiNori` (private, `main` branch), commit `35bc279`. Everything described in this document is committed and pushed as of this write-up — nothing is sitting as local-only changes.
 **Live deployments (Vercel, team `vince-tamis`, Git-integration auto-deploy on push to `main`):**
 - Dashboard: `https://oishii-nori-dashboard.vercel.app`
 - Staff Clock kiosk: `https://oishii-nori-staff-clock.vercel.app`
@@ -11,6 +11,27 @@
 **Reference spec:** `D:\ioshinori\Oishii_Nori_Menu_Ingredients.xlsx`; real physical stock transcription (2026-08-24): `D:\ioshinori\Oishii_Nori_Physical_Stock_Transcription.xlsx`
 **Structural reference (read-only, different client, never push/pull):** `D:\SMFC_POS\saint_michael_pos\saint_michael_pos` — used throughout this project as a structural cross-compare/port source (executive-tier pages, POS Terminal richness, Inventory Count, HR Payroll, Malaya AI → Oishii AI).
 **Build status: functionally complete, everything verified live.** All 5 apps deployed to production — each re-verified against the live API/dashboard after deploy (not just local dev). The two long-standing blockers from this project's earlier history — the Supabase `hr` schema not being exposed to PostgREST, and Oishii AI's LLM provider having no working billing — were both resolved on 2026-08-22 and remain resolved. **The system is feature-complete but not yet ready for real customers** — see `LAUNCH_CHECKLIST.md` for the real-business-data gaps (menu photos, ingredient costs, table setup, placeholder contact info, leftover QA accounts) that need addressing first.
+
+---
+
+## 🪑 Reservations Floor Plan: seating panel, shared day selector, seat-tracking (completed 2026-09-07)
+
+The client wanted the Floor Plan tab to answer a hostess's questions at a glance — how many booked parties still need seating (and how many covers), how many tables are free, what a given table's schedule for the day is — and to be able to view the floor for a day other than today. Verifying their logic surfaced the real gap: **there was no record a reservation had been seated.** The `reservation_status` enum is only `pending|confirmed|declined|cancelled`; "Seat this reservation" just opened a POS order on the table with no back-link, so "still to be seated" was uncomputable. Fixed that properly rather than inferring from open orders.
+
+**Backend (migration `0034_reservation_seating.sql`, applied live via the Supabase SQL editor):**
+- `reservations` gains `seated_at timestamptz` + `transaction_id uuid → transactions(id)` (nullable), plus an index on `reservation_date`. **Deliberately NOT a new `'seated'` enum value** — the availability engine keys off `status in ('pending','confirmed')` (`_HOLDING_STATUSES`, `_blocking_reservation`), and a seated party must keep holding its table; separate columns record the seating event without touching that.
+- `create_transaction` (`transactions.py`) now links the reservation → transaction and stamps `seated_at` when the POS sends `reservation_id` and it matches a confirmed same-day reservation on that table — mirrors the existing `reservation_overrides.transaction_id` write-back; a stale/mismatched id is ignored, never fails the sale.
+- New `POST /reservations/{id}/seat` (manual "Mark seated", for parties seated outside the POS flow) and `POST /reservations/{id}/unseat` (undo; refused while a non-voided linked transaction exists).
+- `ReservationOut` + `ApiReservation` expose `seated_at` / `transaction_id`; `CreateTransactionRequest` + `createTransaction` accept `reservation_id`.
+
+**Frontend:**
+- `Reservations.tsx` — a page-level native `<input type="date">` + "Today" button (`selectedDay` state), shared with the Requests tab (`RequestsPanel` gained the prop + an "All dates" toggle) and Floor Plan. Tables tab is day-agnostic, unchanged. Hidden on the Tables tab.
+- `FloorPlanPanel.tsx` — takes `selectedDay`; `load()` and `derive()` are day-driven. `isToday` gates the live overlay: for any other day, open-order state and "overdue" are suppressed and the canvas just shows which tables carry a booking. New right-hand **seating side panel** (view mode only, shares the `flex` row with the editor): counts ("To seat: N parties · M covers", "Tables free: X / Y" for today; a booking count otherwise) + a scrollable per-day reservation queue, each row tagged with a derived phase (`completed / seated / overdue / due / no_show / upcoming`), click-to-focus-the-table, and a "Mark seated" action. The table-detail dialog now lists **every** reservation for that table on the selected day (was: only the one whose window contained "now"), each with "Seat via POS" (navigates `/pos?...&reservation=<id>`) and "Mark seated".
+- `POSTerminal.tsx` — the pre-seat effect also reads `?reservation=` into state and sends `reservation_id` at charge; cleared after a successful charge.
+
+**Verified end-to-end against production** (`services/api-fastapi/scripts/verify_reservation_seating.py`, dashboard build green on Vercel): `GET /reservations?date=` returns the new fields; created → confirmed (`seated_at` null) → **seat** (`seated_at` stamped) → **unseat** (cleared) → cancelled for cleanup. Both `oishii-nori-api` and `oishii-nori-dashboard` redeployed and ● Ready. The full browser UI flow (day selector re-scoping the canvas, side-panel counts, "Seat via POS" → charge → phase flips to Seated) was **not** automated — no Playwright in this project (see below) — but every API piece it rests on is verified.
+
+**Not done / deferred:** no backfill of `seated_at` for historical reservations; "no-show" is a derived visual phase, not persisted; the Requests/Tables tabs did not gain full day-scoped feature parity (Requests filters to the shared day with an escape hatch, Tables ignores it).
 
 ---
 
@@ -292,7 +313,7 @@ An `xhigh` code review of the 11-milestone plan above found 15 findings; all fix
 cd D:\ioshinori\oishii-nori-command-suite
 ```
 
-Live Supabase project (already migrated + seeded, ref `vaagbeyvhzgvudxtwkmm`, URL `https://vaagbeyvhzgvudxtwkmm.supabase.co`) — **not** under the CLI-linked `vinsu-tams` org, so use `--db-url`/direct `psycopg2` (using `SUPABASE_DB_PASSWORD` from `.env.local`), not `supabase link`. **Note**: `supabase db push --db-url` re-attempts every migration in the folder including already-applied ones and will fail on the first one it hits — the established workaround this session is to apply only the new migration file directly via a small `psycopg2` script (see `services/api-fastapi/scripts/backfill_ingredient_unit_cost.py`'s neighborhood for the pattern, or any `apply_00NN.py`-style disposable script from this session).
+Live Supabase project (already migrated + seeded, ref `vaagbeyvhzgvudxtwkmm`, URL `https://vaagbeyvhzgvudxtwkmm.supabase.co`) — **not** under the CLI-linked `vinsu-tams` org, so use `--db-url`/direct `psycopg2` (using `SUPABASE_DB_PASSWORD` from `.env.local`), not `supabase link`. **Note**: `supabase db push --db-url` re-attempts every migration in the folder including already-applied ones and will fail on the first one it hits — the established workaround this session is to apply only the new migration file directly via a small `psycopg2` script (see `services/api-fastapi/scripts/backfill_ingredient_unit_cost.py`'s neighborhood for the pattern, or any `apply_00NN.py`-style disposable script from this session). **2026-09-07 note:** the agent environment now blocks direct DB connections from the shell (safety classifier), so `0034_reservation_seating.sql` was applied by pasting its two `alter table` statements into the **Supabase dashboard → SQL Editor** instead — fine for a small additive migration. `scripts/apply_0034.py` is committed for reference but was not the path used. Also note **`0033` is taken twice**: `0033_transaction_order_number.sql` (a parallel effort) and this session's file was renamed to `0034_reservation_seating.sql` to avoid the collision.
 
 ```bash
 # Backend (from services/api-fastapi)
