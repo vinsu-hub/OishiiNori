@@ -1,14 +1,15 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { MapPin } from 'lucide-react';
-import { ApiDigitalOrder, ApiProduct, fetchDeliveries, fetchProducts, markDeliveryDone } from '@/lib/api';
+import { ApiDigitalOrder, ApiProduct, fetchDeliveries, markDeliveryDone } from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
 import { POLL_INTERVAL_MS } from '@/lib/constants';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
+import { useProductCatalog } from '@/hooks/useProductCatalog';
 
 // WS-8: the rider's own delivery panel -- current/pending deliveries only,
 // each with the order ticket, the customer's own details, and an optional
@@ -16,18 +17,11 @@ import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 // from this list and updates the Delivery Requests tab / Order Queue.
 export default function Delivery() {
   const [orders, setOrders] = useState<ApiDigitalOrder[]>([]);
-  const [products, setProducts] = useState<ApiProduct[]>([]);
+  // Item names just fall back to "Item" below if this fails -- not worth
+  // blocking the delivery list over, so productsError is deliberately unused.
+  const { products } = useProductCatalog();
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetchProducts(true)
-      .then(setProducts)
-      .catch(() => {
-        // Item names just fall back to "Item" below if this fails --
-        // not worth blocking the delivery list over.
-      });
-  }, []);
 
   const load = useCallback(() => {
     fetchDeliveries()

@@ -19,12 +19,12 @@ import {
   DigitalOrderChannel,
   approveDigitalOrder,
   fetchDigitalOrders,
-  fetchProducts,
   rejectDigitalOrder,
 } from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
 import { POLL_INTERVAL_MS } from '@/lib/constants';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
+import { useProductCatalog } from '@/hooks/useProductCatalog';
 
 // Shared list+approve/decline view for the three digital-order queues that
 // share one underlying table (WS-7, Phase 6): the per-table QR flow
@@ -43,7 +43,7 @@ export function DigitalOrdersQueue({
   emptyLabel: string;
 }) {
   const [orders, setOrders] = useState<ApiDigitalOrder[]>([]);
-  const [products, setProducts] = useState<ApiProduct[]>([]);
+  const { products, error: productsError } = useProductCatalog();
   const [loading, setLoading] = useState(true);
   const [approveTarget, setApproveTarget] = useState<ApiDigitalOrder | null>(null);
   const [rejectTarget, setRejectTarget] = useState<ApiDigitalOrder | null>(null);
@@ -51,10 +51,8 @@ export function DigitalOrdersQueue({
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    fetchProducts(true)
-      .then(setProducts)
-      .catch((e) => toast.error(`Failed to load products: ${e instanceof Error ? e.message : 'Unknown error'}`));
-  }, []);
+    if (productsError) toast.error(`Failed to load products: ${productsError}`);
+  }, [productsError]);
 
   const load = useCallback(() => {
     fetchDigitalOrders('pending')
