@@ -18,6 +18,7 @@ export interface User {
   email: string;
   department: Department | null;
   role: Role;
+  employeeNumber: string | null;
   avatar?: string;
 }
 

@@ -15,7 +15,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 async function loadUser(authUserId: string, email: string): Promise<User> {
   const { data: profile, error } = await supabase
     .from('profiles')
-    .select('role, full_name, department')
+    .select('role, full_name, department, employee_number')
     .eq('id', authUserId)
     .single();
 
@@ -29,6 +29,7 @@ async function loadUser(authUserId: string, email: string): Promise<User> {
     email,
     department: profile.department,
     role: profile.role,
+    employeeNumber: profile.employee_number,
     avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${email}`,
   };
 }

@@ -31,6 +31,15 @@ export default function Settings() {
             <p className="text-sm capitalize">
               <span className="text-muted-foreground">Role:</span> {user?.role}
             </p>
+            <p className="text-sm">
+              <span className="text-muted-foreground">Employee Number:</span>{' '}
+              {user?.employeeNumber || '-- ask a manager to set this up'}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Your Employee Number (shown above) plus your kiosk PIN are what Owner's Request, reservation
+              overrides, and Start/End Business Day ask for -- not your login password. A manager/executive can
+              look up or reset your PIN from the Employees page.
+            </p>
             <Button variant="destructive" onClick={logout} className="mt-2">
               Log out
             </Button>
