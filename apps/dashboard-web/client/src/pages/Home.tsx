@@ -26,6 +26,11 @@ export default function Home() {
   }
 
   const lowStockNames = [...ingredients.map((i) => i.name), ...stockItems.map((i) => i.name)];
+  // WS-11: Stock & Inventory (and its low-stock alerts) is now manager+ only
+  // -- a cashier no longer has anywhere to route to from this card, and the
+  // welcome copy should list what their own sidebar actually contains.
+  // (executive already redirected away above, so only 'manager' remains here.)
+  const isManagerOrExecutive = user?.role === 'manager';
 
   return (
     <DashboardLayout title="Home">
@@ -36,13 +41,14 @@ export default function Home() {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-muted-foreground">
-              Use the sidebar to get to POS Terminal, Order Queue, Kitchen Display, Inventory, and
-              (for managers/executives) HR &amp; Payroll.
+              {isManagerOrExecutive
+                ? 'Use the sidebar to get to POS Terminal, Order Queue, Kitchen Display, Reservations, Inventory, Menu Editing, and HR & Payroll.'
+                : 'Use the sidebar to get to POS Terminal, Order Queue, Kitchen Display, Reservations, and Menu Editing.'}
             </p>
           </CardContent>
         </Card>
 
-        {lowStockCount > 0 && (
+        {isManagerOrExecutive && lowStockCount > 0 && (
           <Card className="max-w-xl border-l-4 border-l-destructive bg-error-bg">
             <CardHeader>
               <CardTitle className="text-destructive flex items-center gap-2">

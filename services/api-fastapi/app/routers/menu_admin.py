@@ -1,6 +1,10 @@
-"""Executive-only menu catalog management: create/edit/deactivate products,
-manage per-size prices, edit recipe (ingredient) components, and replace a
-product's photo via real Supabase Storage upload.
+"""Menu catalog management (manager/executive/employee): create/edit/deactivate
+products, manage per-size prices, edit recipe (ingredient) components, and
+replace a product's photo via real Supabase Storage upload.
+
+WS-11 (client decision): cashiers may edit the menu, so this router is open to
+every role past "logged in" -- unlike the rest of the money/oversight surface,
+which stays manager+/executive-only.
 
 Kept as its own router (rather than folding into products.py/recipes.py,
 which stay read-focused) to match this codebase's router-per-domain
@@ -51,7 +55,7 @@ MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
 @router.post("/products", response_model=ProductOut)
 def create_product(body: ProductCreate, user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "executive")
+    require_role(user, "manager", "executive", "employee")
     supabase = get_supabase()
 
     product_result = (
@@ -96,7 +100,7 @@ def update_product(product_id: str, body: ProductUpdate, user: CurrentUser = Dep
     """Also how deactivate/reactivate happens -- pass {"active": false} or
     {"active": true}; no separate endpoint for that, matching the locked
     soft-delete decision."""
-    require_role(user, "executive")
+    require_role(user, "manager", "executive", "employee")
     supabase = get_supabase()
 
     existing = supabase.table("products").select("id").eq("id", product_id).maybe_single().execute()
@@ -133,7 +137,7 @@ def update_product(product_id: str, body: ProductUpdate, user: CurrentUser = Dep
 def create_product_size(
     product_id: str, body: ProductSizeCreate, user: CurrentUser = Depends(get_current_user)
 ):
-    require_role(user, "executive")
+    require_role(user, "manager", "executive", "employee")
     supabase = get_supabase()
 
     existing = supabase.table("products").select("id").eq("id", product_id).maybe_single().execute()
@@ -167,7 +171,7 @@ def create_product_size(
 def update_product_size(
     size_id: str, body: ProductSizeUpdate, user: CurrentUser = Depends(get_current_user)
 ):
-    require_role(user, "executive")
+    require_role(user, "manager", "executive", "employee")
     supabase = get_supabase()
 
     existing = supabase.table("product_sizes").select("id").eq("id", size_id).maybe_single().execute()
@@ -190,7 +194,7 @@ def update_product_size(
 
 @router.delete("/product-sizes/{size_id}")
 def delete_product_size(size_id: str, user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "executive")
+    require_role(user, "manager", "executive", "employee")
     supabase = get_supabase()
 
     existing = (
@@ -230,7 +234,7 @@ def delete_product_size(size_id: str, user: CurrentUser = Depends(get_current_us
 def create_recipe_item(
     size_id: str, body: RecipeItemCreate, user: CurrentUser = Depends(get_current_user)
 ):
-    require_role(user, "executive")
+    require_role(user, "manager", "executive", "employee")
     supabase = get_supabase()
 
     existing = supabase.table("product_sizes").select("id").eq("id", size_id).maybe_single().execute()
@@ -258,7 +262,7 @@ def create_recipe_item(
 
 @router.patch("/recipe-items/{item_id}", response_model=RecipeItemOut)
 def update_recipe_item(item_id: str, body: RecipeItemUpdate, user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "executive")
+    require_role(user, "manager", "executive", "employee")
     supabase = get_supabase()
 
     existing = (
@@ -287,7 +291,7 @@ def update_recipe_item(item_id: str, body: RecipeItemUpdate, user: CurrentUser =
 
 @router.delete("/recipe-items/{item_id}")
 def delete_recipe_item(item_id: str, user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "executive")
+    require_role(user, "manager", "executive", "employee")
     supabase = get_supabase()
 
     existing = supabase.table("recipe_items").select("id").eq("id", item_id).maybe_single().execute()
@@ -313,7 +317,7 @@ async def upload_product_image(
     (not a replacement of) products.py's PATCH /products/{id}/image, which
     stays as a JSON-only path setter/clearer. This is the only endpoint
     Menu Editing's image tab calls."""
-    require_role(user, "executive")
+    require_role(user, "manager", "executive", "employee")
     supabase = get_supabase()
 
     existing = supabase.table("products").select("id").eq("id", product_id).maybe_single().execute()

@@ -111,19 +111,24 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
       : []),
   ];
 
+  // WS-11 strict role isolation: a cashier (employee) sidebar is exactly
+  // POS · Order Queue · Kitchen Display · Reservations · Settings ·
+  // Menu Editing · Help. Pending Orders, the whole Stock & Inventory group,
+  // Loss Log, and Utility Log move to manager+; Menu Editing and Help open
+  // to every role (client decision -- cashiers may edit the menu).
   const beforeStockItems: NavItem[] = [
     { icon: ShoppingCart, label: 'POS Terminal', href: '/pos' },
     { icon: ListOrdered, label: 'Order Queue', href: '/order-queue' },
-    { icon: QrCode, label: 'Pending Orders', href: '/pending-orders' },
+    ...(isManagerOrExecutive ? [{ icon: QrCode, label: 'Pending Orders', href: '/pending-orders' }] : []),
     { icon: ChefHat, label: 'Kitchen Display', href: '/kitchen-display' },
     { icon: CalendarCheck, label: 'Reservations', href: '/reservations' },
   ];
 
   const afterStockItems: NavItem[] = [
-    { icon: AlertCircle, label: 'Loss Log', href: '/loss-log' },
-    { icon: Zap, label: 'Utility Log', href: '/utility-log' },
     ...(isManagerOrExecutive
       ? [
+          { icon: AlertCircle, label: 'Loss Log', href: '/loss-log' },
+          { icon: Zap, label: 'Utility Log', href: '/utility-log' },
           { icon: Percent, label: 'POS Management', href: '/pos-management' },
           { icon: Users, label: 'Employees', href: '/employees' },
           { icon: Users, label: 'HR Attendance', href: '/hr/attendance' },
@@ -136,12 +141,12 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
       ? [
           { icon: LayoutDashboard, label: 'Command Center', href: '/command-center' },
           { icon: TrendingUp, label: 'Trend Analysis', href: '/trends' },
-          { icon: UtensilsCrossed, label: 'Menu Editing', href: '/menu-editing' },
           { icon: DollarSign, label: 'P&L', href: '/pnl' },
           { icon: Sparkles, label: 'Oishii AI', href: '/oishii-ai' },
-          { icon: HelpCircle, label: 'Help', href: '/help' },
         ]
       : []),
+    { icon: UtensilsCrossed, label: 'Menu Editing', href: '/menu-editing' },
+    { icon: HelpCircle, label: 'Help', href: '/help' },
     { icon: Settings, label: 'Settings', href: '/settings' },
   ];
 
@@ -241,7 +246,7 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
 
         <nav className="flex-1 overflow-y-auto overflow-x-hidden p-2">
           {beforeStockItems.map((item) => renderNavButton(item, location === item.href, isCollapsed, onNavigate))}
-          {renderStockGroup(isCollapsed, onNavigate)}
+          {isManagerOrExecutive && renderStockGroup(isCollapsed, onNavigate)}
           {afterStockItems.map((item) => renderNavButton(item, location === item.href, isCollapsed, onNavigate))}
         </nav>
 

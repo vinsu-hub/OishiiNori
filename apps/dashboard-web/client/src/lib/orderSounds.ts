@@ -49,3 +49,15 @@ export function playOrderReadyBeep() {
     // See playNewOrderBeep.
   }
 }
+
+// Ticket crossed the 15-min overdue threshold on Kitchen Display: a lower,
+// more urgent triple beep so it reads distinctly from the new-order chime.
+export function playOverdueBeep() {
+  try {
+    playBeep(320, 0, 180);
+    playBeep(320, 0.22, 180);
+    playBeep(320, 0.44, 180);
+  } catch {
+    // See playNewOrderBeep.
+  }
+}

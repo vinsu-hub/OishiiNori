@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useSearch } from 'wouter';
 import { toast } from 'sonner';
 import { DashboardLayout } from '@/components/DashboardLayout';
@@ -31,6 +31,8 @@ import {
   List as ListIcon,
   CheckCircle2,
   AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import {
   ApiDiscountType,
@@ -216,6 +218,33 @@ export default function POSTerminal() {
   const [sortBy, setSortBy] = useState<'default' | 'price' | 'name'>('default');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
+  // WS-1: grid view is a fixed 2-row, non-scrolling tap area on a tablet --
+  // overflow pages instead of scrolling. Columns are measured off the actual
+  // container width (not a CSS breakpoint guess) so pageSize always matches
+  // what's really rendered per row.
+  const GRID_TILE_WIDTH = 176;
+  const GRID_GAP = 12;
+  const productGridRef = useRef<HTMLDivElement>(null);
+  const [gridCols, setGridCols] = useState(4);
+  useEffect(() => {
+    const el = productGridRef.current;
+    if (!el || viewMode !== 'grid') return;
+    const compute = () => {
+      const width = el.clientWidth;
+      setGridCols(Math.max(1, Math.floor((width + GRID_GAP) / (GRID_TILE_WIDTH + GRID_GAP))));
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [viewMode]);
+
+  const [gridPage, setGridPage] = useState(0);
+  // Page resets whenever the visible set could change shape.
+  useEffect(() => {
+    setGridPage(0);
+  }, [selectedCategory, availabilityFilter, searchQuery, sortBy, viewMode]);
+
   useEffect(() => {
     try {
       sessionStorage.setItem(HELD_CARTS_STORAGE_KEY, JSON.stringify(heldCarts));
@@ -383,6 +412,14 @@ export default function POSTerminal() {
     }
     return list;
   }, [products, selectedCategory, favorites, availabilityFilter, searchQuery, sortBy]);
+
+  const gridPageSize = gridCols * 2;
+  const gridMaxPage = Math.max(0, Math.ceil(visibleProducts.length / gridPageSize) - 1);
+  const clampedGridPage = Math.min(gridPage, gridMaxPage);
+  const pagedGridProducts = useMemo(
+    () => visibleProducts.slice(clampedGridPage * gridPageSize, clampedGridPage * gridPageSize + gridPageSize),
+    [visibleProducts, clampedGridPage, gridPageSize]
+  );
 
   const upsellItems = useMemo(() => {
     const cartProductIds = new Set(cart.map((l) => l.product.id));
@@ -687,7 +724,7 @@ export default function POSTerminal() {
                 key={cat}
                 type="button"
                 onClick={() => setSelectedCategory(cat)}
-                className={`shrink-0 px-4 py-1.5 rounded-full text-sm border transition-colors ${
+                className={`shrink-0 px-5 py-2.5 rounded-full text-sm border transition-colors ${
                   selectedCategory === cat
                     ? 'bg-primary text-primary-foreground border-transparent'
                     : 'bg-card text-muted-foreground border-border'
@@ -742,14 +779,8 @@ export default function POSTerminal() {
           </div>
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading menu...</p>
-          ) : (
-            <div
-              className={
-                viewMode === 'grid'
-                  ? 'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3'
-                  : 'flex flex-col gap-2'
-              }
-            >
+          ) : viewMode === 'list' ? (
+            <div className="flex flex-col gap-2">
               {visibleProducts.map((product) => {
                 const cheapest = [...product.sizes].sort((a, b) => a.price - b.price)[0];
                 const allUnavailable = product.sizes.every((s) => s.availability === 'unavailable');
@@ -759,97 +790,128 @@ export default function POSTerminal() {
                     : cheapest
                       ? formatCurrency(cheapest.price)
                       : '';
-                const favoriteButton = (
-                  <button
-                    type="button"
-                    className={
-                      viewMode === 'grid'
-                        ? 'absolute top-1 right-1 z-10 p-1 rounded-full bg-background/80'
-                        : 'shrink-0 p-1 rounded-full hover:bg-accent'
-                    }
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleFavorite(product.id);
-                    }}
-                    aria-label={favorites.has(product.id) ? 'Remove favorite' : 'Add favorite'}
-                  >
-                    <Star
-                      className="w-4 h-4"
-                      fill={favorites.has(product.id) ? 'currentColor' : 'none'}
-                      color={favorites.has(product.id) ? '#FFBF47' : 'currentColor'}
-                    />
-                  </button>
-                );
-                const image = (
-                  <div className={viewMode === 'grid' ? 'aspect-square w-full bg-muted' : 'w-14 h-14 shrink-0 bg-muted rounded-md overflow-hidden'}>
-                    {product.image_path ? (
-                      <img
-                        src={product.image_path}
-                        alt={product.name}
-                        className="w-full h-full object-cover"
-                        loading="lazy"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-muted-foreground text-xs">
-                        {viewMode === 'grid' ? 'No photo' : ''}
-                      </div>
-                    )}
-                  </div>
-                );
-
-                if (viewMode === 'list') {
-                  return (
-                    <Card
-                      key={product.id}
-                      className={`cursor-pointer transition hover:border-primary ${allUnavailable ? 'opacity-50' : ''}`}
-                      onClick={() => !allUnavailable && handleProductClick(product)}
-                    >
-                      <CardContent className="py-3 flex items-center gap-3">
-                        {image}
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-corp-display font-medium truncate">{product.name}</p>
-                          <p className="text-xs text-muted-foreground">{product.category}</p>
-                          <div className="flex items-center gap-2 mt-0.5">
-                            <span className="text-sm font-semibold">{priceLabel}</span>
-                            {product.is_bundle && <Badge variant="gold">Bundle</Badge>}
-                            {allUnavailable && <Badge variant="destructive">Unavailable</Badge>}
-                          </div>
-                        </div>
-                        {favoriteButton}
-                      </CardContent>
-                    </Card>
-                  );
-                }
-
                 return (
                   <Card
                     key={product.id}
-                    className={`cursor-pointer overflow-hidden transition hover:border-primary relative ${
-                      allUnavailable ? 'opacity-50' : ''
-                    }`}
+                    className={`cursor-pointer transition hover:border-primary ${allUnavailable ? 'opacity-50' : ''}`}
                     onClick={() => !allUnavailable && handleProductClick(product)}
                   >
-                    {favoriteButton}
-                    {image}
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-corp-display">{product.name}</CardTitle>
-                    </CardHeader>
-                    <CardContent className="pb-3 space-y-1">
-                      <p className="text-xs text-muted-foreground">{product.category}</p>
-                      <p className="text-sm font-semibold">{priceLabel}</p>
-                      {product.is_bundle && (
-                        <Badge
-                          variant="gold"
-                          title="Ingredient deduction for this bundle is logged by the kitchen at fulfillment time, not at checkout."
-                        >
-                          Bundle
-                        </Badge>
-                      )}
-                      {allUnavailable && <Badge variant="destructive">Unavailable</Badge>}
+                    <CardContent className="py-3 flex items-center gap-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-corp-display font-medium truncate">{product.name}</p>
+                        <p className="text-xs text-muted-foreground">{product.category}</p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-sm font-semibold">{priceLabel}</span>
+                          {product.is_bundle && <Badge variant="gold">Bundle</Badge>}
+                          {allUnavailable && <Badge variant="destructive">Unavailable</Badge>}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="shrink-0 p-1 rounded-full hover:bg-accent"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleFavorite(product.id);
+                        }}
+                        aria-label={favorites.has(product.id) ? 'Remove favorite' : 'Add favorite'}
+                      >
+                        <Star
+                          className="w-4 h-4"
+                          fill={favorites.has(product.id) ? 'currentColor' : 'none'}
+                          color={favorites.has(product.id) ? '#FFBF47' : 'currentColor'}
+                        />
+                      </button>
                     </CardContent>
                   </Card>
                 );
               })}
+            </div>
+          ) : (
+            <div>
+              <div
+                ref={productGridRef}
+                className="grid gap-3"
+                style={{ gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` }}
+              >
+                {pagedGridProducts.map((product) => {
+                  const cheapest = [...product.sizes].sort((a, b) => a.price - b.price)[0];
+                  const allUnavailable = product.sizes.every((s) => s.availability === 'unavailable');
+                  const priceLabel =
+                    product.sizes.length > 1 && cheapest
+                      ? `from ${formatCurrency(cheapest.price)}`
+                      : cheapest
+                        ? formatCurrency(cheapest.price)
+                        : '';
+                  return (
+                    <Card
+                      key={product.id}
+                      className={`cursor-pointer transition hover:border-primary relative ${
+                        allUnavailable ? 'opacity-50' : ''
+                      }`}
+                      onClick={() => !allUnavailable && handleProductClick(product)}
+                    >
+                      <button
+                        type="button"
+                        className="absolute top-1 right-1 z-10 p-1 rounded-full bg-background/80"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleFavorite(product.id);
+                        }}
+                        aria-label={favorites.has(product.id) ? 'Remove favorite' : 'Add favorite'}
+                      >
+                        <Star
+                          className="w-4 h-4"
+                          fill={favorites.has(product.id) ? 'currentColor' : 'none'}
+                          color={favorites.has(product.id) ? '#FFBF47' : 'currentColor'}
+                        />
+                      </button>
+                      <CardHeader className="pb-2 pt-4">
+                        <CardTitle className="text-sm font-corp-display pr-6">{product.name}</CardTitle>
+                      </CardHeader>
+                      <CardContent className="pb-4 space-y-1">
+                        <p className="text-xs text-muted-foreground">{product.category}</p>
+                        <p className="text-base font-semibold">{priceLabel}</p>
+                        {product.is_bundle && (
+                          <Badge
+                            variant="gold"
+                            title="Ingredient deduction for this bundle is logged by the kitchen at fulfillment time, not at checkout."
+                          >
+                            Bundle
+                          </Badge>
+                        )}
+                        {allUnavailable && <Badge variant="destructive">Unavailable</Badge>}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+              {gridMaxPage > 0 && (
+                <div className="flex items-center justify-center gap-3 mt-3">
+                  <Button
+                    size="icon"
+                    variant="outline"
+                    className="h-10 w-10"
+                    disabled={clampedGridPage === 0}
+                    onClick={() => setGridPage((p) => Math.max(0, p - 1))}
+                    aria-label="Previous page"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </Button>
+                  <span className="text-sm text-muted-foreground">
+                    Page {clampedGridPage + 1} / {gridMaxPage + 1}
+                  </span>
+                  <Button
+                    size="icon"
+                    variant="outline"
+                    className="h-10 w-10"
+                    disabled={clampedGridPage === gridMaxPage}
+                    onClick={() => setGridPage((p) => Math.min(gridMaxPage, p + 1))}
+                    aria-label="Next page"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                </div>
+              )}
             </div>
           )}
 
@@ -1007,13 +1069,13 @@ export default function POSTerminal() {
                   <Button
                     size="icon"
                     variant="outline"
-                    className="h-6 w-6"
+                    className="h-10 w-10"
                     onClick={() => setGuestCount((g) => Math.max(1, g - 1))}
                   >
                     -
                   </Button>
                   <span className="w-4 text-center">{guestCount}</span>
-                  <Button size="icon" variant="outline" className="h-6 w-6" onClick={() => setGuestCount((g) => g + 1)}>
+                  <Button size="icon" variant="outline" className="h-10 w-10" onClick={() => setGuestCount((g) => g + 1)}>
                     +
                   </Button>
                   <span>Guests</span>
@@ -1050,11 +1112,11 @@ export default function POSTerminal() {
                       )}
                     </div>
                     <div className="flex items-center gap-2">
-                      <Button size="icon" variant="outline" className="h-6 w-6" onClick={() => updateQuantity(line.key, -1)}>
+                      <Button size="icon" variant="outline" className="h-10 w-10" onClick={() => updateQuantity(line.key, -1)}>
                         -
                       </Button>
                       <span>{line.quantity}</span>
-                      <Button size="icon" variant="outline" className="h-6 w-6" onClick={() => updateQuantity(line.key, 1)}>
+                      <Button size="icon" variant="outline" className="h-10 w-10" onClick={() => updateQuantity(line.key, 1)}>
                         +
                       </Button>
                       <span className="w-14 text-right">
@@ -1083,7 +1145,7 @@ export default function POSTerminal() {
                                   <Button
                                     size="icon"
                                     variant="outline"
-                                    className="h-6 w-6"
+                                    className="h-10 w-10"
                                     onClick={() => setLineAddonQuantity(line.key, addon, current - 1)}
                                     disabled={current === 0}
                                   >
@@ -1093,7 +1155,7 @@ export default function POSTerminal() {
                                   <Button
                                     size="icon"
                                     variant="outline"
-                                    className="h-6 w-6"
+                                    className="h-10 w-10"
                                     onClick={() => setLineAddonQuantity(line.key, addon, current + 1)}
                                   >
                                     +
@@ -1120,7 +1182,7 @@ export default function POSTerminal() {
                     key={d.id}
                     type="button"
                     onClick={() => setDiscountTypeId((prev) => (prev === d.id ? 'none' : d.id))}
-                    className={`px-3 py-1 rounded-full text-xs border transition-colors ${
+                    className={`px-4 py-2 rounded-full text-xs border transition-colors ${
                       discountTypeId === d.id
                         ? 'bg-primary text-primary-foreground border-transparent'
                         : 'bg-card text-muted-foreground border-border'
@@ -1140,7 +1202,7 @@ export default function POSTerminal() {
                 Payment Method <span className="text-destructive">*</span>
               </Label>
               <div
-                className={`grid grid-cols-4 gap-1.5 mt-1 ${
+                className={`grid grid-cols-4 gap-2 mt-1 ${
                   cart.length > 0 && !paymentMethod ? 'rounded ring-1 ring-destructive/50 p-1' : ''
                 }`}
               >
@@ -1149,7 +1211,7 @@ export default function POSTerminal() {
                     key={m}
                     type="button"
                     onClick={() => setPaymentMethod((prev) => (prev === m ? null : m))}
-                    className={`text-xs py-1.5 rounded border capitalize ${
+                    className={`text-sm py-3 rounded border capitalize ${
                       paymentMethod === m
                         ? 'bg-primary text-primary-foreground border-transparent'
                         : 'bg-card text-muted-foreground border-border'

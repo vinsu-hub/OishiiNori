@@ -757,6 +757,8 @@ def void_transaction(
         raise HTTPException(status_code=403, detail="Employees may only void their own orders")
     if transaction["status"] == "voided":
         raise HTTPException(status_code=400, detail="Transaction is already voided")
+    if _kitchen_status_supported_check(supabase) and transaction.get("kitchen_status") == "completed":
+        raise HTTPException(status_code=409, detail="Completed orders cannot be voided")
 
     size_ids = [row["product_size_id"] for row in transaction["items"]]
     sizes_result = (

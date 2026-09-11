@@ -826,24 +826,26 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
                     >
                       Diner done
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      onClick={async () => {
-                        const reason = window.prompt('Reason for voiding this order?');
-                        if (!reason?.trim()) return;
-                        try {
-                          await voidTransaction(detailDerived.openTxn!.id, reason.trim());
-                          toast.success('Order voided');
-                          setDetailId(null);
-                          load();
-                        } catch (e) {
-                          toast.error(e instanceof Error ? e.message : 'Failed to void');
-                        }
-                      }}
-                    >
-                      Void order
-                    </Button>
+                    {detailDerived.openTxn.kitchen_status !== 'completed' && (
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={async () => {
+                          const reason = window.prompt('Reason for voiding this order?');
+                          if (!reason?.trim()) return;
+                          try {
+                            await voidTransaction(detailDerived.openTxn!.id, reason.trim());
+                            toast.success('Order voided');
+                            setDetailId(null);
+                            load();
+                          } catch (e) {
+                            toast.error(e instanceof Error ? e.message : 'Failed to void');
+                          }
+                        }}
+                      >
+                        Void order
+                      </Button>
+                    )}
                   </div>
                 </div>
               ) : detailReservations.length > 0 ? (

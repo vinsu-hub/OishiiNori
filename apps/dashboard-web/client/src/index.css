@@ -194,6 +194,28 @@
     @apply bg-destructive;
   }
 
+  /* WS-9: Kitchen Display ticket prep-time glows -- 9min warning / 15min
+     overdue, pulsing so a stuck ticket stands out on a glance at the board. */
+  .kds-ticket-warning {
+    @apply ring-2 ring-warning;
+    animation: kds-glow-warning 1.6s ease-in-out infinite;
+  }
+
+  .kds-ticket-overdue {
+    @apply ring-2 ring-destructive;
+    animation: kds-glow-overdue 1.2s ease-in-out infinite;
+  }
+
+  @keyframes kds-glow-warning {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 201, 60, 0.35); }
+    50% { box-shadow: 0 0 14px 3px rgba(255, 201, 60, 0.55); }
+  }
+
+  @keyframes kds-glow-overdue {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(212, 42, 42, 0.4); }
+    50% { box-shadow: 0 0 16px 4px rgba(212, 42, 42, 0.65); }
+  }
+
   @media (min-width: 640px) {
     .container {
       padding-left: 1.5rem;

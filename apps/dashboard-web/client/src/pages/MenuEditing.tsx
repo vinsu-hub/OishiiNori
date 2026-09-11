@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { DashboardLayout } from '@/components/DashboardLayout';
-import { useAuth } from '@/contexts/AuthContext';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -103,7 +102,6 @@ function recipeRowFromApi(r: ApiRecipeItem): RecipeRow {
 }
 
 export default function MenuEditing() {
-  const { user } = useAuth();
   const [products, setProducts] = useState<ApiProduct[]>([]);
   const [ingredients, setIngredients] = useState<ApiIngredient[]>([]);
   const [loading, setLoading] = useState(true);
@@ -160,16 +158,6 @@ export default function MenuEditing() {
   const [createDepartment, setCreateDepartment] = useState<Department>('kitchen');
   const [createSizeRows, setCreateSizeRows] = useState<SizeRow[]>([newSizeRow(0)]);
   const [creating, setCreating] = useState(false);
-
-  if (user && user.role !== 'executive') {
-    return (
-      <DashboardLayout title="Menu Editing">
-        <div className="p-6">
-          <p className="text-sm text-muted-foreground">You don't have access to this page.</p>
-        </div>
-      </DashboardLayout>
-    );
-  }
 
   function openEdit(product: ApiProduct) {
     setEditing(product);

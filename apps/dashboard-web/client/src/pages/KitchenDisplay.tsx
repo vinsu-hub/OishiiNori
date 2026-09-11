@@ -27,7 +27,7 @@ import { POLL_INTERVAL_MS, toIsoDatePH, todayIsoPH } from '@/lib/constants';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 import { buildDigitalOrderLookup } from '@/lib/digitalOrderLookup';
 import { DigitalOrderInfo } from '@/components/shared/DigitalOrderInfo';
-import { playNewOrderBeep } from '@/lib/orderSounds';
+import { playNewOrderBeep, playOverdueBeep } from '@/lib/orderSounds';
 
 const KITCHEN_STATUSES: KitchenStatus[] = ['queued', 'preparing', 'ready', 'completed'];
 
@@ -71,8 +71,22 @@ const DELAYED_THRESHOLD_SECONDS: Partial<Record<KitchenStatus, number>> = {
   ready: 10 * 60,
 };
 
+// WS-9: per-ticket glow tiers, same timing base as the "delayed" red text
+// above (kitchen_status_updated_at || opened_at) -- 9min warning, 15min
+// overdue. Deliberately not date-scoped, same reasoning as delayedCount.
+const WARNING_THRESHOLD_SECONDS = 9 * 60;
+const OVERDUE_THRESHOLD_SECONDS = 15 * 60;
+
 function elapsedSeconds(since: string, now: Date): number {
   return Math.max(0, Math.floor((now.getTime() - new Date(since).getTime()) / 1000));
+}
+
+function ticketTier(order: ApiTransaction, now: Date): 'none' | 'warning' | 'overdue' {
+  if (order.kitchen_status === 'completed') return 'none';
+  const elapsed = elapsedSeconds(order.kitchen_status_updated_at || order.opened_at, now);
+  if (elapsed >= OVERDUE_THRESHOLD_SECONDS) return 'overdue';
+  if (elapsed >= WARNING_THRESHOLD_SECONDS) return 'warning';
+  return 'none';
 }
 
 function elapsedLabel(seconds: number): string {
@@ -110,6 +124,7 @@ export default function KitchenDisplay() {
   const [now, setNow] = useState(() => new Date());
   const [soundOn, setSoundOn] = useState(true);
   const seenQueuedIdsRef = useRef<Set<string> | null>(null);
+  const seenOverdueIdsRef = useRef<Set<string>>(new Set());
 
   // Separate 1s tick (elapsed-time labels/progress bars) from the 20s data
   // poll -- ticking doesn't need a network round trip.
@@ -161,6 +176,18 @@ export default function KitchenDisplay() {
   }, [soundOn]);
 
   useVisiblePolling(load, POLL_INTERVAL_MS);
+
+  // Fire the overdue beep once per ticket the instant it crosses the 15min
+  // tier (ref-camped like seenQueuedIdsRef above), on the 1s tick since the
+  // crossing happens between polls, not on load().
+  useEffect(() => {
+    const overdueIds = new Set(
+      transactions.filter((t) => ticketTier(t, now) === 'overdue').map((t) => t.id)
+    );
+    const isNewlyOverdue = Array.from(overdueIds).some((id) => !seenOverdueIdsRef.current.has(id));
+    if (isNewlyOverdue && soundOn) playOverdueBeep();
+    seenOverdueIdsRef.current = overdueIds;
+  }, [transactions, now, soundOn]);
 
   const sizeIndex = useMemo(() => {
     const map = new Map<string, { product: ApiProduct; size: ApiProductSize }>();
@@ -335,9 +362,19 @@ export default function KitchenDisplay() {
                   const next = NEXT_STATUS[order.kitchen_status];
                   const blockedByBundle = next === 'completed' && hasUnfulfilledBundle;
                   const digitalOrder = digitalOrderLookup.get(order.id);
+                  const tier = ticketTier(order, now);
 
                   return (
-                    <Card key={order.id}>
+                    <Card
+                      key={order.id}
+                      className={
+                        tier === 'overdue'
+                          ? 'kds-ticket-overdue'
+                          : tier === 'warning'
+                            ? 'kds-ticket-warning'
+                            : undefined
+                      }
+                    >
                       <CardHeader className="pb-2">
                         <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
                           <span className="font-corp-display text-sm font-semibold" title={order.id}>
@@ -350,6 +387,8 @@ export default function KitchenDisplay() {
                             </Badge>
                           )}
                           {order.is_owner_request && <Badge variant="secondary">Owner's Request</Badge>}
+                          {tier === 'overdue' && <Badge variant="destructive">Overdue</Badge>}
+                          {tier === 'warning' && <Badge variant="gold">Warning</Badge>}
                         </CardTitle>
                         <p className="text-xs text-muted-foreground">
                           opened {new Date(order.opened_at).toLocaleTimeString()} &middot;{' '}

@@ -289,7 +289,7 @@ export default function OrderQueue() {
               </div>
               <div className="flex items-center gap-3">
                 <span className="font-semibold">{formatCurrency(t.total_amount)}</span>
-                {t.status === 'open' && (
+                {t.status === 'open' && t.kitchen_status !== 'completed' && (
                   <Button variant="destructive" size="sm" onClick={() => setVoidTarget(t)}>
                     Void
                   </Button>
