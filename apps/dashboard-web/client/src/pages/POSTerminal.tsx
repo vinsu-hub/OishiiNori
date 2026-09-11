@@ -191,8 +191,8 @@ export default function POSTerminal() {
     setStartDaySubmitting(true);
     try {
       const status = await openBusinessDay({
-        employee_number: startDayForm.employeeNumber,
-        pin: startDayForm.pin,
+        employee_number: startDayForm.employeeNumber.trim(),
+        pin: startDayForm.pin.trim(),
         menu_confirmed: menuConfirmed,
       });
       setBusinessDay(status);
@@ -214,8 +214,8 @@ export default function POSTerminal() {
     setEndDaySubmitting(true);
     try {
       const status = await closeBusinessDay({
-        employee_number: endDayForm.employeeNumber,
-        pin: endDayForm.pin,
+        employee_number: endDayForm.employeeNumber.trim(),
+        pin: endDayForm.pin.trim(),
         cash_register_total: total,
       });
       setBusinessDay(status);
@@ -629,7 +629,11 @@ export default function POSTerminal() {
       toast.error('Employee number and PIN are required');
       return;
     }
-    setOwnerRequestConfirmed({ ...ownerRequestForm });
+    setOwnerRequestConfirmed({
+      ...ownerRequestForm,
+      employeeNumber: ownerRequestForm.employeeNumber.trim(),
+      pin: ownerRequestForm.pin.trim(),
+    });
     setOwnerRequestOpen(false);
   }
 
@@ -642,8 +646,8 @@ export default function POSTerminal() {
     try {
       const { override_id } = await overrideTableBlock({
         table_number: Number(tableNumber),
-        employee_number: overrideForm.employeeNumber,
-        pin: overrideForm.pin,
+        employee_number: overrideForm.employeeNumber.trim(),
+        pin: overrideForm.pin.trim(),
         reason: overrideForm.reason.trim(),
       });
       setOverrideId(override_id);

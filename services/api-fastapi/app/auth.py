@@ -80,10 +80,19 @@ def require_role(user: CurrentUser, *roles: str) -> None:
 
 def verify_employee_pin(employee_number: str, pin: str) -> dict | None:
     """Looks up a profile by kiosk employee_number and bcrypt-verifies pin
-    against kiosk_pin_hash. Used by the kiosk router's /kiosk/verify and by
-    the Owner's Request re-authentication flow in transactions.py -- same
-    primitive as the SMFC reference.
+    against kiosk_pin_hash. Used by the kiosk router's /kiosk/verify, the
+    Owner's Request re-authentication flow in transactions.py, the
+    reservation override, and Start/End Business Day -- same primitive as
+    the SMFC reference.
+
+    Strips both inputs first: an exact `.eq()` lookup and a bcrypt compare
+    both fail silently on a stray leading/trailing space (a real, observed
+    cause of "did not match" reports from a tablet's on-screen keyboard or
+    autocomplete) -- this is the one shared choke point for every caller,
+    so trimming here covers all of them without touching each call site.
     """
+    employee_number = employee_number.strip()
+    pin = pin.strip()
     supabase = get_supabase()
     result = (
         supabase.table("profiles")
