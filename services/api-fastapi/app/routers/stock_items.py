@@ -164,7 +164,7 @@ def list_stock_items(
 
 @router.post("/stock-items", response_model=StockItemOut)
 def create_stock_item(body: StockItemCreate, user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "manager", "executive")
+    require_role(user, "manager", "executive", "stocker")
     supabase = get_supabase()
     result = (
         supabase.table("stock_items")
@@ -189,7 +189,7 @@ def create_stock_item(body: StockItemCreate, user: CurrentUser = Depends(get_cur
 
 @router.patch("/stock-items/{stock_item_id}", response_model=StockItemOut)
 def update_stock_item(stock_item_id: str, body: StockItemUpdate, user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "manager", "executive")
+    require_role(user, "manager", "executive", "stocker")
     supabase = get_supabase()
     existing = supabase.table("stock_items").select("id").eq("id", stock_item_id).maybe_single().execute()
     if not existing or not existing.data:

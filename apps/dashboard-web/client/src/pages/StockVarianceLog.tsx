@@ -77,7 +77,10 @@ export default function StockVarianceLog() {
       fetchInventoryMovements({ type: 'count_adjustment', limit: 50 }),
       fetchInventory(),
       fetchStockItems({ active_only: false }),
-      fetchEmployees(),
+      // GET /employees is manager/executive only (it carries pay_rate) --
+      // a stocker can view this page, just without "Recorded By" names
+      // resolved, rather than the whole page failing on one 403.
+      fetchEmployees().catch(() => []),
     ])
       .then(([losses, moves, ing, items, emps]) => {
         setLossRecords(losses);

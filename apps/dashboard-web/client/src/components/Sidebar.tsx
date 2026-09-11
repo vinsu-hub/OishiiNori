@@ -36,6 +36,7 @@ import {
   ChevronRight,
   ChevronDown,
   X,
+  Undo2,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -70,6 +71,12 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
   const deptConfig = user.department ? DEPARTMENT_CONFIG[user.department] : { name: 'Oishii Nori', color: '#D42A2A' };
   const isManagerOrExecutive = user.role === 'manager' || user.role === 'executive';
   const isExecutive = user.role === 'executive';
+  // New restricted-department roles (Phase 4): each gets a minimal, separate
+  // nav rather than threaded through the employee/manager/executive tiers
+  // below -- a stocker only ever needs Stock & Inventory, a rider only ever
+  // needs the Delivery tab (built in Phase 6; /delivery is a stub until then).
+  const isStocker = user.role === 'stocker';
+  const isRider = user.role === 'rider';
 
   const handleStockGroupOpenChange = (open: boolean) => {
     setStockGroupOpen(open);
@@ -88,45 +95,57 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
   const isReceiveShipmentActive = location === '/inventory-movements';
   const isAlertsActive = location === '/stock/alerts';
   const isVarianceLogActive = location === '/stock/variance-log';
+  const isVSActive = location === '/stock/vs';
   const isStockFamilyActive =
     isOverviewActive ||
     isRecipeIngredientsActive ||
     isStationItemsActive ||
     isReceiveShipmentActive ||
     isAlertsActive ||
-    isVarianceLogActive;
+    isVarianceLogActive ||
+    isVSActive;
 
   const stockChildren: (NavItem & { isActive: boolean })[] = [
-    ...(isManagerOrExecutive
+    ...(isManagerOrExecutive || isStocker
       ? [{ icon: ClipboardList, label: 'Overview', href: '/stock/overview', isActive: isOverviewActive }]
       : []),
     { icon: Package, label: 'Ingredient Stock', href: '/stock', isActive: isRecipeIngredientsActive },
     { icon: Boxes, label: 'Station Items', href: '/stock?tab=stations', isActive: isStationItemsActive },
     { icon: Truck, label: 'Receive Shipment', href: '/inventory-movements', isActive: isReceiveShipmentActive },
-    ...(isManagerOrExecutive
+    ...(isManagerOrExecutive || isStocker
       ? [{ icon: Bell, label: 'Alerts', href: '/stock/alerts', isActive: isAlertsActive, badge: lowStockCount }]
       : []),
-    ...(isManagerOrExecutive
+    ...(isManagerOrExecutive || isStocker
       ? [{ icon: ListChecks, label: 'Variance Log', href: '/stock/variance-log', isActive: isVarianceLogActive }]
+      : []),
+    ...(isManagerOrExecutive || isStocker
+      ? [{ icon: ListChecks, label: 'EOD Stock Count (VS)', href: '/stock/vs', isActive: isVSActive }]
       : []),
   ];
 
   // WS-11 strict role isolation: a cashier (employee) sidebar is exactly
   // POS · Order Queue · Kitchen Display · Reservations · Settings ·
-  // Menu Editing · Help. Pending Orders, the whole Stock & Inventory group,
-  // Loss Log, and Utility Log move to manager+; Menu Editing and Help open
-  // to every role (client decision -- cashiers may edit the menu).
+  // Menu Editing · Help, PLUS Delivery Requests now that WS-7 has landed
+  // (Phase 6) -- the cross-cutting matrix always called this one out for
+  // cashiers specifically. Table Orders (formerly Pending Orders), Online
+  // Orders, the whole Stock & Inventory group, Loss Log, and Utility Log
+  // stay manager+; Menu Editing and Help open to every role (client
+  // decision -- cashiers may edit the menu).
   const beforeStockItems: NavItem[] = [
     { icon: ShoppingCart, label: 'POS Terminal', href: '/pos' },
     { icon: ListOrdered, label: 'Order Queue', href: '/order-queue' },
-    ...(isManagerOrExecutive ? [{ icon: QrCode, label: 'Pending Orders', href: '/pending-orders' }] : []),
+    ...(isManagerOrExecutive ? [{ icon: QrCode, label: 'Table Orders', href: '/pending-orders' }] : []),
     { icon: ChefHat, label: 'Kitchen Display', href: '/kitchen-display' },
+    { icon: Truck, label: 'Delivery Requests', href: '/delivery-requests' },
+    ...(isManagerOrExecutive ? [{ icon: Truck, label: 'Online Orders', href: '/online-orders' }] : []),
     { icon: CalendarCheck, label: 'Reservations', href: '/reservations' },
   ];
 
   const afterStockItems: NavItem[] = [
     ...(isManagerOrExecutive
       ? [
+          { icon: ClipboardList, label: 'Business Day Report', href: '/business-day-report' },
+          { icon: Undo2, label: 'Refund Approval', href: '/refund-approval' },
           { icon: AlertCircle, label: 'Loss Log', href: '/loss-log' },
           { icon: Zap, label: 'Utility Log', href: '/utility-log' },
           { icon: Percent, label: 'POS Management', href: '/pos-management' },
@@ -146,6 +165,20 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
         ]
       : []),
     { icon: UtensilsCrossed, label: 'Menu Editing', href: '/menu-editing' },
+    { icon: HelpCircle, label: 'Help', href: '/help' },
+    { icon: Settings, label: 'Settings', href: '/settings' },
+  ];
+
+  // Stocker: Stock & Inventory only, plus Settings/Help -- no POS, no
+  // orders, no HR/money surfaces at all.
+  const stockerItems: NavItem[] = [
+    { icon: HelpCircle, label: 'Help', href: '/help' },
+    { icon: Settings, label: 'Settings', href: '/settings' },
+  ];
+
+  // Rider: the Delivery tab only (built in Phase 6), plus Settings/Help.
+  const riderItems: NavItem[] = [
+    { icon: Truck, label: 'Delivery', href: '/delivery' },
     { icon: HelpCircle, label: 'Help', href: '/help' },
     { icon: Settings, label: 'Settings', href: '/settings' },
   ];
@@ -245,9 +278,20 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
         </div>
 
         <nav className="flex-1 overflow-y-auto overflow-x-hidden p-2">
-          {beforeStockItems.map((item) => renderNavButton(item, location === item.href, isCollapsed, onNavigate))}
-          {isManagerOrExecutive && renderStockGroup(isCollapsed, onNavigate)}
-          {afterStockItems.map((item) => renderNavButton(item, location === item.href, isCollapsed, onNavigate))}
+          {isStocker ? (
+            <>
+              {renderStockGroup(isCollapsed, onNavigate)}
+              {stockerItems.map((item) => renderNavButton(item, location === item.href, isCollapsed, onNavigate))}
+            </>
+          ) : isRider ? (
+            riderItems.map((item) => renderNavButton(item, location === item.href, isCollapsed, onNavigate))
+          ) : (
+            <>
+              {beforeStockItems.map((item) => renderNavButton(item, location === item.href, isCollapsed, onNavigate))}
+              {isManagerOrExecutive && renderStockGroup(isCollapsed, onNavigate)}
+              {afterStockItems.map((item) => renderNavButton(item, location === item.href, isCollapsed, onNavigate))}
+            </>
+          )}
         </nav>
 
         {!isCollapsed && (

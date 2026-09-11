@@ -10,7 +10,7 @@
 import type { LossReason } from '@/lib/api';
 
 export type Department = 'kitchen' | 'cafe';
-export type Role = 'employee' | 'manager' | 'executive';
+export type Role = 'employee' | 'manager' | 'executive' | 'stocker' | 'rider';
 
 export interface User {
   id: string;

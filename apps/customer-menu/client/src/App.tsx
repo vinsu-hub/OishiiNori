@@ -15,6 +15,7 @@ import {
   ShoppingBag,
   Soup,
   Sparkles,
+  Truck,
   Users,
   Utensils,
   UtensilsCrossed,
@@ -25,9 +26,12 @@ import {
   ApiProduct,
   ApiProductSize,
   ApiRecipeItem,
+  DeliveryFee,
   DigitalOrderStatus,
+  OrderChannel,
   PaymentMethod,
   fetchAddons,
+  fetchDeliveryFees,
   fetchMenu,
   fetchOrderStatus,
   fetchRecipe,
@@ -98,9 +102,36 @@ export default function App() {
   // ?reserve=1 is the landing page's deep-link into the reservation flow --
   // skips this welcome/choice screen entirely so "Reserve now" there is a
   // true one-click portal, not a redirect-then-click-again.
-  const [landingMode, setLandingMode] = useState<'choice' | 'reserve'>(() =>
+  const [landingMode, setLandingMode] = useState<'choice' | 'reserve' | 'order-channel'>(() =>
     new URLSearchParams(window.location.search).get('reserve') === '1' ? 'reserve' : 'choice'
   );
+  // WS-7 (Phase 6): the general (non-table) link -- no ?table= param --
+  // lets the visitor choose Delivery or Pickup instead of dine-in. `null`
+  // means "not yet chosen" (still on the landing screen); dine_in_qr is
+  // implicit whenever a real tableNumber is present.
+  const [orderChannel, setOrderChannel] = useState<OrderChannel | null>(null);
+  const effectiveChannel: OrderChannel | null = tableNumber ? 'dine_in_qr' : orderChannel;
+
+  const [deliveryFees, setDeliveryFees] = useState<DeliveryFee[]>([]);
+  const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [address, setAddress] = useState('');
+  const [landmark, setLandmark] = useState('');
+  const [barangay, setBarangay] = useState('');
+
+  useEffect(() => {
+    if (orderChannel === 'delivery' && deliveryFees.length === 0) {
+      fetchDeliveryFees()
+        .then(setDeliveryFees)
+        .catch(() => {
+          // The barangay dropdown just stays empty -- handlePlaceOrder's own
+          // validation (barangay required for delivery) still blocks
+          // checkout, so this doesn't silently let an unpriced order through.
+        });
+    }
+  }, [orderChannel, deliveryFees.length]);
+
+  const selectedFee = deliveryFees.find((f) => f.barangay === barangay)?.fee ?? null;
 
   const [products, setProducts] = useState<ApiProduct[]>([]);
   const [addonCatalog, setAddonCatalog] = useState<ApiAddon[]>([]);
@@ -256,15 +287,36 @@ export default function App() {
   const cartCount = cart.reduce((sum, l) => sum + l.quantity, 0) + addons.reduce((sum, l) => sum + l.quantity, 0);
 
   async function handlePlaceOrder() {
-    if (!tableNumber || !paymentMethod || cart.length === 0) return;
+    if (!effectiveChannel || !paymentMethod || cart.length === 0) return;
+    if (effectiveChannel === 'dine_in_qr' && !tableNumber) return;
+    if (effectiveChannel !== 'dine_in_qr') {
+      if (!customerName.trim() || !customerPhone.trim()) {
+        toast('Name and phone number are required', 'error');
+        return;
+      }
+      if (effectiveChannel === 'delivery' && (!address.trim() || !barangay)) {
+        toast('Address and barangay are required for delivery', 'error');
+        return;
+      }
+    }
     setSubmitting(true);
     try {
       const result = await submitOrder({
-        table_number: tableNumber,
+        table_number: tableNumber ?? undefined,
+        order_channel: effectiveChannel,
         items: cart.map((l) => ({ product_size_id: l.size.id, quantity: l.quantity, held_ingredients: l.held })),
         addons: addons.map((l) => ({ addon_id: l.addon.id, quantity: l.quantity })),
         payment_method: paymentMethod,
         customer_note: customerNote.trim() || undefined,
+        ...(effectiveChannel !== 'dine_in_qr' && {
+          customer_name: customerName.trim(),
+          customer_phone: customerPhone.trim(),
+          ...(effectiveChannel === 'delivery' && {
+            address: address.trim(),
+            landmark: landmark.trim() || undefined,
+            barangay,
+          }),
+        }),
       });
       setOrder(result);
       setCartOpen(false);
@@ -288,9 +340,46 @@ export default function App() {
     setActiveCategory(id);
   }
 
-  if (!tableNumber) {
+  if (!effectiveChannel) {
     if (landingMode === 'reserve') {
       return <ReservationView onBack={() => setLandingMode('choice')} />;
+    }
+    if (landingMode === 'order-channel') {
+      return (
+        <div className="min-h-screen flex items-center justify-center p-4">
+          <div className="item-modal" style={{ position: 'static', maxWidth: 380 }}>
+            <div className="modal-body" style={{ textAlign: 'center' }}>
+              <img src="/logo.jpg" alt="Oishii Nori" className="brand-logo" style={{ width: 64, height: 64, margin: '0 auto 14px' }} />
+              <h2>Order Online</h2>
+              <p>How would you like to receive your order?</p>
+              <button
+                className="primary-button"
+                type="button"
+                style={{ width: '100%', marginTop: 16 }}
+                onClick={() => setOrderChannel('delivery')}
+              >
+                <Truck size={16} /> Delivery
+              </button>
+              <button
+                className="primary-button"
+                type="button"
+                style={{ width: '100%', marginTop: 10 }}
+                onClick={() => setOrderChannel('pickup')}
+              >
+                <ShoppingBag size={16} /> Pickup
+              </button>
+              <button
+                className="ghost-button"
+                type="button"
+                style={{ width: '100%', marginTop: 10 }}
+                onClick={() => setLandingMode('choice')}
+              >
+                Back
+              </button>
+            </div>
+          </div>
+        </div>
+      );
     }
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
@@ -298,11 +387,19 @@ export default function App() {
           <div className="modal-body" style={{ textAlign: 'center' }}>
             <img src="/logo.jpg" alt="Oishii Nori" className="brand-logo" style={{ width: 64, height: 64, margin: '0 auto 14px' }} />
             <h2>Welcome to Oishii Nori</h2>
-            <p>Scan the QR code on your table to order, or reserve a table for later.</p>
+            <p>Scan the QR code on your table to order, reserve a table for later, or order delivery/pickup.</p>
             <button
               className="primary-button"
               type="button"
               style={{ width: '100%', marginTop: 16 }}
+              onClick={() => setLandingMode('order-channel')}
+            >
+              Order Delivery / Pickup <ArrowRight size={16} />
+            </button>
+            <button
+              className="ghost-button"
+              type="button"
+              style={{ width: '100%', marginTop: 10 }}
               onClick={() => setLandingMode('reserve')}
             >
               Reserve a Table <ArrowRight size={16} />
@@ -321,7 +418,14 @@ export default function App() {
             <img src="/logo.jpg" alt="Oishii Nori logo" className="brand-logo" />
             <span className="brand-copy">
               <strong>Oishii Nori</strong>
-              <small>Table {tableNumber} · simple. fresh. Japanese.</small>
+              <small>
+                {effectiveChannel === 'delivery'
+                  ? 'Delivery'
+                  : effectiveChannel === 'pickup'
+                    ? 'Pickup'
+                    : `Table ${tableNumber}`}{' '}
+                · simple. fresh. Japanese.
+              </small>
             </span>
           </a>
           <div className="header-actions">
@@ -355,7 +459,8 @@ export default function App() {
           <section className="hero" aria-label="Oishii Nori introduction">
             <div className="hero-copy">
               <p className="eyebrow">
-                <span className="seal-dot" /> OISHII NORI · TABLE {tableNumber}
+                <span className="seal-dot" /> OISHII NORI ·{' '}
+                {effectiveChannel === 'delivery' ? 'DELIVERY' : effectiveChannel === 'pickup' ? 'PICKUP' : `TABLE ${tableNumber}`}
               </p>
               <h1>
                 Simple.
@@ -633,7 +738,14 @@ export default function App() {
           <aside className="cart-sheet" role="dialog" aria-modal="true" aria-label="Your order" onClick={(e) => e.stopPropagation()}>
             <div className="sheet-head">
               <div>
-                <p className="eyebrow">YOUR TABLE · ご注文</p>
+                <p className="eyebrow">
+                  {effectiveChannel === 'delivery'
+                    ? 'YOUR DELIVERY'
+                    : effectiveChannel === 'pickup'
+                      ? 'YOUR PICKUP'
+                      : 'YOUR TABLE'}{' '}
+                  · ご注文
+                </p>
                 <h2>Your order</h2>
               </div>
               <div className="sheet-actions">
@@ -731,6 +843,69 @@ export default function App() {
                   <span>Subtotal</span>
                   <strong>{peso(cartTotal)}</strong>
                 </div>
+                {effectiveChannel === 'delivery' && selectedFee != null && (
+                  <div className="cart-total">
+                    <span>Delivery fee</span>
+                    <strong>{peso(selectedFee)}</strong>
+                  </div>
+                )}
+
+                {effectiveChannel !== 'dine_in_qr' && (
+                  <div className="payment-panel" style={{ marginBottom: 14 }}>
+                    <div className="addons-heading">
+                      <div>
+                        <p className="eyebrow">
+                          {effectiveChannel === 'delivery' ? 'DELIVERY DETAILS' : 'PICKUP DETAILS'}
+                        </p>
+                        <h3>Who's this for?</h3>
+                      </div>
+                    </div>
+                    <input
+                      className="input"
+                      style={{ marginBottom: 10 }}
+                      placeholder="Full name"
+                      value={customerName}
+                      onChange={(e) => setCustomerName(e.target.value)}
+                    />
+                    <input
+                      className="input"
+                      style={{ marginBottom: 10 }}
+                      placeholder="Phone number"
+                      value={customerPhone}
+                      onChange={(e) => setCustomerPhone(e.target.value)}
+                    />
+                    {effectiveChannel === 'delivery' && (
+                      <>
+                        <input
+                          className="input"
+                          style={{ marginBottom: 10 }}
+                          placeholder="Delivery address"
+                          value={address}
+                          onChange={(e) => setAddress(e.target.value)}
+                        />
+                        <input
+                          className="input"
+                          style={{ marginBottom: 10 }}
+                          placeholder="Landmark (optional)"
+                          value={landmark}
+                          onChange={(e) => setLandmark(e.target.value)}
+                        />
+                        <select
+                          className="input"
+                          value={barangay}
+                          onChange={(e) => setBarangay(e.target.value)}
+                        >
+                          <option value="">Select barangay...</option>
+                          {deliveryFees.map((f) => (
+                            <option key={f.barangay} value={f.barangay}>
+                              {f.barangay} ({peso(f.fee)})
+                            </option>
+                          ))}
+                        </select>
+                      </>
+                    )}
+                  </div>
+                )}
 
                 <input
                   className="input"
@@ -746,7 +921,13 @@ export default function App() {
                       <p className="eyebrow">PAYMENT · 支払い</p>
                       <h3>How will you pay?</h3>
                     </div>
-                    <span>At your table</span>
+                    <span>
+                      {effectiveChannel === 'delivery'
+                        ? 'On delivery'
+                        : effectiveChannel === 'pickup'
+                          ? 'At pickup'
+                          : 'At your table'}
+                    </span>
                   </div>
                   <div className="payment-options">
                     <button
@@ -755,7 +936,13 @@ export default function App() {
                       onClick={() => setPaymentMethod('cash')}
                     >
                       <span>Cash</span>
-                      <small>Waiter will collect payment</small>
+                      <small>
+                        {effectiveChannel === 'dine_in_qr'
+                          ? 'Waiter will collect payment'
+                          : effectiveChannel === 'delivery'
+                            ? 'Pay the rider on arrival'
+                            : 'Pay at pickup'}
+                      </small>
                     </button>
                     <button
                       type="button"
@@ -763,7 +950,11 @@ export default function App() {
                       onClick={() => setPaymentMethod('gcash')}
                     >
                       <span>GCash</span>
-                      <small>Waiter will bring the QR code</small>
+                      <small>
+                        {effectiveChannel === 'dine_in_qr'
+                          ? 'Waiter will bring the QR code'
+                          : 'Send proof of payment to staff'}
+                      </small>
                     </button>
                   </div>
                 </div>
@@ -774,7 +965,14 @@ export default function App() {
                   disabled={!paymentMethod || submitting}
                   onClick={handlePlaceOrder}
                 >
-                  {submitting ? 'Placing order...' : paymentMethod ? 'Send to the counter' : 'Choose payment first'} <ArrowRight size={16} />
+                  {submitting
+                    ? 'Placing order...'
+                    : paymentMethod
+                      ? effectiveChannel === 'dine_in_qr'
+                        ? 'Send to the counter'
+                        : 'Place order'
+                      : 'Choose payment first'}{' '}
+                  <ArrowRight size={16} />
                 </button>
               </>
             )}
@@ -879,7 +1077,13 @@ function OrderStatusView({
         <div className="order-receipt">
           <div className="receipt-top">
             <div>
-              <p className="eyebrow">TABLE {order.table_number}</p>
+              <p className="eyebrow">
+                {order.order_channel === 'delivery'
+                  ? 'DELIVERY'
+                  : order.order_channel === 'pickup'
+                    ? 'PICKUP'
+                    : `TABLE ${order.table_number}`}
+              </p>
               <h3>
                 {order.status === 'pending' && "We're preparing your ticket"}
                 {order.status === 'approved' && 'Your order is confirmed'}
@@ -915,9 +1119,23 @@ function OrderStatusView({
             ))}
           </div>
 
+          {order.delivery?.address && (
+            <p className="review-confirmation">
+              Delivering to: {order.delivery.address}
+              {order.delivery.landmark ? ` (${order.delivery.landmark})` : ''}
+            </p>
+          )}
+
+          {order.delivery?.delivery_fee != null && (
+            <div className="receipt-row">
+              <span>Delivery fee</span>
+              <strong>{peso(order.delivery.delivery_fee)}</strong>
+            </div>
+          )}
+
           <div className="receipt-total">
             <span>Total</span>
-            <strong>{peso(order.subtotal)}</strong>
+            <strong>{peso(order.subtotal + (order.delivery?.delivery_fee ?? 0))}</strong>
           </div>
 
           {order.status === 'pending' && (
@@ -929,7 +1147,10 @@ function OrderStatusView({
           {order.status === 'rejected' && (
             <>
               <p className="review-confirmation" style={{ color: '#a51f26' }}>
-                {order.rejected_reason || 'Please ask staff at your table for help.'}
+                {order.rejected_reason ||
+                  (order.order_channel === 'dine_in_qr'
+                    ? 'Please ask staff at your table for help.'
+                    : 'Please contact the restaurant for help.')}
               </p>
               <button className="primary-button" type="button" style={{ marginTop: 12 }} onClick={onNewOrder}>
                 Start a new order <ArrowRight size={16} />

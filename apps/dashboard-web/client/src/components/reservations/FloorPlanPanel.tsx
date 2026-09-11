@@ -28,6 +28,7 @@ import {
   fetchTables,
   fetchTransactions,
   seatReservation,
+  switchTable,
   updateTable,
   voidTransaction,
 } from '@/lib/api';
@@ -231,6 +232,12 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [seatGuests, setSeatGuests] = useState(2);
   const [seatBusyId, setSeatBusyId] = useState<string | null>(null);
+
+  // Phase 5: Switch table / transfer -- moves an occupied table's open order
+  // (and its linked seated reservation, if any) to a different table.
+  const [switchTableOpen, setSwitchTableOpen] = useState(false);
+  const [switchTableChoice, setSwitchTableChoice] = useState('');
+  const [switchingTable, setSwitchingTable] = useState(false);
   const [zoom, setZoom] = useState<number>(readZoom);
   const [activeZone, setActiveZone] = useState<string | null>(null);
 
@@ -826,7 +833,21 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
                     >
                       Diner done
                     </Button>
-                    {detailDerived.openTxn.kitchen_status !== 'completed' && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setSwitchTableChoice('');
+                        setSwitchTableOpen(true);
+                      }}
+                    >
+                      Switch table
+                    </Button>
+                    {/* WS-12: void narrowed to queued-only -- a preparing/ready
+                        order must go through a Refund request from Order Queue
+                        instead; the backend now rejects a direct void past
+                        queued anyway, so this button must not offer it. */}
+                    {detailDerived.openTxn.kitchen_status === 'queued' && (
                       <Button
                         size="sm"
                         variant="destructive"
@@ -938,6 +959,59 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
               )}
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={switchTableOpen} onOpenChange={setSwitchTableOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Switch table</DialogTitle>
+            <DialogDescription>
+              Move this order (and its seated reservation, if any) to a different table.
+            </DialogDescription>
+          </DialogHeader>
+          <Select value={switchTableChoice} onValueChange={setSwitchTableChoice}>
+            <SelectTrigger>
+              <SelectValue placeholder="Pick a table" />
+            </SelectTrigger>
+            <SelectContent>
+              {tables
+                .filter(
+                  (t) =>
+                    t.active &&
+                    t.pos_table_number != null &&
+                    t.pos_table_number !== detail?.pos_table_number &&
+                    !openTxnByPosNumber.has(t.pos_table_number)
+                )
+                .map((t) => (
+                  <SelectItem key={t.id} value={String(t.pos_table_number)}>
+                    {t.label} · seats {t.capacity_max ?? t.capacity}
+                  </SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
+          <DialogFooter>
+            <Button
+              disabled={!switchTableChoice || switchingTable}
+              onClick={async () => {
+                if (!detailDerived?.openTxn) return;
+                setSwitchingTable(true);
+                try {
+                  await switchTable(detailDerived.openTxn.id, Number(switchTableChoice));
+                  toast.success('Table switched');
+                  setSwitchTableOpen(false);
+                  setDetailId(null);
+                  load();
+                } catch (e) {
+                  toast.error(describeError(e, 'Could not switch tables'));
+                } finally {
+                  setSwitchingTable(false);
+                }
+              }}
+            >
+              {switchingTable ? 'Switching...' : 'Confirm switch'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

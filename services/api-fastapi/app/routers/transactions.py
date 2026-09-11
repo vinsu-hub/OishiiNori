@@ -6,7 +6,7 @@ from postgrest.exceptions import APIError
 
 from app.auth import CurrentUser, get_current_user, require_role, verify_employee_pin
 from app.deps import get_supabase
-from app.ph_time import ph_day_bounds_utc
+from app.ph_time import ph_day_bounds_utc, today_ph
 from app.routers.reservations import _blocking_reservation, _now_ph, _table_by_pos_number
 from app.routers.stock_items import adjust_stock_items_for_product_unit, adjust_stock_items_for_transaction
 from app.schemas import (
@@ -15,6 +15,7 @@ from app.schemas import (
     CreateTransactionRequest,
     DeductedIngredient,
     KitchenStatusUpdateRequest,
+    SwitchTableRequest,
     TransactionResponse,
     VoidTransactionRequest,
 )
@@ -52,6 +53,21 @@ _held_ingredients_supported: bool | None = None
 _transaction_item_addons_supported: bool | None = None
 _transaction_order_context_supported: bool | None = None
 _transaction_order_number_supported: bool | None = None
+_business_days_supported: bool | None = None
+
+
+def _business_days_supported_check(supabase) -> bool:
+    """Same fail-open-until-migrated pattern as _kitchen_status_supported_check
+    -- lets this endpoint keep working before migration 0035 is applied,
+    then starts enforcing the Business Day lock once the table exists."""
+    global _business_days_supported
+    if _business_days_supported is None:
+        try:
+            supabase.table("business_days").select("id").limit(1).execute()
+            _business_days_supported = True
+        except APIError:
+            _business_days_supported = False
+    return _business_days_supported
 
 
 def _kitchen_status_supported_check(supabase) -> bool:
@@ -522,6 +538,20 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
 
     supabase = get_supabase()
 
+    # WS-13: Business Day lock -- backend defense to match the frontend
+    # overlay (POSTerminal.tsx), same belt-and-braces posture as the
+    # kitchen-completed void guard.
+    if _business_days_supported_check(supabase):
+        today_row = (
+            supabase.table("business_days")
+            .select("closed_at")
+            .eq("business_date", today_ph().isoformat())
+            .maybe_single()
+            .execute()
+        )
+        if not today_row or not today_row.data or today_row.data["closed_at"] is not None:
+            raise HTTPException(status_code=409, detail="Business day has not been started")
+
     # Owner's Request: the acting employee must re-verify their own kiosk
     # credentials (not just type a name) so this is a provable trace.
     owner_request_by = None
@@ -728,14 +758,91 @@ def close_transaction(transaction_id: str, user: CurrentUser = Depends(get_curre
     return TransactionResponse(**updated_row, items=transaction["items"])
 
 
-@router.post("/transactions/{transaction_id}/void", response_model=TransactionResponse)
-def void_transaction(
-    transaction_id: str,
-    body: VoidTransactionRequest,
-    user: CurrentUser = Depends(get_current_user),
-):
-    """Voids an order and restores the inventory it actually consumed.
-    Employees may only void their own orders; manager/executive may void any.
+@router.post("/transactions/{transaction_id}/switch-table", response_model=TransactionResponse)
+def switch_table(transaction_id: str, body: SwitchTableRequest, user: CurrentUser = Depends(get_current_user)):
+    """Floor Plan's "Switch table / transfer" action on an occupied table --
+    moves an open dine-in order (and its linked seated reservation, if any)
+    to a different table number. Unrelated to void's queued-only gate;
+    this only ever touches an order that's still open."""
+    supabase = get_supabase()
+    transaction = _fetch_transaction_with_items(supabase, transaction_id)
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if transaction["status"] != "open":
+        raise HTTPException(status_code=409, detail=f"Order is already {transaction['status']}")
+    if transaction.get("order_type") != "dine_in" or not transaction.get("table_number"):
+        raise HTTPException(status_code=400, detail="Only a seated dine-in order can switch tables")
+    if body.new_table_number == transaction["table_number"]:
+        raise HTTPException(status_code=400, detail="Already seated at that table")
+
+    new_table = _table_by_pos_number(supabase, body.new_table_number)
+    if not new_table or not new_table.get("active", True):
+        raise HTTPException(status_code=404, detail="No active reservation table is mapped to that POS number")
+
+    guest_count = transaction.get("guest_count")
+    cap_max = new_table.get("capacity_max") or new_table["capacity"]
+    if guest_count is not None and guest_count > cap_max:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Party of {guest_count} exceeds table {new_table['label']}'s capacity of {cap_max}",
+        )
+
+    other_open = (
+        supabase.table("transactions")
+        .select("id")
+        .eq("table_number", body.new_table_number)
+        .eq("status", "open")
+        .neq("id", transaction_id)
+        .execute()
+    )
+    if other_open.data:
+        raise HTTPException(status_code=409, detail=f"Table {body.new_table_number} is already occupied")
+
+    blocking = _blocking_reservation(supabase, new_table["id"], _now_ph())
+    if blocking:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Table {body.new_table_number} is reserved for {blocking['customer_name']} until {blocking['end_time']}",
+        )
+
+    updated = (
+        supabase.table("transactions")
+        .update({"table_number": body.new_table_number})
+        .eq("id", transaction_id)
+        .execute()
+    )
+    updated_row = updated.data[0]
+    updated_row.setdefault("kitchen_status", "queued")
+    updated_row.setdefault("order_type", None)
+    updated_row.setdefault("table_number", None)
+    updated_row.setdefault("guest_count", None)
+    updated_row.setdefault("payment_method", None)
+
+    # Keep a linked, still-seated reservation's own table assignment in sync
+    # so the Floor Plan doesn't also show it blocking the vacated table.
+    linked_reservation = (
+        supabase.table("reservations")
+        .select("id")
+        .eq("transaction_id", transaction_id)
+        .maybe_single()
+        .execute()
+    )
+    if linked_reservation and linked_reservation.data:
+        supabase.table("reservations").update({"table_id": new_table["id"]}).eq(
+            "id", linked_reservation.data["id"]
+        ).execute()
+
+    return TransactionResponse(**updated_row, items=transaction["items"])
+
+
+def void_transaction_core(supabase, transaction: dict, actor_id: str, reason: str) -> tuple[dict, list[dict]]:
+    """Shared restore-and-mark-voided logic, used by both the direct void
+    endpoint (queued-only, see its own gate below) and refund approval
+    (transactions.py's own queued-only gate is specifically a limit on the
+    cashier's *self-service* void -- an admin/executive who already
+    approved a refund request is authorized to void regardless of the
+    order's current kitchen_status, e.g. if it advanced to preparing while
+    the request sat pending review).
 
     For a bundle line item that was already kitchen-fulfilled (has
     bundle_fulfillments rows), restores each fulfilled roll's own BOM
@@ -747,19 +854,11 @@ def void_transaction(
     they carry no recipe_items/stock impact, so there's nothing to give
     back. transaction_item_addons rows are left in place (cascade-deleted
     only if the item itself is ever deleted, which void never does).
+
+    Returns (updated_row, response_items) -- the caller wraps these into
+    whatever response shape it needs.
     """
-    supabase = get_supabase()
-
-    transaction = _fetch_transaction_with_items(supabase, transaction_id)
-    if not transaction:
-        raise HTTPException(status_code=404, detail="Transaction not found")
-    if user.role == "employee" and transaction["employee_id"] != user.id:
-        raise HTTPException(status_code=403, detail="Employees may only void their own orders")
-    if transaction["status"] == "voided":
-        raise HTTPException(status_code=400, detail="Transaction is already voided")
-    if _kitchen_status_supported_check(supabase) and transaction.get("kitchen_status") == "completed":
-        raise HTTPException(status_code=409, detail="Completed orders cannot be voided")
-
+    transaction_id = transaction["id"]
     size_ids = [row["product_size_id"] for row in transaction["items"]]
     sizes_result = (
         supabase.table("product_sizes").select("id, products(is_bundle)").in_("id", size_ids).execute()
@@ -790,7 +889,7 @@ def void_transaction(
                 for roll_size in roll_size_result.data:
                     _adjust_ingredients_for_size(
                         supabase, roll_size["id"], f["quantity"], sign=1,
-                        employee_id=user.id, transaction_id=transaction_id,
+                        employee_id=actor_id, transaction_id=transaction_id,
                     )
             if fulfillments.data:
                 supabase.table("bundle_fulfillments").delete().eq("transaction_item_id", row["id"]).execute()
@@ -800,17 +899,17 @@ def void_transaction(
                 row["product_size_id"],
                 float(row["quantity"]),
                 sign=1,
-                employee_id=user.id,
+                employee_id=actor_id,
                 transaction_id=transaction_id,
                 held_ingredient_names=row.get("held_ingredients"),
             )
             adjust_stock_items_for_product_unit(
                 supabase, row["product_size_id"], float(row["quantity"]), sign=1,
-                employee_id=user.id, transaction_id=transaction_id,
+                employee_id=actor_id, transaction_id=transaction_id,
             )
     adjust_stock_items_for_transaction(
         supabase, transaction.get("order_type"), transaction.get("guest_count"), sign=1,
-        employee_id=user.id, transaction_id=transaction_id,
+        employee_id=actor_id, transaction_id=transaction_id,
     )
 
     updated = (
@@ -818,9 +917,9 @@ def void_transaction(
         .update(
             {
                 "status": "voided",
-                "voided_by": user.id,
+                "voided_by": actor_id,
                 "voided_at": datetime.now(timezone.utc).isoformat(),
-                "void_reason": body.reason,
+                "void_reason": reason,
             }
         )
         .eq("id", transaction_id)
@@ -842,6 +941,32 @@ def void_transaction(
     for item in response_items:
         item["bundle_fulfilled"] = item["id"] in fulfilled_ids
 
+    return updated_row, response_items
+
+
+@router.post("/transactions/{transaction_id}/void", response_model=TransactionResponse)
+def void_transaction(
+    transaction_id: str,
+    body: VoidTransactionRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Cashier/manager self-service void -- WS-12 narrows this to `queued`
+    orders only; anything past that (preparing/ready/completed) must go
+    through a Refund request instead (see refunds.py), which an
+    admin/executive approves via void_transaction_core directly."""
+    supabase = get_supabase()
+
+    transaction = _fetch_transaction_with_items(supabase, transaction_id)
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if user.role == "employee" and transaction["employee_id"] != user.id:
+        raise HTTPException(status_code=403, detail="Employees may only void their own orders")
+    if transaction["status"] == "voided":
+        raise HTTPException(status_code=400, detail="Transaction is already voided")
+    if _kitchen_status_supported_check(supabase) and transaction.get("kitchen_status") != "queued":
+        raise HTTPException(status_code=409, detail="Only a queued order can be voided directly -- use a Refund request instead")
+
+    updated_row, response_items = void_transaction_core(supabase, transaction, user.id, body.reason)
     return TransactionResponse(**updated_row, items=response_items)
 
 

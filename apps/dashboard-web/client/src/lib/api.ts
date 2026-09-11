@@ -499,10 +499,30 @@ export interface ApiDigitalOrderAddon {
   unit_price: number;
 }
 
+// WS-7 (Phase 6): a digital order is no longer only a QR table order --
+// order_channel distinguishes the per-table QR flow from the general
+// delivery/pickup link, table_number is null for the latter two, and
+// `delivery` carries the extra fulfillment fields (name/phone/address/
+// barangay/fee/rider) only present for order_channel !== 'dine_in_qr'.
+export type DigitalOrderChannel = 'dine_in_qr' | 'delivery' | 'pickup';
+
+export interface ApiDeliveryDetail {
+  customer_name: string;
+  customer_phone: string;
+  address: string | null;
+  landmark: string | null;
+  barangay: string | null;
+  delivery_fee: number | null;
+  maps_pin_url: string | null;
+  rider_id: string | null;
+  delivered_at: string | null;
+}
+
 export interface ApiDigitalOrder {
   id: string;
   order_number: number;
-  table_number: number;
+  table_number: number | null;
+  order_channel: DigitalOrderChannel;
   status: DigitalOrderStatus;
   payment_method: PaymentMethod;
   customer_note: string | null;
@@ -514,6 +534,7 @@ export interface ApiDigitalOrder {
   created_at: string;
   items: ApiDigitalOrderItem[];
   addons: ApiDigitalOrderAddon[];
+  delivery: ApiDeliveryDetail | null;
 }
 
 export function fetchDigitalOrders(status?: DigitalOrderStatus): Promise<ApiDigitalOrder[]> {
@@ -1532,6 +1553,113 @@ export function overrideTableBlock(body: {
   reason: string;
 }): Promise<{ override_id: string }> {
   return request('/pos/tables/override', { method: 'POST', body: JSON.stringify(body) });
+}
+
+// --- Business Day cycle (WS-13) --------------------------------------------
+// BusinessDayStatus deliberately has no cash_register_total/system_eod_total
+// field -- the cashier-facing /today, /open, /close endpoints never return
+// them (see BusinessDayStatusOut on the backend); only fetchBusinessDays
+// (manager/executive) carries those.
+
+export interface BusinessDayStatus {
+  business_date: string;
+  is_open: boolean;
+  opened_at: string | null;
+  menu_confirmed: boolean | null;
+}
+
+export interface ApiBusinessDay {
+  id: string;
+  business_date: string;
+  opened_at: string;
+  opened_by: string | null;
+  menu_confirmed: boolean;
+  closed_at: string | null;
+  closed_by: string | null;
+  cash_register_total: number | null;
+  system_eod_total: number | null;
+  variance: number | null;
+}
+
+export function fetchTodayBusinessDay(): Promise<BusinessDayStatus> {
+  return request('/business-days/today');
+}
+
+export function openBusinessDay(body: {
+  employee_number: string;
+  pin: string;
+  menu_confirmed: boolean;
+}): Promise<BusinessDayStatus> {
+  return request('/business-days/open', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function closeBusinessDay(body: {
+  employee_number: string;
+  pin: string;
+  cash_register_total: number;
+}): Promise<BusinessDayStatus> {
+  return request('/business-days/close', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function fetchBusinessDays(): Promise<ApiBusinessDay[]> {
+  return request('/business-days');
+}
+
+// --- Refund approval flow (WS-12) ------------------------------------------
+// Void is queued-only (see voidTransaction's backend gate); a preparing/ready
+// order goes through this instead -- a cashier files a request, an
+// admin/executive approves (performs the actual void) or rejects it. A
+// completed order can't be touched by either path.
+
+export type RefundStatus = 'pending' | 'approved' | 'rejected';
+
+export interface ApiRefund {
+  id: string;
+  transaction_id: string;
+  requested_by: string;
+  requested_at: string;
+  reason: string;
+  status: RefundStatus;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  order_number: number | null;
+  total_amount: number | null;
+}
+
+export function createRefund(body: { transaction_id: string; reason: string }): Promise<ApiRefund> {
+  return request('/refunds', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function fetchRefunds(): Promise<ApiRefund[]> {
+  return request('/refunds');
+}
+
+export function approveRefund(refundId: string): Promise<ApiRefund> {
+  return request(`/refunds/${refundId}/approve`, { method: 'POST' });
+}
+
+export function rejectRefund(refundId: string): Promise<ApiRefund> {
+  return request(`/refunds/${refundId}/reject`, { method: 'POST' });
+}
+
+// WS-6 (Phase 5): Floor Plan "Switch table / transfer" -- moves an open
+// dine-in order (and its linked seated reservation, if any) to another
+// table number.
+export function switchTable(transactionId: string, newTableNumber: number): Promise<ApiTransaction> {
+  return request(`/transactions/${transactionId}/switch-table`, {
+    method: 'POST',
+    body: JSON.stringify({ new_table_number: newTableNumber }),
+  });
+}
+
+// --- Delivery/Pickup + rider panel (WS-7 / WS-8, Phase 6) -------------------
+
+export function fetchDeliveries(): Promise<ApiDigitalOrder[]> {
+  return request('/deliveries');
+}
+
+export function markDeliveryDone(digitalOrderId: string): Promise<ApiDigitalOrder> {
+  return request(`/deliveries/${digitalOrderId}/done`, { method: 'POST' });
 }
 
 export type ReservationStatus = 'pending' | 'confirmed' | 'declined' | 'cancelled';

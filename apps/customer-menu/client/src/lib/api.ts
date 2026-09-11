@@ -49,6 +49,13 @@ export interface ApiAddon {
 
 export type PaymentMethod = 'gcash' | 'cash';
 
+// WS-7 (Phase 6): the general (non-table) link submits Delivery/Pickup
+// orders through this same endpoint -- table_number is only for the
+// per-table QR flow now, and delivery/pickup carry name+phone (+address/
+// barangay for an actual delivery, fee looked up server-side from
+// barangay, never trusted from this client).
+export type OrderChannel = 'dine_in_qr' | 'delivery' | 'pickup';
+
 export interface SubmitOrderItem {
   product_size_id: string;
   quantity: number;
@@ -61,11 +68,27 @@ export interface SubmitOrderAddon {
 }
 
 export interface SubmitOrderPayload {
-  table_number: number;
+  table_number?: number;
+  order_channel: OrderChannel;
   items: SubmitOrderItem[];
   addons?: SubmitOrderAddon[];
   payment_method: PaymentMethod;
   customer_note?: string;
+  customer_name?: string;
+  customer_phone?: string;
+  address?: string;
+  landmark?: string;
+  barangay?: string;
+}
+
+export interface DeliveryFee {
+  barangay: string;
+  zone: string;
+  fee: number;
+}
+
+export function fetchDeliveryFees(): Promise<DeliveryFee[]> {
+  return request('/public/delivery-fees');
 }
 
 export interface DigitalOrderStatusItem {
@@ -86,15 +109,26 @@ export interface DigitalOrderStatusAddon {
   unit_price: number;
 }
 
+export interface DigitalOrderStatusDelivery {
+  customer_name: string;
+  customer_phone: string;
+  address: string | null;
+  landmark: string | null;
+  barangay: string | null;
+  delivery_fee: number | null;
+}
+
 export interface DigitalOrderStatus {
   id: string;
   order_number: number;
-  table_number: number;
+  table_number: number | null;
+  order_channel: OrderChannel;
   status: 'pending' | 'approved' | 'rejected';
   subtotal: number;
   rejected_reason: string | null;
   items: DigitalOrderStatusItem[];
   addons: DigitalOrderStatusAddon[];
+  delivery: DigitalOrderStatusDelivery | null;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

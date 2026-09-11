@@ -74,8 +74,8 @@ const DELAYED_THRESHOLD_SECONDS: Partial<Record<KitchenStatus, number>> = {
 // WS-9: per-ticket glow tiers, same timing base as the "delayed" red text
 // above (kitchen_status_updated_at || opened_at) -- 9min warning, 15min
 // overdue. Deliberately not date-scoped, same reasoning as delayedCount.
-const WARNING_THRESHOLD_SECONDS = 9 * 60;
-const OVERDUE_THRESHOLD_SECONDS = 15 * 60;
+const WARNING_THRESHOLD_SECONDS = 8 * 60;
+const OVERDUE_THRESHOLD_SECONDS = 14 * 60;
 
 function elapsedSeconds(since: string, now: Date): number {
   return Math.max(0, Math.floor((now.getTime() - new Date(since).getTime()) / 1000));

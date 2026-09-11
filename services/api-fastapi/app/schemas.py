@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 # Enums (mirror the DB's Postgres enum / check-constraint values)
 # ---------------------------------------------------------------------------
 
-UserRole = Literal["employee", "manager", "executive"]
+UserRole = Literal["employee", "manager", "executive", "stocker", "rider"]
 DepartmentType = Literal["kitchen", "cafe"]
 KitchenStation = Literal["sushi_bar", "sushi_bar_oven", "hot_line", "salad_cold_bar", "cafe_bar"]
 TransactionStatus = Literal["open", "closed", "voided"]
@@ -231,6 +231,10 @@ class VoidTransactionRequest(BaseModel):
     reason: str
 
 
+class SwitchTableRequest(BaseModel):
+    new_table_number: int = Field(gt=0)
+
+
 class KitchenStatusUpdateRequest(BaseModel):
     kitchen_status: KitchenStatus
 
@@ -279,12 +283,45 @@ class DigitalOrderAddonCreate(BaseModel):
     quantity: int = Field(gt=0)
 
 
+DigitalOrderChannel = Literal["dine_in_qr", "delivery", "pickup"]
+
+
 class CreateDigitalOrderRequest(BaseModel):
-    table_number: int = Field(gt=0)
+    # Required for dine_in_qr (the per-table QR link), omitted for the
+    # general delivery/pickup link -- validated per-channel in the router,
+    # not here, since the requirement itself depends on order_channel.
+    table_number: int | None = Field(default=None, gt=0)
+    order_channel: DigitalOrderChannel = "dine_in_qr"
     items: list[DigitalOrderItemCreate]
     addons: list[DigitalOrderAddonCreate] = Field(default_factory=list)
     payment_method: PaymentMethod
     customer_note: str | None = None
+    # Delivery/pickup only -- name+phone always, address+barangay only for
+    # an actual delivery (the fee is looked up server-side from barangay,
+    # never trusted from the client).
+    customer_name: str | None = None
+    customer_phone: str | None = None
+    address: str | None = None
+    landmark: str | None = None
+    barangay: str | None = None
+
+
+class DeliveryFeeOut(BaseModel):
+    barangay: str
+    zone: str
+    fee: float
+
+
+class DeliveryDetailOut(BaseModel):
+    customer_name: str
+    customer_phone: str
+    address: str | None = None
+    landmark: str | None = None
+    barangay: str | None = None
+    delivery_fee: float | None = None
+    maps_pin_url: str | None = None
+    rider_id: str | None = None
+    delivered_at: datetime | None = None
 
 
 class DigitalOrderItemResponse(BaseModel):
@@ -315,7 +352,8 @@ class DigitalOrderAddonResponse(BaseModel):
 class DigitalOrderResponse(BaseModel):
     id: str
     order_number: int
-    table_number: int
+    table_number: int | None = None
+    order_channel: DigitalOrderChannel = "dine_in_qr"
     status: DigitalOrderStatus
     payment_method: PaymentMethod
     customer_note: str | None = None
@@ -327,6 +365,7 @@ class DigitalOrderResponse(BaseModel):
     created_at: datetime
     items: list[DigitalOrderItemResponse] = Field(default_factory=list)
     addons: list[DigitalOrderAddonResponse] = Field(default_factory=list)
+    delivery: DeliveryDetailOut | None = None
 
 
 class DigitalOrderStatusResponse(BaseModel):
@@ -336,12 +375,14 @@ class DigitalOrderStatusResponse(BaseModel):
 
     id: str
     order_number: int
-    table_number: int
+    table_number: int | None = None
+    order_channel: DigitalOrderChannel = "dine_in_qr"
     status: DigitalOrderStatus
     subtotal: float
     rejected_reason: str | None = None
     items: list[DigitalOrderItemResponse] = Field(default_factory=list)
     addons: list[DigitalOrderAddonResponse] = Field(default_factory=list)
+    delivery: DeliveryDetailOut | None = None
 
 
 class RejectDigitalOrderRequest(BaseModel):
@@ -1125,6 +1166,71 @@ class BusinessSettingsUpdate(BaseModel):
     open_time: time | None = None
     close_time: time | None = None
     closed_weekdays: list[int] | None = None
+
+
+# ---------------------------------------------------------------------------
+# Business Day cycle (WS-13)
+# ---------------------------------------------------------------------------
+
+
+class BusinessDayOpenRequest(BaseModel):
+    employee_number: str
+    pin: str
+    menu_confirmed: bool
+
+
+class BusinessDayCloseRequest(BaseModel):
+    employee_number: str
+    pin: str
+    cash_register_total: float = Field(ge=0)
+
+
+class BusinessDayStatusOut(BaseModel):
+    """Cashier-safe shape -- deliberately never carries
+    cash_register_total/system_eod_total (see BusinessDayAdminOut)."""
+
+    business_date: date
+    is_open: bool
+    opened_at: datetime | None = None
+    menu_confirmed: bool | None = None
+
+
+RefundStatus = Literal["pending", "approved", "rejected"]
+
+
+class RefundCreateRequest(BaseModel):
+    transaction_id: str
+    reason: str
+
+
+class RefundOut(BaseModel):
+    id: str
+    transaction_id: str
+    requested_by: str
+    requested_at: datetime
+    reason: str
+    status: RefundStatus
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
+    # Denormalized display fields (filled in by the router, not stored on
+    # the refunds row itself) so the admin tab doesn't need a second fetch.
+    order_number: int | None = None
+    total_amount: float | None = None
+
+
+class BusinessDayAdminOut(BaseModel):
+    """Manager/executive only -- the register-vs-system variance review."""
+
+    id: str
+    business_date: date
+    opened_at: datetime
+    opened_by: str | None = None
+    menu_confirmed: bool
+    closed_at: datetime | None = None
+    closed_by: str | None = None
+    cash_register_total: float | None = None
+    system_eod_total: float | None = None
+    variance: float | None = None
 
 
 # ---------------------------------------------------------------------------

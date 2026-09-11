@@ -7,7 +7,9 @@ from fastapi.responses import JSONResponse
 
 from app.routers import (
     analytics,
+    business_days,
     dashboard_summary,
+    deliveries,
     digital_menu,
     discounts,
     hr,
@@ -20,6 +22,7 @@ from app.routers import (
     pnl,
     products,
     recipes,
+    refunds,
     reservations,
     settings,
     stock_items,
@@ -77,6 +80,9 @@ app.include_router(pnl.router)
 app.include_router(oishi_ai.router)
 app.include_router(settings.router)
 app.include_router(reservations.router)
+app.include_router(business_days.router)
+app.include_router(refunds.router)
+app.include_router(deliveries.router)
 
 
 @app.get("/health")

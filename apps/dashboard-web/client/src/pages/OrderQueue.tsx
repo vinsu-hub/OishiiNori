@@ -20,6 +20,7 @@ import {
   ApiTransaction,
   KitchenStatus,
   TransactionStatus,
+  createRefund,
   fetchDigitalOrders,
   fetchProducts,
   fetchTransactions,
@@ -68,6 +69,14 @@ export default function OrderQueue() {
   const [voidTarget, setVoidTarget] = useState<ApiTransaction | null>(null);
   const [voidReason, setVoidReason] = useState('');
   const [voiding, setVoiding] = useState(false);
+
+  // WS-12: Refund is the correction path once an order is past `queued`
+  // (preparing/ready) -- void no longer works there (see the narrowed
+  // backend gate). Files a request; an admin/executive approves/rejects it
+  // from the new Refund Approval tab.
+  const [refundTarget, setRefundTarget] = useState<ApiTransaction | null>(null);
+  const [refundReason, setRefundReason] = useState('');
+  const [refunding, setRefunding] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilterValue>('all');
@@ -174,6 +183,26 @@ export default function OrderQueue() {
       toast.error(e instanceof Error ? e.message : 'Failed to void order');
     } finally {
       setVoiding(false);
+    }
+  }
+
+  async function handleRefund() {
+    if (!refundTarget) return;
+    if (!refundReason.trim()) {
+      toast.error('A reason is required');
+      return;
+    }
+    setRefunding(true);
+    try {
+      await createRefund({ transaction_id: refundTarget.id, reason: refundReason.trim() });
+      toast.success('Refund request sent for approval');
+      setRefundTarget(null);
+      setRefundReason('');
+      load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to request refund');
+    } finally {
+      setRefunding(false);
     }
   }
 
@@ -289,9 +318,14 @@ export default function OrderQueue() {
               </div>
               <div className="flex items-center gap-3">
                 <span className="font-semibold">{formatCurrency(t.total_amount)}</span>
-                {t.status === 'open' && t.kitchen_status !== 'completed' && (
+                {t.status === 'open' && t.kitchen_status === 'queued' && (
                   <Button variant="destructive" size="sm" onClick={() => setVoidTarget(t)}>
                     Void
+                  </Button>
+                )}
+                {t.status === 'open' && (t.kitchen_status === 'preparing' || t.kitchen_status === 'ready') && (
+                  <Button variant="outline" size="sm" onClick={() => setRefundTarget(t)}>
+                    Refund
                   </Button>
                 )}
               </div>
@@ -337,6 +371,31 @@ export default function OrderQueue() {
           <DialogFooter>
             <Button variant="destructive" disabled={voiding} onClick={handleVoid}>
               {voiding ? 'Voiding...' : 'Confirm void'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!refundTarget} onOpenChange={(open) => !open && setRefundTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Request refund for order{' '}
+              {refundTarget?.order_number != null ? `#${refundTarget.order_number}` : refundTarget?.id.slice(0, 8)}
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This order is already {refundTarget?.kitchen_status} and can't be voided directly -- an
+            admin/executive must approve this request before anything is corrected.
+          </p>
+          <Input
+            placeholder="Reason for refund"
+            value={refundReason}
+            onChange={(e) => setRefundReason(e.target.value)}
+          />
+          <DialogFooter>
+            <Button disabled={refunding} onClick={handleRefund}>
+              {refunding ? 'Sending...' : 'Send refund request'}
             </Button>
           </DialogFooter>
         </DialogContent>

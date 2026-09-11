@@ -29,6 +29,7 @@ from app.routers.recipes import _get_recipe_data
 from app.routers.transactions import _create_transaction_row, _get_vat_rate
 from app.schemas import (
     CreateDigitalOrderRequest,
+    DeliveryFeeOut,
     DigitalOrderResponse,
     DigitalOrderStatusResponse,
     MenuAddonOut,
@@ -61,6 +62,14 @@ def _fetch_digital_order(supabase, order_id: str) -> dict | None:
         row["addon_name"] = addon_info.get("name")
         addons.append(row)
     order["addons"] = addons
+
+    if order.get("order_channel") != "dine_in_qr":
+        delivery_result = (
+            supabase.table("deliveries").select("*").eq("digital_order_id", order_id).maybe_single().execute()
+        )
+        order["delivery"] = delivery_result.data if delivery_result else None
+    else:
+        order["delivery"] = None
     return order
 
 
@@ -85,11 +94,40 @@ def public_recipe(product_size_id: str):
     return _get_recipe_data(get_supabase(), product_size_id)
 
 
+@router.get("/public/delivery-fees", response_model=list[DeliveryFeeOut])
+def public_delivery_fees():
+    """The barangay dropdown + fee lookup for the general delivery/pickup
+    link (apps/customer-menu with no ?table= param)."""
+    result = get_supabase().table("delivery_fees").select("barangay, zone, fee").order("barangay").execute()
+    return result.data
+
+
 @router.post("/public/orders", response_model=DigitalOrderStatusResponse)
 def submit_digital_order(body: CreateDigitalOrderRequest):
     if not body.items:
         raise HTTPException(status_code=400, detail="Order must have at least one item")
     supabase = get_supabase()
+
+    delivery_fee: float | None = None
+    if body.order_channel == "dine_in_qr":
+        if not body.table_number:
+            raise HTTPException(status_code=400, detail="Table number is required for a QR table order")
+    else:
+        if not body.customer_name or not body.customer_phone:
+            raise HTTPException(status_code=400, detail="Name and phone number are required")
+        if body.order_channel == "delivery":
+            if not body.address or not body.barangay:
+                raise HTTPException(status_code=400, detail="Address and barangay are required for delivery")
+            fee_result = (
+                supabase.table("delivery_fees")
+                .select("fee")
+                .eq("barangay", body.barangay)
+                .maybe_single()
+                .execute()
+            )
+            if not fee_result or not fee_result.data:
+                raise HTTPException(status_code=400, detail=f"No delivery fee configured for {body.barangay}")
+            delivery_fee = float(fee_result.data["fee"])
 
     size_ids = [item.product_size_id for item in body.items]
     sizes_result = supabase.table("product_sizes").select("id, price").in_("id", size_ids).execute()
@@ -127,6 +165,7 @@ def submit_digital_order(body: CreateDigitalOrderRequest):
         .insert(
             {
                 "table_number": body.table_number,
+                "order_channel": body.order_channel,
                 "status": "pending",
                 "payment_method": body.payment_method,
                 "customer_note": body.customer_note,
@@ -136,6 +175,19 @@ def submit_digital_order(body: CreateDigitalOrderRequest):
         .execute()
     )
     order = order_insert.data[0]
+
+    if body.order_channel != "dine_in_qr":
+        supabase.table("deliveries").insert(
+            {
+                "digital_order_id": order["id"],
+                "customer_name": body.customer_name,
+                "customer_phone": body.customer_phone,
+                "address": body.address,
+                "landmark": body.landmark,
+                "barangay": body.barangay,
+                "delivery_fee": delivery_fee,
+            }
+        ).execute()
 
     item_rows = [
         {
@@ -209,9 +261,18 @@ def list_digital_orders(
         row["addon_name"] = addon_info.get("name")
         addons_by_order.setdefault(row["digital_order_id"], []).append(row)
 
+    delivery_order_ids = [o["id"] for o in orders if o.get("order_channel") != "dine_in_qr"]
+    deliveries_by_order: dict[str, dict] = {}
+    if delivery_order_ids:
+        deliveries_result = (
+            supabase.table("deliveries").select("*").in_("digital_order_id", delivery_order_ids).execute()
+        )
+        deliveries_by_order = {d["digital_order_id"]: d for d in deliveries_result.data}
+
     for order in orders:
         order["items"] = items_by_order.get(order["id"], [])
         order["addons"] = addons_by_order.get(order["id"], [])
+        order["delivery"] = deliveries_by_order.get(order["id"])
     return orders
 
 
@@ -238,14 +299,20 @@ def approve_digital_order(order_id: str, user: CurrentUser = Depends(get_current
         # The customer already chose cash/gcash at QR-order time -- carry it
         # through so every real sale has a payment method recorded.
         payment_method=order.get("payment_method"),
+        # Delivery/pickup orders are never dine-in -- label them takeout so
+        # the kitchen ticket unambiguously reads as a to-go/carried-out order,
+        # regardless of which of the two non-QR channels this came from.
+        order_type="takeout" if order.get("order_channel") != "dine_in_qr" else None,
     )
 
     # Add-ons aren't real catalog products, so they were never part of
     # _create_transaction_row's items -- fold their (taxed) cost into the
-    # transaction's totals now so the till reconciles correctly. The
-    # digital_orders row (linked via transaction_id) remains the record of
-    # exactly which add-ons were ordered.
-    addons_subtotal = sum(float(a["unit_price"]) * a["quantity"] for a in order["addons"])
+    # transaction's totals now so the till reconciles correctly. Same for a
+    # delivery's fee, which isn't a catalog item either. The digital_orders
+    # row (linked via transaction_id) remains the record of exactly what was
+    # ordered and, for delivery, what the fee was.
+    delivery_fee = float(order["delivery"]["delivery_fee"]) if order.get("delivery") and order["delivery"].get("delivery_fee") else 0.0
+    addons_subtotal = sum(float(a["unit_price"]) * a["quantity"] for a in order["addons"]) + delivery_fee
     if addons_subtotal:
         supabase.table("transactions").update(
             {
@@ -270,6 +337,7 @@ def approve_digital_order(order_id: str, user: CurrentUser = Depends(get_current
     result = updated.data[0]
     result["items"] = order["items"]
     result["addons"] = order["addons"]
+    result["delivery"] = order.get("delivery")
     return result
 
 
@@ -298,4 +366,5 @@ def reject_digital_order(
     result = updated.data[0]
     result["items"] = order["items"]
     result["addons"] = order["addons"]
+    result["delivery"] = order.get("delivery")
     return result

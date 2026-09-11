@@ -33,6 +33,9 @@ import {
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
+  Lock,
+  Play,
+  Square,
 } from 'lucide-react';
 import {
   ApiDiscountType,
@@ -40,10 +43,12 @@ import {
   ApiProduct,
   ApiProductSize,
   ApiRecipeItem,
+  BusinessDayStatus,
   OrderType,
   PosTableOverview,
   PosTableStatus,
   TransactionPaymentMethod,
+  closeBusinessDay,
   createTransaction,
   QueuedOfflineError,
   fetchAddons,
@@ -52,6 +57,8 @@ import {
   fetchPosTablesOverview,
   fetchProducts,
   fetchRecipe,
+  fetchTodayBusinessDay,
+  openBusinessDay,
   overrideTableBlock,
   posTableStatus,
 } from '@/lib/api';
@@ -142,6 +149,85 @@ export default function POSTerminal() {
   // flash of "0% tax" in the cart preview before that completes.
   const [vatRate, setVatRate] = useState(0.12);
   const [loading, setLoading] = useState(true);
+
+  // WS-13: Business Day cycle -- the POS is locked (overlay below) until
+  // businessDay.is_open. null while the initial status fetch is in flight,
+  // so the overlay doesn't flash open-then-locked on every page load.
+  const [businessDay, setBusinessDay] = useState<BusinessDayStatus | null>(null);
+  const [businessDayLoading, setBusinessDayLoading] = useState(true);
+  const loadBusinessDay = React.useCallback(() => {
+    fetchTodayBusinessDay()
+      .then(setBusinessDay)
+      .catch((e) => toast.error(e instanceof Error ? e.message : 'Failed to load business day status'))
+      .finally(() => setBusinessDayLoading(false));
+  }, []);
+  useEffect(() => {
+    loadBusinessDay();
+  }, [loadBusinessDay]);
+
+  const [startDayOpen, setStartDayOpen] = useState(false);
+  const [startDayStep, setStartDayStep] = useState<'credentials' | 'menu-check'>('credentials');
+  const [startDayForm, setStartDayForm] = useState({ employeeNumber: '', pin: '' });
+  const [startDaySubmitting, setStartDaySubmitting] = useState(false);
+
+  const [endDayOpen, setEndDayOpen] = useState(false);
+  const [endDayStep, setEndDayStep] = useState<'register-total' | 'credentials'>('register-total');
+  const [endDayForm, setEndDayForm] = useState({ cashRegisterTotal: '', employeeNumber: '', pin: '' });
+  const [endDaySubmitting, setEndDaySubmitting] = useState(false);
+
+  function resetStartDayDialog() {
+    setStartDayOpen(false);
+    setStartDayStep('credentials');
+    setStartDayForm({ employeeNumber: '', pin: '' });
+  }
+
+  function resetEndDayDialog() {
+    setEndDayOpen(false);
+    setEndDayStep('register-total');
+    setEndDayForm({ cashRegisterTotal: '', employeeNumber: '', pin: '' });
+  }
+
+  async function submitStartDay(menuConfirmed: boolean) {
+    setStartDaySubmitting(true);
+    try {
+      const status = await openBusinessDay({
+        employee_number: startDayForm.employeeNumber,
+        pin: startDayForm.pin,
+        menu_confirmed: menuConfirmed,
+      });
+      setBusinessDay(status);
+      resetStartDayDialog();
+      toast.success('Business day started');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to start business day');
+    } finally {
+      setStartDaySubmitting(false);
+    }
+  }
+
+  async function submitEndDay() {
+    const total = Number(endDayForm.cashRegisterTotal);
+    if (!Number.isFinite(total) || total < 0) {
+      toast.error('Enter the counted cash register total');
+      return;
+    }
+    setEndDaySubmitting(true);
+    try {
+      const status = await closeBusinessDay({
+        employee_number: endDayForm.employeeNumber,
+        pin: endDayForm.pin,
+        cash_register_total: total,
+      });
+      setBusinessDay(status);
+      resetEndDayDialog();
+      toast.success('Business day closed');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to close business day');
+    } finally {
+      setEndDaySubmitting(false);
+    }
+  }
+
   const [cart, setCart] = useState<CartLine[]>([]);
   const [discountTypeId, setDiscountTypeId] = useState<string>('none');
   const [submitting, setSubmitting] = useState(false);
@@ -382,6 +468,52 @@ export default function POSTerminal() {
     [products]
   );
   const pillCategories = useMemo(() => ['Favorites', ...categories, 'All'], [categories]);
+
+  // Category strip is a fixed 2-row, non-scrolling tap area (same posture as
+  // the WS-1 product grid). Pill widths vary by label length, so columns
+  // can't be measured off a fixed tile width like the product grid -- instead
+  // a hidden, zero-height clone of the full pill list is rendered at the same
+  // width to let the browser's own flex-wrap tell us which row each pill
+  // lands on, then rows are paged two at a time.
+  const pillRowRef = useRef<HTMLDivElement>(null);
+  const pillButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const [pillPageByCategory, setPillPageByCategory] = useState<Record<string, number>>({});
+  const [pillPage, setPillPage] = useState(0);
+
+  useEffect(() => {
+    const container = pillRowRef.current;
+    if (!container) return;
+    const compute = () => {
+      const rowTops: number[] = [];
+      const pageOf: Record<string, number> = {};
+      for (const cat of pillCategories) {
+        const el = pillButtonRefs.current.get(cat);
+        if (!el) continue;
+        const top = el.offsetTop;
+        let rowIndex = rowTops.findIndex((t) => Math.abs(t - top) < 4);
+        if (rowIndex === -1) {
+          rowTops.push(top);
+          rowIndex = rowTops.length - 1;
+        }
+        pageOf[cat] = Math.floor(rowIndex / 2);
+      }
+      setPillPageByCategory(pageOf);
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, [pillCategories]);
+
+  useEffect(() => {
+    setPillPage(0);
+  }, [pillCategories]);
+
+  const pillMaxPage = Math.max(0, ...Object.values(pillPageByCategory));
+  const clampedPillPage = Math.min(pillPage, pillMaxPage);
+  const visiblePillCategories = pillCategories.filter(
+    (cat) => (pillPageByCategory[cat] ?? 0) === clampedPillPage
+  );
 
   const availabilityCounts = useMemo(() => {
     const counts = { all: products.length, available: 0, low_stock: 0, unavailable: 0 };
@@ -685,7 +817,25 @@ export default function POSTerminal() {
 
   return (
     <DashboardLayout title="POS Terminal">
-      <div className="flex h-full overflow-hidden">
+      <div className="relative flex h-full overflow-hidden">
+        {/* WS-13: Business Day cycle -- one button, two modes, always on top
+            so it's reachable even while the lock overlay below is up. */}
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30">
+          {businessDay?.is_open ? (
+            <Button variant="destructive" className="gap-2 shadow-l2-raised" onClick={() => setEndDayOpen(true)}>
+              <Square className="w-4 h-4" /> End Business Day
+            </Button>
+          ) : (
+            <Button
+              className="gap-2 shadow-l2-raised"
+              onClick={() => setStartDayOpen(true)}
+              disabled={businessDayLoading}
+            >
+              <Play className="w-4 h-4" /> Start Business Day
+            </Button>
+          )}
+        </div>
+
         <div className="flex-1 overflow-auto p-6">
           <div className="flex items-center gap-3 mb-3">
             <div className="relative flex-1">
@@ -718,27 +868,75 @@ export default function POSTerminal() {
               </button>
             </div>
           </div>
-          <div className="flex gap-2 overflow-x-auto pb-1 mb-3">
-            {pillCategories.map((cat) => (
-              <button
-                key={cat}
-                type="button"
-                onClick={() => setSelectedCategory(cat)}
-                className={`shrink-0 px-5 py-2.5 rounded-full text-sm border transition-colors ${
-                  selectedCategory === cat
-                    ? 'bg-primary text-primary-foreground border-transparent'
-                    : 'bg-card text-muted-foreground border-border'
-                }`}
-              >
-                {cat === 'Favorites' && (
-                  <Star
-                    className="inline w-3.5 h-3.5 mr-1 -mt-0.5"
-                    fill={selectedCategory === 'Favorites' ? 'currentColor' : 'none'}
-                  />
-                )}
-                {cat}
-              </button>
-            ))}
+          <div className="mb-3">
+            {/* Hidden measuring clone -- full pill list, real classes, clipped
+                to zero height so flex-wrap still lays it out at the visible
+                container's width without taking any visual space. */}
+            <div ref={pillRowRef} className="flex flex-wrap gap-2 h-0 overflow-hidden invisible" aria-hidden="true">
+              {pillCategories.map((cat) => (
+                <button
+                  key={cat}
+                  ref={(el) => {
+                    if (el) pillButtonRefs.current.set(cat, el);
+                  }}
+                  type="button"
+                  tabIndex={-1}
+                  className="shrink-0 px-5 py-2.5 rounded-full text-sm border"
+                >
+                  {cat === 'Favorites' && <Star className="inline w-3.5 h-3.5 mr-1 -mt-0.5" />}
+                  {cat}
+                </button>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {visiblePillCategories.map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  onClick={() => setSelectedCategory(cat)}
+                  className={`shrink-0 px-5 py-2.5 rounded-full text-sm border transition-colors ${
+                    selectedCategory === cat
+                      ? 'bg-primary text-primary-foreground border-transparent'
+                      : 'bg-card text-muted-foreground border-border'
+                  }`}
+                >
+                  {cat === 'Favorites' && (
+                    <Star
+                      className="inline w-3.5 h-3.5 mr-1 -mt-0.5"
+                      fill={selectedCategory === 'Favorites' ? 'currentColor' : 'none'}
+                    />
+                  )}
+                  {cat}
+                </button>
+              ))}
+            </div>
+            {pillMaxPage > 0 && (
+              <div className="flex items-center justify-center gap-3 mt-2">
+                <Button
+                  size="icon"
+                  variant="outline"
+                  className="h-9 w-9"
+                  disabled={clampedPillPage === 0}
+                  onClick={() => setPillPage((p) => Math.max(0, p - 1))}
+                  aria-label="Previous categories"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  Page {clampedPillPage + 1} / {pillMaxPage + 1}
+                </span>
+                <Button
+                  size="icon"
+                  variant="outline"
+                  className="h-9 w-9"
+                  disabled={clampedPillPage === pillMaxPage}
+                  onClick={() => setPillPage((p) => Math.min(pillMaxPage, p + 1))}
+                  aria-label="Next categories"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+            )}
           </div>
           <div className="flex items-center justify-between gap-2 mb-3">
             <div className="flex flex-wrap gap-2">
@@ -784,12 +982,7 @@ export default function POSTerminal() {
               {visibleProducts.map((product) => {
                 const cheapest = [...product.sizes].sort((a, b) => a.price - b.price)[0];
                 const allUnavailable = product.sizes.every((s) => s.availability === 'unavailable');
-                const priceLabel =
-                  product.sizes.length > 1 && cheapest
-                    ? `from ${formatCurrency(cheapest.price)}`
-                    : cheapest
-                      ? formatCurrency(cheapest.price)
-                      : '';
+                const priceLabel = cheapest ? formatCurrency(cheapest.price) : '';
                 return (
                   <Card
                     key={product.id}
@@ -798,8 +991,8 @@ export default function POSTerminal() {
                   >
                     <CardContent className="py-3 flex items-center gap-3">
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-corp-display font-medium truncate">{product.name}</p>
-                        <p className="text-xs text-muted-foreground">{product.category}</p>
+                        <p className="text-sm font-menu-title font-bold truncate">{product.name}</p>
+                        <p className="text-xs font-light text-muted-foreground">{product.category}</p>
                         <div className="flex items-center gap-2 mt-0.5">
                           <span className="text-sm font-semibold">{priceLabel}</span>
                           {product.is_bundle && <Badge variant="gold">Bundle</Badge>}
@@ -836,12 +1029,7 @@ export default function POSTerminal() {
                 {pagedGridProducts.map((product) => {
                   const cheapest = [...product.sizes].sort((a, b) => a.price - b.price)[0];
                   const allUnavailable = product.sizes.every((s) => s.availability === 'unavailable');
-                  const priceLabel =
-                    product.sizes.length > 1 && cheapest
-                      ? `from ${formatCurrency(cheapest.price)}`
-                      : cheapest
-                        ? formatCurrency(cheapest.price)
-                        : '';
+                  const priceLabel = cheapest ? formatCurrency(cheapest.price) : '';
                   return (
                     <Card
                       key={product.id}
@@ -866,10 +1054,10 @@ export default function POSTerminal() {
                         />
                       </button>
                       <CardHeader className="pb-2 pt-4">
-                        <CardTitle className="text-sm font-corp-display pr-6">{product.name}</CardTitle>
+                        <CardTitle className="text-sm font-menu-title font-bold pr-6">{product.name}</CardTitle>
                       </CardHeader>
                       <CardContent className="pb-4 space-y-1">
-                        <p className="text-xs text-muted-foreground">{product.category}</p>
+                        <p className="text-xs font-light text-muted-foreground">{product.category}</p>
                         <p className="text-base font-semibold">{priceLabel}</p>
                         {product.is_bundle && (
                           <Badge
@@ -1291,7 +1479,156 @@ export default function POSTerminal() {
             </Button>
           </div>
         </div>
+
+        {!businessDayLoading && !businessDay?.is_open && (
+          <div className="absolute inset-0 z-20 bg-background/85 backdrop-blur-sm flex items-center justify-center">
+            <div className="text-center max-w-sm px-6">
+              <Lock className="w-8 h-8 mx-auto mb-3 text-muted-foreground" />
+              <p className="font-corp-display font-semibold mb-1">Business day not started</p>
+              <p className="text-sm text-muted-foreground">
+                Press "Start Business Day" above to unlock the POS.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Start Business Day -- ID+PIN, then a menu-availability acknowledgement */}
+      <Dialog open={startDayOpen} onOpenChange={(open) => !open && resetStartDayDialog()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Start Business Day</DialogTitle>
+            <DialogDescription>
+              {startDayStep === 'credentials'
+                ? 'Confirm your own kiosk credentials to start today.'
+                : 'Are all items available and up to date on today\'s menu?'}
+            </DialogDescription>
+          </DialogHeader>
+          {startDayStep === 'credentials' ? (
+            <>
+              <div className="space-y-3">
+                <div>
+                  <Label>Employee number</Label>
+                  <Input
+                    value={startDayForm.employeeNumber}
+                    onChange={(e) => setStartDayForm({ ...startDayForm, employeeNumber: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label>PIN</Label>
+                  <Input
+                    type="password"
+                    value={startDayForm.pin}
+                    onChange={(e) => setStartDayForm({ ...startDayForm, pin: e.target.value })}
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button
+                  onClick={() => {
+                    if (!startDayForm.employeeNumber || !startDayForm.pin) {
+                      toast.error('Employee number and PIN are required');
+                      return;
+                    }
+                    setStartDayStep('menu-check');
+                  }}
+                >
+                  Continue
+                </Button>
+              </DialogFooter>
+            </>
+          ) : (
+            <DialogFooter className="flex-col sm:flex-col gap-2">
+              <Button
+                variant="outline"
+                className="w-full gap-2"
+                disabled={startDaySubmitting}
+                onClick={() => {
+                  resetStartDayDialog();
+                  navigate('/menu-editing');
+                }}
+              >
+                No -- go to Menu Editing
+              </Button>
+              <Button
+                className="w-full"
+                disabled={startDaySubmitting}
+                onClick={() => submitStartDay(true)}
+              >
+                {startDaySubmitting ? 'Starting...' : 'Yes, start business day'}
+              </Button>
+            </DialogFooter>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* End Business Day -- cash-register total first, then ID+PIN. The
+          cashier never sees the system's own EOD total at any point here. */}
+      <Dialog open={endDayOpen} onOpenChange={(open) => !open && resetEndDayDialog()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>End Business Day</DialogTitle>
+            <DialogDescription>
+              {endDayStep === 'register-total'
+                ? 'Enter the physically counted cash register total.'
+                : 'Confirm your own kiosk credentials to close today.'}
+            </DialogDescription>
+          </DialogHeader>
+          {endDayStep === 'register-total' ? (
+            <>
+              <div>
+                <Label>Cash register total</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={endDayForm.cashRegisterTotal}
+                  onChange={(e) => setEndDayForm({ ...endDayForm, cashRegisterTotal: e.target.value })}
+                />
+              </div>
+              <DialogFooter>
+                <Button
+                  onClick={() => {
+                    const total = Number(endDayForm.cashRegisterTotal);
+                    if (!Number.isFinite(total) || total < 0) {
+                      toast.error('Enter the counted cash register total');
+                      return;
+                    }
+                    setEndDayStep('credentials');
+                  }}
+                >
+                  Continue
+                </Button>
+              </DialogFooter>
+            </>
+          ) : (
+            <>
+              <div className="space-y-3">
+                <div>
+                  <Label>Employee number</Label>
+                  <Input
+                    value={endDayForm.employeeNumber}
+                    onChange={(e) => setEndDayForm({ ...endDayForm, employeeNumber: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label>PIN</Label>
+                  <Input
+                    type="password"
+                    value={endDayForm.pin}
+                    onChange={(e) => setEndDayForm({ ...endDayForm, pin: e.target.value })}
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button onClick={submitEndDay} disabled={endDaySubmitting}>
+                  {endDaySubmitting ? 'Closing...' : 'Confirm and close day'}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Size picker */}
       <Dialog open={!!sizePickerProduct} onOpenChange={(open) => !open && setSizePickerProduct(null)}>

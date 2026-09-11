@@ -31,6 +31,23 @@ export default function Home() {
   // welcome copy should list what their own sidebar actually contains.
   // (executive already redirected away above, so only 'manager' remains here.)
   const isManagerOrExecutive = user?.role === 'manager';
+  // Phase 4: the two new restricted-department roles get their own copy --
+  // neither has a POS/Order Queue/Menu Editing sidebar entry at all.
+  const isStocker = user?.role === 'stocker';
+  const isRider = user?.role === 'rider';
+  const showLowStockCard = (isManagerOrExecutive || isStocker) && lowStockCount > 0;
+
+  let welcomeCopy: string;
+  if (isStocker) {
+    welcomeCopy = 'Use the sidebar to get to Stock & Inventory.';
+  } else if (isRider) {
+    welcomeCopy = 'Use the sidebar to get to your Delivery tab.';
+  } else if (isManagerOrExecutive) {
+    welcomeCopy =
+      'Use the sidebar to get to POS Terminal, Order Queue, Kitchen Display, Reservations, Inventory, Menu Editing, and HR & Payroll.';
+  } else {
+    welcomeCopy = 'Use the sidebar to get to POS Terminal, Order Queue, Kitchen Display, Reservations, and Menu Editing.';
+  }
 
   return (
     <DashboardLayout title="Home">
@@ -40,15 +57,11 @@ export default function Home() {
             <CardTitle className="font-corp-display">Welcome, {user?.name}</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground">
-              {isManagerOrExecutive
-                ? 'Use the sidebar to get to POS Terminal, Order Queue, Kitchen Display, Reservations, Inventory, Menu Editing, and HR & Payroll.'
-                : 'Use the sidebar to get to POS Terminal, Order Queue, Kitchen Display, Reservations, and Menu Editing.'}
-            </p>
+            <p className="text-sm text-muted-foreground">{welcomeCopy}</p>
           </CardContent>
         </Card>
 
-        {isManagerOrExecutive && lowStockCount > 0 && (
+        {showLowStockCard && (
           <Card className="max-w-xl border-l-4 border-l-destructive bg-error-bg">
             <CardHeader>
               <CardTitle className="text-destructive flex items-center gap-2">
