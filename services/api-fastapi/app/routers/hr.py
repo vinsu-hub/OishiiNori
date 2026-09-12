@@ -10,7 +10,7 @@ from fastapi.responses import Response
 from postgrest.exceptions import APIError
 
 from app.attendance_utils import auto_close_stale_attendance, hr_table
-from app.auth import CurrentUser, get_current_user, require_role
+from app.auth import CurrentUser, _profile_active_supported_check, get_current_user, require_role
 from app.deps import get_supabase
 from app.payroll_pdf import build_payslip_pdf
 from app.schemas import (
@@ -655,13 +655,14 @@ def _slugify(name: str) -> str:
 def list_employees(user: CurrentUser = Depends(get_current_user)):
     require_role(user, "manager", "executive")
     supabase = get_supabase()
-    result = (
-        supabase.table("profiles")
-        .select("id, full_name, role, department, position, pay_rate, employee_number, active")
-        .order("full_name")
-        .execute()
-    )
-    return result.data
+    columns = "id, full_name, role, department, position, pay_rate, employee_number"
+    if _profile_active_supported_check(supabase):
+        columns += ", active"
+    result = supabase.table("profiles").select(columns).order("full_name").execute()
+    rows = result.data
+    for row in rows:
+        row.setdefault("active", True)
+    return rows
 
 
 @router.post("/employees", response_model=EmployeeCreatedResponse)
@@ -748,6 +749,8 @@ def set_employee_active(
     set_employee_pin above rather than overloading one endpoint."""
     require_role(user, "manager", "executive")
     supabase = get_supabase()
+    if not _profile_active_supported_check(supabase):
+        raise HTTPException(status_code=501, detail="Deactivate/reactivate needs migration 0040 applied first")
     existing = supabase.table("profiles").select("id").eq("id", employee_id).maybe_single().execute()
     if not existing or not existing.data:
         raise HTTPException(status_code=404, detail="Employee not found")
