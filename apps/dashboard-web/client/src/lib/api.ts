@@ -320,6 +320,7 @@ export type OrderType = 'dine_in' | 'takeout';
 // Distinct from any digital-order payment-method type -- POS supports two
 // more values (card, split).
 export type TransactionPaymentMethod = 'cash' | 'gcash' | 'card' | 'split';
+export type TransactionCardType = 'debit' | 'credit';
 
 export interface ApiMenuAddon {
   id: string;
@@ -352,6 +353,8 @@ export interface CreateTransactionRequest {
   table_number?: number | null;
   guest_count?: number | null;
   payment_method?: TransactionPaymentMethod | null;
+  card_type?: TransactionCardType | null;
+  force_vat_exempt?: boolean;
   reservation_override_id?: string;
   reservation_id?: string;
 }
@@ -399,6 +402,8 @@ export interface ApiTransaction {
   table_number: number | null;
   guest_count: number | null;
   payment_method: TransactionPaymentMethod | null;
+  card_type: TransactionCardType | null;
+  force_vat_exempt: boolean;
   items: ApiTransactionItem[];
 }
 

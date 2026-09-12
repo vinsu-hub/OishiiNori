@@ -48,6 +48,7 @@ import {
   PosTableOverview,
   PosTableStatus,
   TransactionPaymentMethod,
+  TransactionCardType,
   closeBusinessDay,
   createTransaction,
   QueuedOfflineError,
@@ -277,6 +278,11 @@ export default function POSTerminal() {
   const [tableOptions, setTableOptions] = useState<PosTableOverview[]>([]);
   const [guestCount, setGuestCount] = useState(2);
   const [paymentMethod, setPaymentMethod] = useState<TransactionPaymentMethod | null>(null);
+  const [cardType, setCardType] = useState<TransactionCardType | null>(null);
+  const [cardTypePromptOpen, setCardTypePromptOpen] = useState(false);
+  // Independent of any discount's own vat_exempt -- lets a cashier book an
+  // order non-VAT with no VAT-exempt discount applied.
+  const [vatOverride, setVatOverride] = useState<'vat' | 'non_vat'>('vat');
 
   // Reservation block: when the typed table has a live confirmed reservation
   // the POS shows it as reserved and blocks the charge until a manager
@@ -438,7 +444,7 @@ export default function POSTerminal() {
         // `window` in the capture phase too puts it earlier in the capture
         // path (window is captured before document), so it runs first and
         // still sees the real pre-close state.
-        if (sizePickerProduct || ownerRequestOpen || editOrderOpen) return;
+        if (sizePickerProduct || ownerRequestOpen || editOrderOpen || cardTypePromptOpen) return;
         clearOrder();
       }
     }
@@ -465,8 +471,9 @@ export default function POSTerminal() {
     if (orderType === 'dine_in' && !tableNumber.trim()) b.push('Pick a table');
     if (tableBlocked) b.push('Table is reserved — manager override required');
     if (!paymentMethod) b.push('Select a payment method');
+    if (paymentMethod === 'card' && !cardType) b.push('Select debit or credit');
     return b;
-  }, [cart.length, orderType, tableNumber, tableBlocked, paymentMethod]);
+  }, [cart.length, orderType, tableNumber, tableBlocked, paymentMethod, cardType]);
 
   const subtotal = useMemo(
     () =>
@@ -588,7 +595,7 @@ export default function POSTerminal() {
   // display before charging, never sent as-is to the API.
   const previewDiscountAmount = selectedDiscount ? subtotal * (selectedDiscount.percentage / 100) : 0;
   const previewTaxable = subtotal - previewDiscountAmount;
-  const previewTax = selectedDiscount?.vat_exempt ? 0 : previewTaxable * vatRate;
+  const previewTax = selectedDiscount?.vat_exempt || vatOverride === 'non_vat' ? 0 : previewTaxable * vatRate;
   const previewTotal = previewTaxable + previewTax;
 
   function addToCart(product: ApiProduct, size: ApiProductSize) {
@@ -726,6 +733,7 @@ export default function POSTerminal() {
   function clearOrder() {
     setCart([]);
     setDiscountTypeId('none');
+    setVatOverride('vat');
     clearOwnerRequest();
   }
 
@@ -798,6 +806,8 @@ export default function POSTerminal() {
         table_number: orderType === 'dine_in' ? Number(tableNumber) : null,
         guest_count: orderType === 'dine_in' ? guestCount : null,
         payment_method: paymentMethod ?? undefined, // guaranteed set past chargeBlockers
+        card_type: cardType ?? undefined,
+        force_vat_exempt: vatOverride === 'non_vat',
         reservation_override_id: overrideId ?? undefined,
         reservation_id: orderType === 'dine_in' ? reservationId ?? undefined : undefined,
       });
@@ -812,6 +822,7 @@ export default function POSTerminal() {
       setOverrideId(null);
       setReservationId(null);
       setPaymentMethod(null);
+      setCardType(null);
       loadTableOptions();
     } catch (e) {
       if (e instanceof QueuedOfflineError) {
@@ -824,8 +835,10 @@ export default function POSTerminal() {
         toast.warning(e.message);
         setCart([]);
         setDiscountTypeId('none');
+        setVatOverride('vat');
         setTableNumber('');
         setPaymentMethod(null);
+        setCardType(null);
       } else {
         toast.error(e instanceof Error ? e.message : 'Failed to create transaction');
         // A failed charge invalidates whatever was staged for Owner's Request --
@@ -899,7 +912,7 @@ export default function POSTerminal() {
                   }}
                   type="button"
                   tabIndex={-1}
-                  className="shrink-0 px-5 py-2.5 rounded-full text-sm border"
+                  className="shrink-0 px-6 py-3.5 rounded-full text-base font-semibold border-2"
                 >
                   {cat === 'Favorites' && <Star className="inline w-3.5 h-3.5 mr-1 -mt-0.5" />}
                   {cat}
@@ -912,7 +925,7 @@ export default function POSTerminal() {
                   key={cat}
                   type="button"
                   onClick={() => setSelectedCategory(cat)}
-                  className={`shrink-0 px-5 py-2.5 rounded-full text-sm border transition-colors ${
+                  className={`shrink-0 px-6 py-3.5 rounded-full text-base font-semibold border-2 transition-colors ${
                     selectedCategory === cat
                       ? 'bg-primary text-primary-foreground border-transparent'
                       : 'bg-card text-muted-foreground border-border'
@@ -1189,7 +1202,7 @@ export default function POSTerminal() {
           </div>
           {orderType === 'dine_in' && (
             <Select value={tableNumber} onValueChange={setTableNumber}>
-              <SelectTrigger className="w-full h-8 text-sm">
+              <SelectTrigger className="w-full h-8 text-sm font-bold bg-red-600 text-white border-red-600 hover:bg-red-700 focus:ring-red-600">
                 <SelectValue placeholder="Pick a table" />
               </SelectTrigger>
               <SelectContent>
@@ -1404,6 +1417,26 @@ export default function POSTerminal() {
             </div>
 
             <div>
+              <Label className="text-xs">VAT</Label>
+              <div className="grid grid-cols-2 gap-2 mt-1">
+                {(['vat', 'non_vat'] as const).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => setVatOverride(v)}
+                    className={`text-sm py-2 rounded border ${
+                      vatOverride === v
+                        ? 'bg-primary text-primary-foreground border-transparent'
+                        : 'bg-card text-muted-foreground border-border'
+                    }`}
+                  >
+                    {v === 'vat' ? 'VAT' : 'Non-VAT'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
               <Label className="text-xs">
                 Payment Method <span className="text-destructive">*</span>
               </Label>
@@ -1416,7 +1449,19 @@ export default function POSTerminal() {
                   <button
                     key={m}
                     type="button"
-                    onClick={() => setPaymentMethod((prev) => (prev === m ? null : m))}
+                    onClick={() => {
+                      if (paymentMethod === m) {
+                        setPaymentMethod(null);
+                        setCardType(null);
+                        return;
+                      }
+                      if (m === 'card') {
+                        setCardTypePromptOpen(true);
+                        return;
+                      }
+                      setPaymentMethod(m);
+                      setCardType(null);
+                    }}
                     className={`text-sm py-3 rounded border capitalize ${
                       paymentMethod === m
                         ? 'bg-primary text-primary-foreground border-transparent'
@@ -1424,6 +1469,9 @@ export default function POSTerminal() {
                     }`}
                   >
                     {m}
+                    {m === 'card' && paymentMethod === 'card' && cardType && (
+                      <span className="block text-[10px] font-normal capitalize opacity-90">{cardType}</span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -1674,6 +1722,31 @@ export default function POSTerminal() {
           <DialogFooter>
             <Button onClick={() => setCredentialMismatchOpen(false)}>Got it</Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Debit/Credit prompt -- shown when "Card" is picked as payment method. */}
+      <Dialog open={cardTypePromptOpen} onOpenChange={(open) => !open && setCardTypePromptOpen(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Debit or credit?</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            {(['debit', 'credit'] as const).map((t) => (
+              <Button
+                key={t}
+                variant="outline"
+                className="w-full capitalize"
+                onClick={() => {
+                  setCardType(t);
+                  setPaymentMethod('card');
+                  setCardTypePromptOpen(false);
+                }}
+              >
+                {t}
+              </Button>
+            ))}
+          </div>
         </DialogContent>
       </Dialog>
 

@@ -23,6 +23,7 @@ OrderType = Literal["dine_in", "takeout"]
 # reusing/widening that type would change the digital-order schema's own
 # semantics.
 TransactionPaymentMethod = Literal["cash", "gcash", "card", "split"]
+TransactionCardType = Literal["debit", "credit"]
 MovementType = Literal[
     "trans_in", "trans_out", "delivery", "transfer_in", "transfer_out", "count_adjustment",
     # Sale-driven stock-item consumption (0028) -- deliberately logged as a
@@ -172,6 +173,11 @@ class CreateTransactionRequest(BaseModel):
     table_number: int | None = Field(default=None, gt=0)
     guest_count: int | None = Field(default=None, gt=0)
     payment_method: TransactionPaymentMethod | None = None
+    card_type: TransactionCardType | None = None
+    # Independent of any discount's own vat_exempt -- lets the cashier book
+    # an order non-VAT with no VAT-exempt discount applied (POS VAT/Non-VAT
+    # toggle). A discount's own vat_exempt still applies regardless of this.
+    force_vat_exempt: bool = False
     # Set by the POS when a manager has overridden a reservation-blocked table
     # (see /pos/tables/override). Consumed exactly once by this transaction.
     reservation_override_id: str | None = None
@@ -224,6 +230,8 @@ class TransactionResponse(BaseModel):
     table_number: int | None = None
     guest_count: int | None = None
     payment_method: TransactionPaymentMethod | None = None
+    card_type: TransactionCardType | None = None
+    force_vat_exempt: bool = False
     items: list[TransactionItemResponse] = Field(default_factory=list)
 
 

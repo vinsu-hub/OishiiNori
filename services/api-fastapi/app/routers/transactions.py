@@ -54,6 +54,7 @@ _transaction_item_addons_supported: bool | None = None
 _transaction_order_context_supported: bool | None = None
 _transaction_order_number_supported: bool | None = None
 _business_days_supported: bool | None = None
+_transaction_card_vat_supported: bool | None = None
 
 
 def _business_days_supported_check(supabase) -> bool:
@@ -143,6 +144,20 @@ def _transaction_order_number_supported_check(supabase) -> bool:
         except APIError:
             _transaction_order_number_supported = False
     return _transaction_order_number_supported
+
+
+def _transaction_card_vat_supported_check(supabase) -> bool:
+    """Migration 0039 feature-detection, same pattern as the checks above --
+    card_type (debit/credit prompt) and force_vat_exempt (POS VAT/Non-VAT
+    toggle)."""
+    global _transaction_card_vat_supported
+    if _transaction_card_vat_supported is None:
+        try:
+            supabase.table("transactions").select("card_type, force_vat_exempt").limit(1).execute()
+            _transaction_card_vat_supported = True
+        except APIError:
+            _transaction_card_vat_supported = False
+    return _transaction_card_vat_supported
 
 
 def _attach_item_addons(supabase, items: list[dict]) -> None:
@@ -314,6 +329,8 @@ def _fetch_transaction_with_items(supabase, transaction_id: str) -> dict | None:
     transaction.setdefault("table_number", None)
     transaction.setdefault("guest_count", None)
     transaction.setdefault("payment_method", None)
+    transaction.setdefault("card_type", None)
+    transaction.setdefault("force_vat_exempt", False)
     return transaction
 
 
@@ -329,6 +346,8 @@ def _create_transaction_row(
     table_number: int | None = None,
     guest_count: int | None = None,
     payment_method: str | None = None,
+    card_type: str | None = None,
+    force_vat_exempt: bool = False,
 ) -> TransactionResponse:
     """Insert a transaction + items, deduct non-bundle recipe ingredients,
     and compute discount/tax. Shared by POS sale creation (create_transaction
@@ -396,7 +415,9 @@ def _create_transaction_row(
         discount = discount_result.data
         if not discount["active"]:
             raise HTTPException(status_code=400, detail="Discount type is not active")
-        vat_exempt = discount["vat_exempt"]
+        vat_exempt = discount["vat_exempt"] or force_vat_exempt
+    elif force_vat_exempt:
+        vat_exempt = True
 
     now_iso = datetime.now(timezone.utc).isoformat()
     insert_payload = {
@@ -416,6 +437,9 @@ def _create_transaction_row(
         insert_payload["table_number"] = table_number
         insert_payload["guest_count"] = guest_count
         insert_payload["payment_method"] = payment_method
+    if _transaction_card_vat_supported_check(supabase):
+        insert_payload["card_type"] = card_type
+        insert_payload["force_vat_exempt"] = force_vat_exempt
 
     transaction_insert = supabase.table("transactions").insert(insert_payload).execute()
     transaction = transaction_insert.data[0]
@@ -518,6 +542,8 @@ def _create_transaction_row(
     transaction.setdefault("table_number", None)
     transaction.setdefault("guest_count", None)
     transaction.setdefault("payment_method", None)
+    transaction.setdefault("card_type", None)
+    transaction.setdefault("force_vat_exempt", False)
     return TransactionResponse(**transaction, items=inserted_items)
 
 
@@ -535,6 +561,8 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
     # till reconciles. The digital-order approval path doesn't come through here.
     if not body.payment_method:
         raise HTTPException(status_code=400, detail="Payment method is required")
+    if body.payment_method == "card" and not body.card_type:
+        raise HTTPException(status_code=400, detail="Select debit or credit")
 
     supabase = get_supabase()
 
@@ -597,6 +625,8 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
         table_number=body.table_number,
         guest_count=body.guest_count,
         payment_method=body.payment_method,
+        card_type=body.card_type,
+        force_vat_exempt=body.force_vat_exempt,
     )
 
     if consumed_override_id is not None:
@@ -715,6 +745,8 @@ def list_transactions(
         t.setdefault("table_number", None)
         t.setdefault("guest_count", None)
         t.setdefault("payment_method", None)
+        t.setdefault("card_type", None)
+        t.setdefault("force_vat_exempt", False)
         out.append(TransactionResponse(**t, items=items_by_transaction.get(t["id"], [])))
     return out
 
@@ -755,6 +787,8 @@ def close_transaction(transaction_id: str, user: CurrentUser = Depends(get_curre
     updated_row.setdefault("table_number", None)
     updated_row.setdefault("guest_count", None)
     updated_row.setdefault("payment_method", None)
+    updated_row.setdefault("card_type", None)
+    updated_row.setdefault("force_vat_exempt", False)
     return TransactionResponse(**updated_row, items=transaction["items"])
 
 
@@ -817,6 +851,8 @@ def switch_table(transaction_id: str, body: SwitchTableRequest, user: CurrentUse
     updated_row.setdefault("table_number", None)
     updated_row.setdefault("guest_count", None)
     updated_row.setdefault("payment_method", None)
+    updated_row.setdefault("card_type", None)
+    updated_row.setdefault("force_vat_exempt", False)
 
     # Keep a linked, still-seated reservation's own table assignment in sync
     # so the Floor Plan doesn't also show it blocking the vacated table.
@@ -931,6 +967,8 @@ def void_transaction_core(supabase, transaction: dict, actor_id: str, reason: st
     updated_row.setdefault("table_number", None)
     updated_row.setdefault("guest_count", None)
     updated_row.setdefault("payment_method", None)
+    updated_row.setdefault("card_type", None)
+    updated_row.setdefault("force_vat_exempt", False)
 
     # transaction["items"] was fetched (with its bundle_fulfilled flags)
     # before the restore loop above deleted this transaction's
@@ -1018,6 +1056,8 @@ def update_kitchen_status(
     updated.setdefault("table_number", None)
     updated.setdefault("guest_count", None)
     updated.setdefault("payment_method", None)
+    updated.setdefault("card_type", None)
+    updated.setdefault("force_vat_exempt", False)
     return TransactionResponse(**updated, items=transaction["items"])
 
 
@@ -1040,6 +1080,8 @@ def fulfill_transaction(transaction_id: str, user: CurrentUser = Depends(get_cur
     updated.setdefault("table_number", None)
     updated.setdefault("guest_count", None)
     updated.setdefault("payment_method", None)
+    updated.setdefault("card_type", None)
+    updated.setdefault("force_vat_exempt", False)
     return TransactionResponse(**updated, items=transaction["items"])
 
 
