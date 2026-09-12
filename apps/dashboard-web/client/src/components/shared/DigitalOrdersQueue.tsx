@@ -37,10 +37,15 @@ export function DigitalOrdersQueue({
   channel,
   title,
   emptyLabel,
+  embedded,
 }: {
   channel: DigitalOrderChannel;
   title: string;
   emptyLabel: string;
+  // When true, renders just the list+dialogs (no DashboardLayout wrapper)
+  // -- for a parent page that supplies its own layout/tabs, same pattern
+  // as reservations/RequestsPanel.tsx under Reservations.tsx.
+  embedded?: boolean;
 }) {
   const [orders, setOrders] = useState<ApiDigitalOrder[]>([]);
   const { products, error: productsError } = useProductCatalog();
@@ -112,9 +117,9 @@ export function DigitalOrdersQueue({
     }
   }
 
-  return (
-    <DashboardLayout title={title}>
-      <div className="p-6 space-y-3">
+  const content = (
+    <>
+      <div className={embedded ? 'space-y-3' : 'p-6 space-y-3'}>
         {loading && <p className="text-sm text-muted-foreground">Loading...</p>}
         {!loading && orders.length === 0 && <p className="text-sm text-muted-foreground">{emptyLabel}</p>}
         {orders.map((order) => (
@@ -127,7 +132,8 @@ export function DigitalOrdersQueue({
                   {channel === 'delivery' && order.delivery?.barangay && (
                     <Badge variant="outline">{order.delivery.barangay}</Badge>
                   )}
-                  <Badge variant="gold">{order.payment_method === 'gcash' ? 'GCash' : 'Cash'}</Badge>
+                  <Badge variant="gold">{order.payment_method}</Badge>
+                  {order.payment_proof_url && <Badge variant="outline">Proof attached</Badge>}
                 </div>
                 <span className="font-semibold">
                   {formatCurrency(order.subtotal + (order.delivery?.delivery_fee ?? 0))}
@@ -197,7 +203,7 @@ export function DigitalOrdersQueue({
               {approveTarget
                 ? formatCurrency(approveTarget.subtotal + (approveTarget.delivery?.delivery_fee ?? 0))
                 : ''}{' '}
-              received via {approveTarget?.payment_method === 'gcash' ? 'GCash' : 'Cash'}
+              received via {approveTarget?.payment_method}
               {channel === 'dine_in_qr'
                 ? ` for Table ${approveTarget?.table_number}`
                 : approveTarget?.delivery
@@ -206,6 +212,21 @@ export function DigitalOrdersQueue({
               . This will create the sale and send it to the kitchen{channel !== 'dine_in_qr' ? ' as a takeout order' : ''}.
             </DialogDescription>
           </DialogHeader>
+          {approveTarget?.payment_proof_url ? (
+            <a href={approveTarget.payment_proof_url} target="_blank" rel="noreferrer">
+              <img
+                src={approveTarget.payment_proof_url}
+                alt="Proof of payment"
+                className="max-h-80 w-full rounded-md border object-contain"
+              />
+            </a>
+          ) : (
+            approveTarget?.payment_method !== 'cash' && (
+              <p className="text-sm text-destructive">
+                No proof of payment was uploaded for this order -- verify payment before approving.
+              </p>
+            )
+          )}
           <DialogFooter>
             <Button disabled={busy} onClick={handleApprove}>
               {busy ? 'Confirming...' : 'Confirm payment received'}
@@ -231,6 +252,9 @@ export function DigitalOrdersQueue({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </DashboardLayout>
+    </>
   );
+
+  if (embedded) return content;
+  return <DashboardLayout title={title}>{content}</DashboardLayout>;
 }

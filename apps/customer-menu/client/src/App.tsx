@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import {
   ApiAddon,
+  ApiOnlinePaymentMethod,
   ApiProduct,
   ApiProductSize,
   ApiRecipeItem,
@@ -34,8 +35,10 @@ import {
   fetchDeliveryFees,
   fetchMenu,
   fetchOrderStatus,
+  fetchPaymentMethods,
   fetchRecipe,
   submitOrder,
+  uploadProofOfPayment,
 } from '@/lib/api';
 import ReservationView from '@/components/ReservationView';
 import { isValidPhilippinePhone, PH_PHONE_HINT } from '@/lib/validators';
@@ -152,6 +155,26 @@ export default function App() {
   const [draftHeld, setDraftHeld] = useState<string[]>([]);
 
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(null);
+  // Online payment verification (delivery/pickup only): choosing an
+  // e-wallet/bank-transfer method shows its QR/account details, then an
+  // upload-proof step, before the order actually submits. Cash and the
+  // dine-in QR flow (waiter-mediated, unchanged) skip this entirely.
+  const [onlinePaymentMethods, setOnlinePaymentMethods] = useState<ApiOnlinePaymentMethod[]>([]);
+  const [selectedOnlineMethod, setSelectedOnlineMethod] = useState<ApiOnlinePaymentMethod | null>(null);
+  const [checkoutStage, setCheckoutStage] = useState<'form' | 'qr' | 'upload'>('form');
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [proofPreviewUrl, setProofPreviewUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (effectiveChannel && effectiveChannel !== 'dine_in_qr' && onlinePaymentMethods.length === 0) {
+      fetchPaymentMethods()
+        .then(setOnlinePaymentMethods)
+        .catch(() => {
+          // Cash stays available either way -- an online method just won't
+          // show up as an option if this fails.
+        });
+    }
+  }, [effectiveChannel, onlinePaymentMethods.length]);
   const [customerNote, setCustomerNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [order, setOrder] = useState<DigitalOrderStatus | null>(null);
@@ -287,42 +310,61 @@ export default function App() {
   const cartTotal = cartSubtotal + addonTotal;
   const cartCount = cart.reduce((sum, l) => sum + l.quantity, 0) + addons.reduce((sum, l) => sum + l.quantity, 0);
 
+  function validateDeliveryPickupForm(): boolean {
+    if (!customerName.trim() || !customerPhone.trim()) {
+      toast('Name and phone number are required', 'error');
+      return false;
+    }
+    if (!isValidPhilippinePhone(customerPhone)) {
+      toast(`Enter a valid Philippine phone number (${PH_PHONE_HINT})`, 'error');
+      return false;
+    }
+    if (effectiveChannel === 'delivery' && (!address.trim() || !barangay)) {
+      toast('Address and barangay are required for delivery', 'error');
+      return false;
+    }
+    return true;
+  }
+
+  async function submitFinalOrder(method: string) {
+    if (!effectiveChannel) return null;
+    return submitOrder({
+      table_number: tableNumber ?? undefined,
+      order_channel: effectiveChannel,
+      items: cart.map((l) => ({ product_size_id: l.size.id, quantity: l.quantity, held_ingredients: l.held })),
+      addons: addons.map((l) => ({ addon_id: l.addon.id, quantity: l.quantity })),
+      payment_method: method,
+      customer_note: customerNote.trim() || undefined,
+      ...(effectiveChannel !== 'dine_in_qr' && {
+        customer_name: customerName.trim(),
+        customer_phone: customerPhone.trim(),
+        ...(effectiveChannel === 'delivery' && {
+          address: address.trim(),
+          landmark: landmark.trim() || undefined,
+          barangay,
+        }),
+      }),
+    });
+  }
+
+  // Main checkout CTA. Cash (any channel) and the dine-in QR flow (waiter-
+  // mediated, unchanged) submit immediately. An online payment method on
+  // delivery/pickup instead advances to the QR/account-details screen --
+  // the order isn't created until proof of payment is uploaded.
   async function handlePlaceOrder() {
     if (!effectiveChannel || !paymentMethod || cart.length === 0) return;
     if (effectiveChannel === 'dine_in_qr' && !tableNumber) return;
-    if (effectiveChannel !== 'dine_in_qr') {
-      if (!customerName.trim() || !customerPhone.trim()) {
-        toast('Name and phone number are required', 'error');
-        return;
-      }
-      if (!isValidPhilippinePhone(customerPhone)) {
-        toast(`Enter a valid Philippine phone number (${PH_PHONE_HINT})`, 'error');
-        return;
-      }
-      if (effectiveChannel === 'delivery' && (!address.trim() || !barangay)) {
-        toast('Address and barangay are required for delivery', 'error');
-        return;
-      }
+    if (effectiveChannel !== 'dine_in_qr' && !validateDeliveryPickupForm()) return;
+
+    if (effectiveChannel !== 'dine_in_qr' && selectedOnlineMethod) {
+      setCheckoutStage('qr');
+      return;
     }
+
     setSubmitting(true);
     try {
-      const result = await submitOrder({
-        table_number: tableNumber ?? undefined,
-        order_channel: effectiveChannel,
-        items: cart.map((l) => ({ product_size_id: l.size.id, quantity: l.quantity, held_ingredients: l.held })),
-        addons: addons.map((l) => ({ addon_id: l.addon.id, quantity: l.quantity })),
-        payment_method: paymentMethod,
-        customer_note: customerNote.trim() || undefined,
-        ...(effectiveChannel !== 'dine_in_qr' && {
-          customer_name: customerName.trim(),
-          customer_phone: customerPhone.trim(),
-          ...(effectiveChannel === 'delivery' && {
-            address: address.trim(),
-            landmark: landmark.trim() || undefined,
-            barangay,
-          }),
-        }),
-      });
+      const result = await submitFinalOrder(paymentMethod);
+      if (!result) return;
       setOrder(result);
       setCartOpen(false);
       setCart([]);
@@ -334,9 +376,56 @@ export default function App() {
     }
   }
 
+  function handleProofFileChange(file: File | null) {
+    setProofFile(file);
+    setProofPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return file ? URL.createObjectURL(file) : null;
+    });
+  }
+
+  async function handleSubmitWithProof() {
+    if (!selectedOnlineMethod || !proofFile) {
+      toast('Attach a screenshot of the transfer first', 'error');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const result = await submitFinalOrder(selectedOnlineMethod.name);
+      if (!result) return;
+      try {
+        const withProof = await uploadProofOfPayment(result.id, proofFile);
+        setOrder(withProof);
+      } catch (uploadError) {
+        // The order itself was created successfully -- don't lose it, just
+        // surface the upload failure so the customer knows to retry (the
+        // order id/proof endpoint stays valid while the order is pending).
+        setOrder(result);
+        toast(
+          uploadError instanceof Error
+            ? `Order placed, but the proof upload failed: ${uploadError.message}`
+            : 'Order placed, but the proof upload failed',
+          'error'
+        );
+      }
+      setCartOpen(false);
+      setCart([]);
+      setAddons([]);
+      setCheckoutStage('form');
+      handleProofFileChange(null);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Failed to place order', 'error');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   function startNewOrder() {
     setOrder(null);
     setPaymentMethod(null);
+    setSelectedOnlineMethod(null);
+    setCheckoutStage('form');
+    handleProofFileChange(null);
     setCustomerNote('');
   }
 
@@ -920,65 +1009,168 @@ export default function App() {
                   onChange={(e) => setCustomerNote(e.target.value)}
                 />
 
-                <div className="payment-panel">
-                  <div className="addons-heading">
-                    <div>
-                      <p className="eyebrow">PAYMENT · 支払い</p>
-                      <h3>How will you pay?</h3>
+                {checkoutStage === 'qr' && selectedOnlineMethod ? (
+                  <div className="payment-panel">
+                    <div className="addons-heading">
+                      <div>
+                        <p className="eyebrow">PAYMENT · 支払い</p>
+                        <h3>Pay via {selectedOnlineMethod.name}</h3>
+                      </div>
                     </div>
-                    <span>
-                      {effectiveChannel === 'delivery'
-                        ? 'On delivery'
-                        : effectiveChannel === 'pickup'
-                          ? 'At pickup'
-                          : 'At your table'}
-                    </span>
-                  </div>
-                  <div className="payment-options">
-                    <button
-                      type="button"
-                      className={`payment-option ${paymentMethod === 'cash' ? 'is-selected' : ''}`}
-                      onClick={() => setPaymentMethod('cash')}
-                    >
-                      <span>Cash</span>
-                      <small>
-                        {effectiveChannel === 'dine_in_qr'
-                          ? 'Waiter will collect payment'
-                          : effectiveChannel === 'delivery'
-                            ? 'Pay the rider on arrival'
-                            : 'Pay at pickup'}
-                      </small>
+                    {selectedOnlineMethod.qr_code_url && (
+                      <img
+                        src={selectedOnlineMethod.qr_code_url}
+                        alt={`${selectedOnlineMethod.name} QR code`}
+                        style={{ width: '100%', maxWidth: 260, borderRadius: 12, margin: '0 auto 12px', display: 'block' }}
+                      />
+                    )}
+                    <p style={{ marginBottom: 4 }}>
+                      <strong>Account name:</strong> {selectedOnlineMethod.account_name}
+                    </p>
+                    <p style={{ marginBottom: 14 }}>
+                      <strong>Account number:</strong> {selectedOnlineMethod.account_number}
+                    </p>
+                    <p style={{ marginBottom: 14, color: 'var(--muted, #767676)' }}>
+                      Send the exact order total, then continue to upload your proof of payment.
+                    </p>
+                    <button type="button" className="primary-button checkout-button" onClick={() => setCheckoutStage('upload')}>
+                      I&apos;ve sent the payment -- proceed <ArrowRight size={16} />
                     </button>
                     <button
                       type="button"
-                      className={`payment-option ${paymentMethod === 'gcash' ? 'is-selected' : ''}`}
-                      onClick={() => setPaymentMethod('gcash')}
+                      className="input"
+                      style={{ marginTop: 10, width: '100%', textAlign: 'center' }}
+                      onClick={() => setCheckoutStage('form')}
                     >
-                      <span>GCash</span>
-                      <small>
-                        {effectiveChannel === 'dine_in_qr'
-                          ? 'Waiter will bring the QR code'
-                          : 'Send proof of payment to staff'}
-                      </small>
+                      Back
                     </button>
                   </div>
-                </div>
+                ) : checkoutStage === 'upload' && selectedOnlineMethod ? (
+                  <div className="payment-panel">
+                    <div className="addons-heading">
+                      <div>
+                        <p className="eyebrow">PAYMENT · 支払い</p>
+                        <h3>Upload proof of payment</h3>
+                      </div>
+                    </div>
+                    <p style={{ marginBottom: 10, color: 'var(--muted, #767676)' }}>
+                      Upload a screenshot of your {selectedOnlineMethod.name} transfer -- staff will confirm it
+                      before your order is approved.
+                    </p>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={(e) => handleProofFileChange(e.target.files?.[0] ?? null)}
+                      style={{ marginBottom: 10 }}
+                    />
+                    {proofPreviewUrl && (
+                      <img
+                        src={proofPreviewUrl}
+                        alt="Proof of payment preview"
+                        style={{ width: '100%', maxWidth: 260, borderRadius: 12, marginBottom: 14, display: 'block' }}
+                      />
+                    )}
+                    <button
+                      className="primary-button checkout-button"
+                      type="button"
+                      disabled={!proofFile || submitting}
+                      onClick={handleSubmitWithProof}
+                    >
+                      {submitting ? 'Placing order...' : 'Submit order'} <ArrowRight size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      className="input"
+                      style={{ marginTop: 10, width: '100%', textAlign: 'center' }}
+                      onClick={() => setCheckoutStage('qr')}
+                    >
+                      Back
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="payment-panel">
+                      <div className="addons-heading">
+                        <div>
+                          <p className="eyebrow">PAYMENT · 支払い</p>
+                          <h3>How will you pay?</h3>
+                        </div>
+                        <span>
+                          {effectiveChannel === 'delivery'
+                            ? 'On delivery'
+                            : effectiveChannel === 'pickup'
+                              ? 'At pickup'
+                              : 'At your table'}
+                        </span>
+                      </div>
+                      <div className="payment-options">
+                        <button
+                          type="button"
+                          className={`payment-option ${paymentMethod === 'cash' ? 'is-selected' : ''}`}
+                          onClick={() => {
+                            setPaymentMethod('cash');
+                            setSelectedOnlineMethod(null);
+                          }}
+                        >
+                          <span>Cash</span>
+                          <small>
+                            {effectiveChannel === 'dine_in_qr'
+                              ? 'Waiter will collect payment'
+                              : effectiveChannel === 'delivery'
+                                ? 'Pay the rider on arrival'
+                                : 'Pay at pickup'}
+                          </small>
+                        </button>
+                        {effectiveChannel === 'dine_in_qr' ? (
+                          <button
+                            type="button"
+                            className={`payment-option ${paymentMethod === 'gcash' ? 'is-selected' : ''}`}
+                            onClick={() => {
+                              setPaymentMethod('gcash');
+                              setSelectedOnlineMethod(null);
+                            }}
+                          >
+                            <span>GCash</span>
+                            <small>Waiter will bring the QR code</small>
+                          </button>
+                        ) : (
+                          onlinePaymentMethods.map((m) => (
+                            <button
+                              key={m.id}
+                              type="button"
+                              className={`payment-option ${paymentMethod === m.name ? 'is-selected' : ''}`}
+                              onClick={() => {
+                                setPaymentMethod(m.name);
+                                setSelectedOnlineMethod(m);
+                              }}
+                            >
+                              <span>{m.name}</span>
+                              <small>Show QR code, then upload proof of payment</small>
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
 
-                <button
-                  className="primary-button checkout-button"
-                  type="button"
-                  disabled={!paymentMethod || submitting}
-                  onClick={handlePlaceOrder}
-                >
-                  {submitting
-                    ? 'Placing order...'
-                    : paymentMethod
-                      ? effectiveChannel === 'dine_in_qr'
-                        ? 'Send to the counter'
-                        : 'Place order'
-                      : 'Choose payment first'}{' '}
-                  <ArrowRight size={16} />
-                </button>
+                    <button
+                      className="primary-button checkout-button"
+                      type="button"
+                      disabled={!paymentMethod || submitting}
+                      onClick={handlePlaceOrder}
+                    >
+                      {submitting
+                        ? 'Placing order...'
+                        : paymentMethod
+                          ? effectiveChannel === 'dine_in_qr'
+                            ? 'Send to the counter'
+                            : selectedOnlineMethod
+                              ? 'View payment details'
+                              : 'Place order'
+                          : 'Choose payment first'}{' '}
+                      <ArrowRight size={16} />
+                    </button>
+                  </>
+                )}
               </>
             )}
           </aside>

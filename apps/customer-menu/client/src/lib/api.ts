@@ -47,7 +47,25 @@ export interface ApiAddon {
   active: boolean;
 }
 
-export type PaymentMethod = 'gcash' | 'cash';
+// Was a fixed 'gcash' | 'cash' union -- online payment methods are now
+// admin-manageable (see ApiOnlinePaymentMethod/fetchPaymentMethods below),
+// so this is just "cash" (the one hardcoded built-in) or whatever method
+// name the customer picked from that live list.
+export type PaymentMethod = string;
+
+export interface ApiOnlinePaymentMethod {
+  id: string;
+  name: string;
+  account_name: string;
+  account_number: string;
+  qr_code_url: string | null;
+  active: boolean;
+  sort_order: number;
+}
+
+export function fetchPaymentMethods(): Promise<ApiOnlinePaymentMethod[]> {
+  return request('/payment-methods');
+}
 
 // WS-7 (Phase 6): the general (non-table) link submits Delivery/Pickup
 // orders through this same endpoint -- table_number is only for the
@@ -126,6 +144,7 @@ export interface DigitalOrderStatus {
   status: 'pending' | 'approved' | 'rejected';
   subtotal: number;
   rejected_reason: string | null;
+  payment_proof_url?: string | null;
   items: DigitalOrderStatusItem[];
   addons: DigitalOrderStatusAddon[];
   delivery: DigitalOrderStatusDelivery | null;
@@ -161,6 +180,24 @@ export function submitOrder(payload: SubmitOrderPayload): Promise<DigitalOrderSt
 
 export function fetchOrderStatus(orderId: string): Promise<DigitalOrderStatus> {
   return request(`/public/orders/${orderId}`);
+}
+
+// No session on this device (see file header) -- unlike dashboard-web's
+// authenticated multipart uploads, this just POSTs the file with no
+// Authorization header; the order's own unguessable id is the access
+// control (see the matching backend endpoint's docstring).
+export async function uploadProofOfPayment(orderId: string, file: File): Promise<DigitalOrderStatus> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await fetch(`${API_BASE_URL}/public/orders/${orderId}/proof-of-payment`, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => null);
+    throw new Error(errBody?.detail || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<DigitalOrderStatus>;
 }
 
 // ---------------------------------------------------------------------------

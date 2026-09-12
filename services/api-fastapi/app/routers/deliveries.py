@@ -6,8 +6,9 @@ the same list for oversight.
 """
 
 from datetime import datetime, timezone
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.auth import CurrentUser, get_current_user, require_role
 from app.deps import get_supabase
@@ -18,14 +19,27 @@ router = APIRouter(tags=["deliveries"])
 
 
 @router.get("/deliveries", response_model=list[DigitalOrderResponse])
-def list_deliveries(user: CurrentUser = Depends(get_current_user)):
+def list_deliveries(
+    status: Literal["pending", "completed", "all"] = Query("pending"),
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Default (`pending`) is the rider's own working queue -- unchanged
+    behavior, every existing caller (Delivery.tsx) keeps working exactly
+    as before. `completed`/`all` are for the admin/executive monitoring
+    tab on Delivery Requests, restricted below to manager/executive since
+    a rider has no reason to browse delivery history."""
     require_role(user, "rider", "manager", "executive")
+    if status != "pending":
+        require_role(user, "manager", "executive")
     supabase = get_supabase()
 
-    pending_deliveries = (
-        supabase.table("deliveries").select("digital_order_id").is_("delivered_at", "null").execute()
-    )
-    order_ids = [d["digital_order_id"] for d in pending_deliveries.data]
+    deliveries_query = supabase.table("deliveries").select("digital_order_id")
+    if status == "pending":
+        deliveries_query = deliveries_query.is_("delivered_at", "null")
+    elif status == "completed":
+        deliveries_query = deliveries_query.not_.is_("delivered_at", "null")
+    deliveries_result = deliveries_query.execute()
+    order_ids = [d["digital_order_id"] for d in deliveries_result.data]
     if not order_ids:
         return []
 

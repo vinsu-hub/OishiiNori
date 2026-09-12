@@ -18,9 +18,10 @@ concepts, not wired into recipe/ingredient deduction -- see migration
 0017's header comment for why.
 """
 
+import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
 from app.auth import CurrentUser, get_current_user
 from app.deps import get_supabase
@@ -65,9 +66,17 @@ def _fetch_digital_order(supabase, order_id: str) -> dict | None:
 
     if order.get("order_channel") != "dine_in_qr":
         delivery_result = (
-            supabase.table("deliveries").select("*").eq("digital_order_id", order_id).maybe_single().execute()
+            supabase.table("deliveries")
+            .select("*, profiles(full_name)")
+            .eq("digital_order_id", order_id)
+            .maybe_single()
+            .execute()
         )
-        order["delivery"] = delivery_result.data if delivery_result else None
+        delivery = delivery_result.data if delivery_result else None
+        if delivery:
+            rider = delivery.pop("profiles", None) or {}
+            delivery["rider_name"] = rider.get("full_name")
+        order["delivery"] = delivery
     else:
         order["delivery"] = None
     return order
@@ -128,6 +137,23 @@ def submit_digital_order(body: CreateDigitalOrderRequest):
             if not fee_result or not fee_result.data:
                 raise HTTPException(status_code=400, detail=f"No delivery fee configured for {body.barangay}")
             delivery_fee = float(fee_result.data["fee"])
+
+    # The online-payment/proof-of-payment feature is delivery/pickup only
+    # (per spec) -- dine-in QR keeps its original, unchanged, waiter-
+    # mediated cash/gcash choice, so it's never checked against the
+    # admin-managed method list (which would otherwise reject the literal
+    # "gcash" the moment no method happens to be named exactly that).
+    if body.order_channel != "dine_in_qr" and body.payment_method != "cash":
+        method_result = (
+            supabase.table("online_payment_methods")
+            .select("id")
+            .eq("name", body.payment_method)
+            .eq("active", True)
+            .maybe_single()
+            .execute()
+        )
+        if not method_result or not method_result.data:
+            raise HTTPException(status_code=400, detail=f"Unknown payment method: {body.payment_method}")
 
     size_ids = [item.product_size_id for item in body.items]
     sizes_result = supabase.table("product_sizes").select("id, price").in_("id", size_ids).execute()
@@ -216,6 +242,44 @@ def submit_digital_order(body: CreateDigitalOrderRequest):
     return _fetch_digital_order(supabase, order["id"])
 
 
+PROOF_STORAGE_BUCKET = "payment-proofs"
+PROOF_ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
+PROOF_MAX_BYTES = 5 * 1024 * 1024
+
+
+@router.post("/public/orders/{order_id}/proof-of-payment", response_model=DigitalOrderStatusResponse)
+async def upload_proof_of_payment(order_id: str, file: UploadFile = File(...)):
+    """Unauthenticated, same trust model as every other /public/* endpoint
+    here -- the order's own unguessable id is the entire access control,
+    identical posture to public_order_status above. Only allowed while
+    still pending, so a decided order's record can't be tampered with
+    after the fact."""
+    supabase = get_supabase()
+    order = _fetch_digital_order(supabase, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order["status"] != "pending":
+        raise HTTPException(status_code=400, detail=f"Order is already {order['status']} -- proof can no longer be attached")
+
+    if file.content_type not in PROOF_ALLOWED_CONTENT_TYPES:
+        raise HTTPException(status_code=400, detail="Only JPEG, PNG, or WEBP images are allowed")
+
+    contents = await file.read()
+    if len(contents) > PROOF_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="Image must be 5MB or smaller")
+
+    ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename and "." in file.filename else "jpg"
+    storage_path = f"{order_id}/{uuid.uuid4()}.{ext}"
+
+    supabase.storage.from_(PROOF_STORAGE_BUCKET).upload(
+        storage_path, contents, file_options={"content-type": file.content_type}
+    )
+    public_url = supabase.storage.from_(PROOF_STORAGE_BUCKET).get_public_url(storage_path)
+
+    supabase.table("digital_orders").update({"payment_proof_url": public_url}).eq("id", order_id).execute()
+    return _fetch_digital_order(supabase, order_id)
+
+
 @router.get("/public/orders/{order_id}", response_model=DigitalOrderStatusResponse)
 def public_order_status(order_id: str):
     order = _fetch_digital_order(get_supabase(), order_id)
@@ -285,6 +349,16 @@ def approve_digital_order(order_id: str, user: CurrentUser = Depends(get_current
     if order["status"] != "pending":
         raise HTTPException(status_code=400, detail=f"Order is already {order['status']}")
 
+    # transactions.payment_method keeps POS's fixed CHECK ('cash','gcash',
+    # 'card') -- a digital order's payment_method is now any admin-managed
+    # online method name (e.g. "Maya", "Maribank"), which that constraint
+    # would reject outright. "cash" passes through as-is; anything else is
+    # an online/e-wallet payment, recorded generically as "gcash" on the
+    # transaction (POS reporting doesn't need the specific provider broken
+    # out there) -- the actual method name and proof-of-payment image stay
+    # on the digital_orders row itself as the real audit record.
+    pos_payment_method = "cash" if order.get("payment_method") == "cash" else "gcash"
+
     transaction = _create_transaction_row(
         supabase,
         employee_id=user.id,
@@ -296,9 +370,7 @@ def approve_digital_order(order_id: str, user: CurrentUser = Depends(get_current
             )
             for i in order["items"]
         ],
-        # The customer already chose cash/gcash at QR-order time -- carry it
-        # through so every real sale has a payment method recorded.
-        payment_method=order.get("payment_method"),
+        payment_method=pos_payment_method,
         # Delivery/pickup orders are never dine-in -- label them takeout so
         # the kitchen ticket unambiguously reads as a to-go/carried-out order,
         # regardless of which of the two non-QR channels this came from.

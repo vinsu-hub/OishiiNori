@@ -47,9 +47,10 @@ TransactionStatus = Literal["open", "closed", "voided"]
 # report for why this is added here rather than worked around.
 KitchenStatus = Literal["queued", "preparing", "ready", "completed"]
 OrderType = Literal["dine_in", "takeout"]
-# Distinct from PaymentMethod below (Literal["gcash", "cash"], used by
-# digital_orders) -- POS supports one more value (card), and
-# reusing/widening that type would change the digital-order schema's own
+# Distinct from PaymentMethod below (a plain str, used by digital_orders,
+# since its value set is admin-manageable) -- POS's set is fixed (cash,
+# gcash, card), and reusing/widening that type would change the
+# digital-order schema's own
 # semantics.
 TransactionPaymentMethod = Literal["cash", "gcash", "card"]
 TransactionCardType = Literal["debit", "credit"]
@@ -306,7 +307,13 @@ class BundleFulfillmentResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 DigitalOrderStatus = Literal["pending", "approved", "rejected"]
-PaymentMethod = Literal["gcash", "cash"]
+# Was a fixed Literal["gcash", "cash"] -- the set of online payment methods
+# is now admin-manageable (online_payment_methods table), so this is a
+# plain string: either the literal "cash" (unchanged built-in) or a
+# payment method's name, denormalized at order time. Validated against the
+# live table (or "cash") in digital_menu.py's submit_digital_order, not
+# here, since that requires a DB lookup.
+PaymentMethod = str
 
 
 class DigitalOrderItemCreate(BaseModel):
@@ -365,6 +372,7 @@ class DeliveryDetailOut(BaseModel):
     delivery_fee: float | None = None
     maps_pin_url: str | None = None
     rider_id: str | None = None
+    rider_name: str | None = None
     delivered_at: datetime | None = None
 
 
@@ -400,6 +408,7 @@ class DigitalOrderResponse(BaseModel):
     order_channel: DigitalOrderChannel = "dine_in_qr"
     status: DigitalOrderStatus
     payment_method: PaymentMethod
+    payment_proof_url: str | None = None
     customer_note: str | None = None
     subtotal: float
     approved_by: str | None = None
@@ -746,6 +755,33 @@ class DiscountTypeOut(BaseModel):
     percentage: float
     vat_exempt: bool
     active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class OnlinePaymentMethodCreate(BaseModel):
+    name: str = Field(min_length=1)
+    account_name: str = Field(min_length=1)
+    account_number: str = Field(min_length=1)
+    sort_order: int = 0
+
+
+class OnlinePaymentMethodUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1)
+    account_name: str | None = Field(default=None, min_length=1)
+    account_number: str | None = Field(default=None, min_length=1)
+    active: bool | None = None
+    sort_order: int | None = None
+
+
+class OnlinePaymentMethodOut(BaseModel):
+    id: str
+    name: str
+    account_name: str
+    account_number: str
+    qr_code_url: str | None = None
+    active: bool
+    sort_order: int
     created_at: datetime
     updated_at: datetime
 

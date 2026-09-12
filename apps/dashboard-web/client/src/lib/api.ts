@@ -484,7 +484,10 @@ export function submitBundleFulfillment(
 // ---------------------------------------------------------------------------
 
 export type DigitalOrderStatus = 'pending' | 'approved' | 'rejected';
-export type PaymentMethod = 'gcash' | 'cash';
+// Was a fixed 'gcash' | 'cash' union -- the online payment method set is
+// now admin-manageable (see ApiOnlinePaymentMethod), so this is "cash" or
+// whatever method name the customer picked.
+export type PaymentMethod = string;
 
 export interface ApiDigitalOrderItem {
   id: string;
@@ -520,6 +523,7 @@ export interface ApiDeliveryDetail {
   delivery_fee: number | null;
   maps_pin_url: string | null;
   rider_id: string | null;
+  rider_name: string | null;
   delivered_at: string | null;
 }
 
@@ -530,6 +534,7 @@ export interface ApiDigitalOrder {
   order_channel: DigitalOrderChannel;
   status: DigitalOrderStatus;
   payment_method: PaymentMethod;
+  payment_proof_url: string | null;
   customer_note: string | null;
   subtotal: number;
   approved_by: string | null;
@@ -1668,12 +1673,66 @@ export function switchTable(transactionId: string, newTableNumber: number): Prom
 
 // --- Delivery/Pickup + rider panel (WS-7 / WS-8, Phase 6) -------------------
 
-export function fetchDeliveries(): Promise<ApiDigitalOrder[]> {
-  return request('/deliveries');
+export function fetchDeliveries(status?: 'pending' | 'completed' | 'all'): Promise<ApiDigitalOrder[]> {
+  return request(`/deliveries${status ? `?status=${status}` : ''}`);
 }
 
 export function markDeliveryDone(digitalOrderId: string): Promise<ApiDigitalOrder> {
   return request(`/deliveries/${digitalOrderId}/done`, { method: 'POST' });
+}
+
+// --- Online payment methods (GCash/Maya/Maribank/... -- admin-manageable) --
+
+export interface ApiOnlinePaymentMethod {
+  id: string;
+  name: string;
+  account_name: string;
+  account_number: string;
+  qr_code_url: string | null;
+  active: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateOnlinePaymentMethodRequest {
+  name: string;
+  account_name: string;
+  account_number: string;
+  sort_order?: number;
+}
+
+export interface UpdateOnlinePaymentMethodRequest {
+  name?: string;
+  account_name?: string;
+  account_number?: string;
+  active?: boolean;
+  sort_order?: number;
+}
+
+export function fetchAllPaymentMethods(): Promise<ApiOnlinePaymentMethod[]> {
+  return request('/payment-methods/all');
+}
+
+export function createPaymentMethod(body: CreateOnlinePaymentMethodRequest): Promise<ApiOnlinePaymentMethod> {
+  return request('/payment-methods', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function updatePaymentMethod(
+  id: string,
+  body: UpdateOnlinePaymentMethodRequest
+): Promise<ApiOnlinePaymentMethod> {
+  return request(`/payment-methods/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+export function deletePaymentMethod(id: string): Promise<{ status: string }> {
+  return request(`/payment-methods/${id}`, { method: 'DELETE' });
+}
+
+export function uploadPaymentMethodQrCode(id: string, file: File): Promise<ApiOnlinePaymentMethod> {
+  const formData = new FormData();
+  formData.append('file', file);
+  return requestMultipart(`/payment-methods/${id}/qr-code`, formData);
 }
 
 export type ReservationStatus = 'pending' | 'confirmed' | 'declined' | 'cancelled';

@@ -19,6 +19,7 @@ from app.routers import (
     loss_records,
     menu_admin,
     oishi_ai,
+    payment_methods,
     pnl,
     products,
     recipes,
@@ -83,6 +84,7 @@ app.include_router(reservations.router)
 app.include_router(business_days.router)
 app.include_router(refunds.router)
 app.include_router(deliveries.router)
+app.include_router(payment_methods.router)
 
 
 @app.get("/health")
