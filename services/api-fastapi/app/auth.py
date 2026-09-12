@@ -1,8 +1,10 @@
+import time
 from dataclasses import dataclass
 
 import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from supabase_auth.errors import AuthRetryableError
 
 from app.deps import get_supabase
 
@@ -15,6 +17,22 @@ class CurrentUser:
     role: str
     department: str | None
     full_name: str | None
+
+
+def _get_user_with_retry(supabase, token: str):
+    """supabase_auth wraps any non-HTTP-status exception talking to its
+    server (timeout, connection reset) -- and 502/503/504/520-524/530
+    upstream responses -- as AuthRetryableError, distinct from AuthApiError
+    (a real bad/expired JWT). Observed in production: a handful of
+    otherwise-valid requests getting misreported as 401 during a brief
+    Supabase connection blip. One retry, same reasoning as
+    _RetryOnDisconnectTransport in deps.py -- a GET is safe to repeat.
+    """
+    try:
+        return supabase.auth.get_user(token)
+    except AuthRetryableError:
+        time.sleep(0.25)
+        return supabase.auth.get_user(token)
 
 
 def get_current_user(
@@ -40,7 +58,14 @@ def get_current_user(
 
     supabase = get_supabase()
     try:
-        auth_response = supabase.auth.get_user(credentials.credentials)
+        auth_response = _get_user_with_retry(supabase, credentials.credentials)
+    except AuthRetryableError:
+        # A transient network blip talking to Supabase Auth (timeout,
+        # connection reset, a 502/503/504 from its own upstream) -- not the
+        # caller's fault, so don't tell them their token is invalid (that
+        # reads as "you're logged out" and can trigger an unwanted client-
+        # side logout/redirect). 503 signals "try again," not "re-auth."
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Auth service temporarily unavailable")
     except Exception:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
 
