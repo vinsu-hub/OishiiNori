@@ -1,4 +1,5 @@
 import React, { useCallback, useState } from 'react';
+import { useLocation } from 'wouter';
 import { toast } from 'sonner';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -32,6 +33,7 @@ const STATUS_LABELS: Record<ReservationStatus, string> = {
 };
 
 export function RequestsPanel({ selectedDay }: { selectedDay: string }) {
+  const [, navigate] = useLocation();
   const [statusFilter, setStatusFilter] = useState<ReservationStatus>('pending');
   const [dateFilterOn, setDateFilterOn] = useState(true);
   const [reservations, setReservations] = useState<ApiReservation[]>([]);
@@ -42,6 +44,12 @@ export function RequestsPanel({ selectedDay }: { selectedDay: string }) {
   const [declineReason, setDeclineReason] = useState('');
   const [cancelTarget, setCancelTarget] = useState<ApiReservation | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Shown right after a successful Confirm -- seat the party immediately
+  // (hands off to POS pre-seated, same mechanism the Floor Plan's own
+  // "Seat via POS" already uses) or just leave it on the Floor Plan as a
+  // confirmed-but-not-yet-arrived reservation to seat later.
+  const [seatPromptTarget, setSeatPromptTarget] = useState<ApiReservation | null>(null);
 
   const load = useCallback(() => {
     fetchReservations(statusFilter, dateFilterOn ? selectedDay : undefined)
@@ -56,15 +64,27 @@ export function RequestsPanel({ selectedDay }: { selectedDay: string }) {
     if (!confirmTarget) return;
     setBusy(true);
     try {
-      await confirmReservation(confirmTarget.id);
+      const confirmed = await confirmReservation(confirmTarget.id);
       toast.success(`Reservation #${confirmTarget.reservation_number} confirmed`);
       setConfirmTarget(null);
+      setSeatPromptTarget(confirmed);
       load();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to confirm reservation');
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleSeatNow() {
+    if (!seatPromptTarget || seatPromptTarget.pos_table_number == null) return;
+    const params = new URLSearchParams({
+      table: String(seatPromptTarget.pos_table_number),
+      guests: String(seatPromptTarget.party_size),
+      reservation: seatPromptTarget.id,
+    });
+    setSeatPromptTarget(null);
+    navigate(`/pos?${params.toString()}`);
   }
 
   async function handleDecline() {
@@ -190,6 +210,35 @@ export function RequestsPanel({ selectedDay }: { selectedDay: string }) {
           <DialogFooter>
             <Button disabled={busy} onClick={handleConfirm}>
               {busy ? 'Confirming...' : 'Confirm reservation'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!seatPromptTarget} onOpenChange={(open) => !open && setSeatPromptTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Seat this party now?</DialogTitle>
+            <DialogDescription>
+              {seatPromptTarget?.table_label} · party of {seatPromptTarget?.party_size}. Seat now if they've already
+              arrived, or just place them on the Floor Plan to seat when they walk in.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex-col sm:flex-col gap-2">
+            <Button
+              className="w-full"
+              disabled={seatPromptTarget?.pos_table_number == null}
+              onClick={handleSeatNow}
+            >
+              Seat now
+            </Button>
+            {seatPromptTarget?.pos_table_number == null && (
+              <p className="text-xs text-muted-foreground text-center">
+                This table has no POS number assigned yet -- assign one in the Tables tab to seat directly from here.
+              </p>
+            )}
+            <Button variant="outline" className="w-full" onClick={() => setSeatPromptTarget(null)}>
+              Just place on Floor Plan
             </Button>
           </DialogFooter>
         </DialogContent>

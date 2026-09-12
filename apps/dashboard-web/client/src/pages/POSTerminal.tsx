@@ -1441,11 +1441,11 @@ export default function POSTerminal() {
                 Payment Method <span className="text-destructive">*</span>
               </Label>
               <div
-                className={`grid grid-cols-4 gap-2 mt-1 ${
+                className={`grid grid-cols-3 gap-2 mt-1 ${
                   cart.length > 0 && !paymentMethod ? 'rounded ring-1 ring-destructive/50 p-1' : ''
                 }`}
               >
-                {(['cash', 'gcash', 'card', 'split'] as const).map((m) => (
+                {(['cash', 'gcash', 'card'] as const).map((m) => (
                   <button
                     key={m}
                     type="button"

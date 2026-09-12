@@ -1,9 +1,38 @@
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, time
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+def _is_valid_ph_phone(raw: str) -> bool:
+    """Philippine phone number check, mirroring the frontend's
+    isValidPhilippinePhone (apps/customer-menu/client/src/lib/validators.ts)
+    exactly -- this is the actual enforcement point (a request that
+    bypasses the frontend still gets rejected), the frontend copy is just
+    a fast fail for UX. Deliberately permissive on landlines; see that
+    file's comment for why.
+    """
+    trimmed = raw.strip()
+    has_plus = trimmed.startswith("+")
+    digits = re.sub(r"\D", "", trimmed)
+    if not digits:
+        return False
+
+    local = digits
+    if has_plus and digits.startswith("63"):
+        local = "0" + digits[2:]
+    elif not has_plus and digits.startswith("63") and len(digits) == 12:
+        local = "0" + digits[2:]
+
+    if not local.startswith("0") or len(local) < 2:
+        return False
+
+    if local[1] == "9":
+        return len(local) == 11
+    return 9 <= len(local) <= 11
+
 
 # ---------------------------------------------------------------------------
 # Enums (mirror the DB's Postgres enum / check-constraint values)
@@ -19,10 +48,10 @@ TransactionStatus = Literal["open", "closed", "voided"]
 KitchenStatus = Literal["queued", "preparing", "ready", "completed"]
 OrderType = Literal["dine_in", "takeout"]
 # Distinct from PaymentMethod below (Literal["gcash", "cash"], used by
-# digital_orders) -- POS supports two more values (card, split), and
+# digital_orders) -- POS supports one more value (card), and
 # reusing/widening that type would change the digital-order schema's own
 # semantics.
-TransactionPaymentMethod = Literal["cash", "gcash", "card", "split"]
+TransactionPaymentMethod = Literal["cash", "gcash", "card"]
 TransactionCardType = Literal["debit", "credit"]
 MovementType = Literal[
     "trans_in", "trans_out", "delivery", "transfer_in", "transfer_out", "count_adjustment",
@@ -312,6 +341,13 @@ class CreateDigitalOrderRequest(BaseModel):
     address: str | None = None
     landmark: str | None = None
     barangay: str | None = None
+
+    @field_validator("customer_phone")
+    @classmethod
+    def _validate_customer_phone(cls, v: str | None) -> str | None:
+        if v is not None and not _is_valid_ph_phone(v):
+            raise ValueError("customer_phone must be a valid Philippine phone number")
+        return v
 
 
 class DeliveryFeeOut(BaseModel):
@@ -1363,12 +1399,20 @@ class CreateReservationRequest(BaseModel):
     customer_phone: str = Field(min_length=1)
     customer_note: str | None = None
 
+    @field_validator("customer_phone")
+    @classmethod
+    def _validate_customer_phone(cls, v: str) -> str:
+        if not _is_valid_ph_phone(v):
+            raise ValueError("customer_phone must be a valid Philippine phone number")
+        return v
+
 
 class ReservationOut(BaseModel):
     id: str
     reservation_number: int
     table_id: str
     table_label: str | None = None
+    pos_table_number: int | None = None
     party_size: int
     reservation_date: date
     start_time: time

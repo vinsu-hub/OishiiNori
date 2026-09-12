@@ -140,6 +140,7 @@ def _first_available(candidates: list[dict], occupied: dict, start: time, end: t
 def _to_reservation_out(row: dict) -> dict:
     table = row.pop("tables", None) or {}
     row["table_label"] = table.get("label")
+    row["pos_table_number"] = table.get("pos_table_number")
     row["overrides"] = row.pop("reservation_overrides", None) or []
     return row
 
@@ -346,7 +347,7 @@ def list_reservations(
     user: CurrentUser = Depends(get_current_user),
 ):
     query = get_supabase().table("reservations").select(
-        "*, tables(label), reservation_overrides(reason, created_at, overridden_by)"
+        "*, tables(label, pos_table_number), reservation_overrides(reason, created_at, overridden_by)"
     )
     if status_filter:
         query = query.eq("status", status_filter)
@@ -359,7 +360,7 @@ def list_reservations(
 def _fetch_reservation_with_table(supabase, reservation_id: str) -> dict:
     result = (
         supabase.table("reservations")
-        .select("*, tables(label)")
+        .select("*, tables(label, pos_table_number)")
         .eq("id", reservation_id)
         .maybe_single()
         .execute()

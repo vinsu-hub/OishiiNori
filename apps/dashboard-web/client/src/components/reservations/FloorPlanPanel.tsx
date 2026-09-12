@@ -133,7 +133,11 @@ const PHASE_META: Record<ReservationPhase, { label: string; className: string }>
 // Phases that still need a table found for them.
 const NEEDS_SEATING: ReservationPhase[] = ['overdue', 'due', 'upcoming'];
 
-type TableState = 'white' | 'orange' | 'red';
+// 'orange' means exactly one thing: a confirmed reservation is holding
+// this table and the guest hasn't been seated yet -- occupied (a real
+// open order) is its own 'blue' state so the two are never confused at a
+// glance (they used to share one orange bucket).
+type TableState = 'white' | 'blue' | 'orange' | 'red';
 
 interface Derived {
   state: TableState;
@@ -144,7 +148,11 @@ interface Derived {
 
 const STATE_CLASS: Record<TableState, string> = {
   white: 'bg-card border-border text-foreground',
-  orange: 'bg-orange-100 border-orange-400 text-orange-900',
+  blue: 'bg-blue-100 border-blue-400 text-blue-900',
+  // Glow/pulse so a reserved-and-waiting table visibly stands out rather
+  // than just being another flat color on the board.
+  orange:
+    'bg-orange-100 border-orange-400 text-orange-900 animate-pulse shadow-[0_0_14px_2px_rgba(251,146,60,0.6)]',
   red: 'bg-red-100 border-red-500 text-red-900',
 };
 
@@ -184,19 +192,16 @@ function LegendBar() {
         <span className={`${swatch} bg-card border-border`} /> Available
       </span>
       <span className="flex items-center gap-1.5">
-        <span className={`${swatch} bg-orange-200 border-orange-400`} /> Occupied
+        <span className={`${swatch} bg-blue-100 border-blue-400`} /> Occupied
       </span>
       <span className="flex items-center gap-1.5">
-        <span className={`${swatch} bg-orange-50 border-orange-300`} /> Reserved
+        <span className={`${swatch} bg-orange-100 border-orange-400 animate-pulse`} /> Reserved &mdash; waiting for guest
       </span>
       <span className="flex items-center gap-1.5">
         <span className={`${swatch} bg-red-100 border-red-500`} /> Needs Attention
       </span>
       <span className="flex items-center gap-1.5">
         <span className="inline-block h-3 w-3 shrink-0 rounded-full bg-amber-400" /> Unverified
-      </span>
-      <span className="text-muted-foreground">
-        Occupied &amp; Reserved share the orange family &mdash; both mean &ldquo;something&rsquo;s happening here.&rdquo;
       </span>
     </div>
   );
@@ -357,7 +362,7 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
         }
       }
 
-      const state: TableState = breach ? 'red' : openTxn || reservation ? 'orange' : 'white';
+      const state: TableState = breach ? 'red' : openTxn ? 'blue' : reservation ? 'orange' : 'white';
       return { state, openTxn, reservation, breach };
     },
     [openTxnByPosNumber, reservations, selectedDay, isToday, txnById]
@@ -869,6 +874,40 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
                     )}
                   </div>
                 </div>
+              ) : detailDerived.state === 'orange' &&
+                detailReservations.filter((q) => isToday && q.phase !== 'seated' && q.phase !== 'completed')
+                  .length === 1 ? (
+                (() => {
+                  const { r } = detailReservations.find(
+                    (q) => isToday && q.phase !== 'seated' && q.phase !== 'completed'
+                  )!;
+                  return (
+                    <div className="space-y-3 text-sm">
+                      <p>
+                        <span className="font-semibold">{r.customer_name}</span> · party of {r.party_size} ·{' '}
+                        {hhmm(r.start_time)}
+                      </p>
+                      <p className="text-muted-foreground">{r.customer_phone}</p>
+                      <Button
+                        className="w-full"
+                        onClick={() => {
+                          seatWalkIn(detail, r.party_size, r.id);
+                          setDetailId(null);
+                        }}
+                      >
+                        Take the reserved table order
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="w-full"
+                        disabled={seatBusyId === r.id}
+                        onClick={() => markSeated(r.id)}
+                      >
+                        Mark seated (no order yet)
+                      </Button>
+                    </div>
+                  );
+                })()
               ) : detailReservations.length > 0 ? (
                 <div className="space-y-3 text-sm">
                   <p className="text-xs text-muted-foreground">

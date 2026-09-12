@@ -7,6 +7,7 @@ import {
   fetchReservationStatus,
   submitReservation,
 } from '@/lib/api';
+import { isValidPhilippinePhone, PH_PHONE_HINT } from '@/lib/validators';
 
 declare global {
   interface Window {
@@ -63,6 +64,10 @@ export default function ReservationView({ onBack }: { onBack: () => void }) {
 
   async function handleSubmit() {
     if (!selectedTime || !customerName.trim() || !customerPhone.trim()) return;
+    if (!isValidPhilippinePhone(customerPhone)) {
+      toast(`Enter a valid Philippine phone number (${PH_PHONE_HINT})`, 'error');
+      return;
+    }
     setSubmitting(true);
     try {
       const result = await submitReservation({
@@ -231,7 +236,7 @@ export default function ReservationView({ onBack }: { onBack: () => void }) {
               <input
                 className="input"
                 style={{ marginBottom: 10 }}
-                placeholder="Phone number"
+                placeholder={`Phone number (${PH_PHONE_HINT})`}
                 value={customerPhone}
                 onChange={(e) => setCustomerPhone(e.target.value)}
               />
@@ -247,7 +252,7 @@ export default function ReservationView({ onBack }: { onBack: () => void }) {
                 className="primary-button"
                 type="button"
                 style={{ width: '100%' }}
-                disabled={!customerName.trim() || !customerPhone.trim() || submitting}
+                disabled={!customerName.trim() || !isValidPhilippinePhone(customerPhone) || submitting}
                 onClick={handleSubmit}
               >
                 {submitting ? 'Requesting...' : 'Request this table'} <ArrowRight size={16} />

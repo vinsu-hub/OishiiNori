@@ -317,9 +317,9 @@ export function fetchAddons(): Promise<ApiMenuAddon[]> {
 export type KitchenStatus = 'queued' | 'preparing' | 'ready' | 'completed';
 export type TransactionStatus = 'open' | 'closed' | 'voided';
 export type OrderType = 'dine_in' | 'takeout';
-// Distinct from any digital-order payment-method type -- POS supports two
-// more values (card, split).
-export type TransactionPaymentMethod = 'cash' | 'gcash' | 'card' | 'split';
+// Distinct from any digital-order payment-method type -- POS supports one
+// more value (card).
+export type TransactionPaymentMethod = 'cash' | 'gcash' | 'card';
 export type TransactionCardType = 'debit' | 'credit';
 
 export interface ApiMenuAddon {
@@ -1683,6 +1683,7 @@ export interface ApiReservation {
   reservation_number: number;
   table_id: string;
   table_label: string | null;
+  pos_table_number: number | null;
   party_size: number;
   reservation_date: string;
   start_time: string;

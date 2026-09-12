@@ -38,6 +38,7 @@ import {
   submitOrder,
 } from '@/lib/api';
 import ReservationView from '@/components/ReservationView';
+import { isValidPhilippinePhone, PH_PHONE_HINT } from '@/lib/validators';
 
 declare global {
   interface Window {
@@ -292,6 +293,10 @@ export default function App() {
     if (effectiveChannel !== 'dine_in_qr') {
       if (!customerName.trim() || !customerPhone.trim()) {
         toast('Name and phone number are required', 'error');
+        return;
+      }
+      if (!isValidPhilippinePhone(customerPhone)) {
+        toast(`Enter a valid Philippine phone number (${PH_PHONE_HINT})`, 'error');
         return;
       }
       if (effectiveChannel === 'delivery' && (!address.trim() || !barangay)) {
@@ -870,7 +875,7 @@ export default function App() {
                     <input
                       className="input"
                       style={{ marginBottom: 10 }}
-                      placeholder="Phone number"
+                      placeholder={`Phone number (${PH_PHONE_HINT})`}
                       value={customerPhone}
                       onChange={(e) => setCustomerPhone(e.target.value)}
                     />
