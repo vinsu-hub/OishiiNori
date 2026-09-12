@@ -51,5 +51,11 @@ def get_supabase() -> Client:
     """
     url = os.environ["SUPABASE_URL"]
     key = os.environ["SUPABASE_SECRET_KEY"]
-    options = SyncClientOptions(httpx_client=httpx.Client(transport=_RetryOnDisconnectTransport()))
+    # httpx's default timeout is a flat 5s across connect/read/write/pool --
+    # observed in production as a real ReadTimeout (500) on an otherwise-fast
+    # query, most likely a Vercel cold start reaching a cold Supabase/
+    # PostgREST connection. 20s gives that room without masking a genuine
+    # outage (a request that's still hanging at 20s is not a normal blip).
+    timeout = httpx.Timeout(20.0)
+    options = SyncClientOptions(httpx_client=httpx.Client(transport=_RetryOnDisconnectTransport(), timeout=timeout))
     return create_client(url, key, options=options)
