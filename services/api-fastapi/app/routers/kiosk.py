@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException
 from postgrest.exceptions import APIError
 
 from app.attendance_utils import auto_close_stale_attendance, compute_attendance_breakdown, hr_table
+from app.auth import _profile_active_supported_check
 from app.deps import get_supabase
 from app.schemas import (
     AttendanceLogResponse,
@@ -59,9 +60,13 @@ def _get_completed_today(employee_id: str) -> dict | None:
 @router.post("/kiosk/verify", response_model=KioskVerifyResponse)
 def kiosk_verify(body: KioskVerifyRequest):
     supabase = get_supabase()
+    active_supported = _profile_active_supported_check(supabase)
+    columns = "id, full_name, position, department, photo_url, kiosk_pin_hash" + (
+        ", active" if active_supported else ""
+    )
     result = (
         supabase.table("profiles")
-        .select("id, full_name, position, department, photo_url, kiosk_pin_hash")
+        .select(columns)
         .eq("employee_number", body.employee_number)
         .maybe_single()
         .execute()
@@ -69,6 +74,8 @@ def kiosk_verify(body: KioskVerifyRequest):
     if not result or not result.data or not result.data.get("kiosk_pin_hash"):
         raise _INVALID_CREDENTIALS
     profile = result.data
+    if active_supported and profile.get("active") is False:
+        raise _INVALID_CREDENTIALS
     if not bcrypt.checkpw(body.pin.encode("utf-8"), profile["kiosk_pin_hash"].encode("utf-8")):
         raise _INVALID_CREDENTIALS
 

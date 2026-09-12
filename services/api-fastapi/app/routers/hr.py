@@ -7,6 +7,7 @@ from datetime import date, datetime, timezone
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
+from postgrest.exceptions import APIError
 
 from app.attendance_utils import auto_close_stale_attendance, hr_table
 from app.auth import CurrentUser, get_current_user, require_role
@@ -28,6 +29,7 @@ from app.schemas import (
     PayrollOverrideResponse,
     PayrollRecordResponse,
     PayrollSummary,
+    SetEmployeeActiveRequest,
     SetPinRequest,
 )
 
@@ -655,7 +657,7 @@ def list_employees(user: CurrentUser = Depends(get_current_user)):
     supabase = get_supabase()
     result = (
         supabase.table("profiles")
-        .select("id, full_name, role, department, position, pay_rate, employee_number")
+        .select("id, full_name, role, department, position, pay_rate, employee_number, active")
         .order("full_name")
         .execute()
     )
@@ -730,4 +732,64 @@ def set_employee_pin(employee_id: str, body: SetPinRequest, user: CurrentUser = 
 
     kiosk_pin_hash = bcrypt.hashpw(body.pin.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     supabase.table("profiles").update({"kiosk_pin_hash": kiosk_pin_hash}).eq("id", employee_id).execute()
+    return {"status": "ok"}
+
+
+@router.patch("/employees/{employee_id}", response_model=EmployeeOut)
+def set_employee_active(
+    employee_id: str, body: SetEmployeeActiveRequest, user: CurrentUser = Depends(get_current_user)
+):
+    """Deactivate/reactivate -- the safe default for offboarding. A
+    deactivated employee is blocked immediately from both dashboard login
+    (get_current_user) and kiosk PIN use (verify_employee_pin), but every
+    real record they're attached to (sales, attendance, inventory
+    movements) stays intact and referenceable -- same soft-delete pattern
+    products/discount_types already use, kept separate from
+    set_employee_pin above rather than overloading one endpoint."""
+    require_role(user, "manager", "executive")
+    supabase = get_supabase()
+    existing = supabase.table("profiles").select("id").eq("id", employee_id).maybe_single().execute()
+    if not existing or not existing.data:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    supabase.table("profiles").update({"active": body.active}).eq("id", employee_id).execute()
+    profile_result = (
+        supabase.table("profiles")
+        .select("id, full_name, role, department, position, pay_rate, employee_number, active")
+        .eq("id", employee_id)
+        .single()
+        .execute()
+    )
+    return profile_result.data
+
+
+@router.delete("/employees/{employee_id}")
+def delete_employee(employee_id: str, user: CurrentUser = Depends(get_current_user)):
+    """Hard delete -- only ever succeeds for an account with zero real
+    history (no sales, attendance, inventory movements, etc. referencing
+    it). Executive-only: stricter than the manager+ gate on every other
+    employee action here, since this is irreversible where Deactivate
+    isn't. Rather than hardcoding every table that might reference
+    profiles.id, this just attempts the delete and lets Postgres's own
+    foreign-key violation (23503) say which table is blocking it -- the
+    exact real error this session hit cleaning up a leftover test
+    account, surfaced here as a clear 409 instead of a raw 500."""
+    require_role(user, "executive")
+    supabase = get_supabase()
+    existing = supabase.table("profiles").select("id").eq("id", employee_id).maybe_single().execute()
+    if not existing or not existing.data:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    try:
+        supabase.table("profiles").delete().eq("id", employee_id).execute()
+    except APIError as e:
+        if e.code == "23503":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Can't delete -- this employee has real history attached ({e.details or e.message}). "
+                "Deactivate instead to block their login/PIN while keeping that history intact.",
+            )
+        raise
+
+    supabase.auth.admin.delete_user(employee_id)
     return {"status": "ok"}

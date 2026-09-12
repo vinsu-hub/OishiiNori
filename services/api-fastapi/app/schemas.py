@@ -965,6 +965,7 @@ class EmployeeOut(BaseModel):
     position: str | None = None
     pay_rate: float
     employee_number: str | None = None
+    active: bool = True
 
 
 class EmployeeCreate(BaseModel):
@@ -990,6 +991,10 @@ class EmployeeCreatedResponse(BaseModel):
 
 class SetPinRequest(BaseModel):
     pin: str = Field(min_length=4, max_length=8)
+
+
+class SetEmployeeActiveRequest(BaseModel):
+    active: bool
 
 
 # ---------------------------------------------------------------------------

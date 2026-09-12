@@ -22,7 +22,9 @@ import {
   Department,
   UserRole,
   createEmployee,
+  deleteEmployee,
   fetchEmployees,
+  setEmployeeActive,
   setEmployeePin,
 } from '@/lib/api';
 
@@ -43,6 +45,12 @@ export default function Employees() {
   const [pinTarget, setPinTarget] = useState<ApiEmployee | null>(null);
   const [pin, setPin] = useState('');
   const [settingPin, setSettingPin] = useState(false);
+
+  const [activeToggleTarget, setActiveToggleTarget] = useState<ApiEmployee | null>(null);
+  const [togglingActive, setTogglingActive] = useState(false);
+
+  const [deleteTarget, setDeleteTarget] = useState<ApiEmployee | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(() => {
     fetchEmployees()
@@ -117,6 +125,37 @@ export default function Employees() {
     }
   }
 
+  async function handleToggleActive() {
+    if (!activeToggleTarget) return;
+    const nextActive = !activeToggleTarget.active;
+    setTogglingActive(true);
+    try {
+      await setEmployeeActive(activeToggleTarget.id, nextActive);
+      toast.success(`${activeToggleTarget.full_name} ${nextActive ? 'reactivated' : 'deactivated'}`);
+      setActiveToggleTarget(null);
+      load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update employee status');
+    } finally {
+      setTogglingActive(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await deleteEmployee(deleteTarget.id);
+      toast.success(`${deleteTarget.full_name} deleted`);
+      setDeleteTarget(null);
+      load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to delete employee');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <DashboardLayout title="Employees">
       <div className="p-6 space-y-4">
@@ -135,12 +174,13 @@ export default function Employees() {
                 <TableHead>Position</TableHead>
                 <TableHead>Pay Rate</TableHead>
                 <TableHead>Employee #</TableHead>
+                <TableHead>Status</TableHead>
                 <TableHead />
               </TableRow>
             </TableHeader>
             <TableBody>
               {employees.map((e) => (
-                <TableRow key={e.id}>
+                <TableRow key={e.id} className={e.active ? '' : 'opacity-60'}>
                   <TableCell className="font-medium">{e.full_name || '--'}</TableCell>
                   <TableCell>
                     <Badge variant="outline" className="capitalize">
@@ -152,9 +192,22 @@ export default function Employees() {
                   <TableCell>{e.pay_rate.toFixed(2)}</TableCell>
                   <TableCell className="font-mono text-xs">{e.employee_number || '--'}</TableCell>
                   <TableCell>
+                    <Badge variant={e.active ? 'outline' : 'destructive'}>
+                      {e.active ? 'Active' : 'Inactive'}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="space-x-2 whitespace-nowrap">
                     <Button size="sm" variant="outline" onClick={() => setPinTarget(e)}>
                       Set PIN
                     </Button>
+                    <Button size="sm" variant="outline" onClick={() => setActiveToggleTarget(e)}>
+                      {e.active ? 'Deactivate' : 'Reactivate'}
+                    </Button>
+                    {user?.role === 'executive' && (
+                      <Button size="sm" variant="destructive" onClick={() => setDeleteTarget(e)}>
+                        Delete
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
@@ -256,6 +309,46 @@ export default function Employees() {
           <DialogFooter>
             <Button disabled={settingPin} onClick={handleSetPin}>
               {settingPin ? 'Saving...' : 'Save PIN'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Deactivate / Reactivate confirm */}
+      <Dialog open={!!activeToggleTarget} onOpenChange={(open) => !open && setActiveToggleTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {activeToggleTarget?.active ? 'Deactivate' : 'Reactivate'} {activeToggleTarget?.full_name}?
+            </DialogTitle>
+            <DialogDescription>
+              {activeToggleTarget?.active
+                ? "This blocks their dashboard login and kiosk PIN immediately. Their sales, attendance, and other history stays intact -- this can be undone any time."
+                : 'This restores their dashboard login and kiosk PIN.'}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button disabled={togglingActive} onClick={handleToggleActive}>
+              {togglingActive ? 'Saving...' : activeToggleTarget?.active ? 'Deactivate' : 'Reactivate'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete confirm */}
+      <Dialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete {deleteTarget?.full_name}?</DialogTitle>
+            <DialogDescription>
+              This permanently removes the account. It only succeeds if this employee has no real history (sales,
+              attendance, inventory movements, etc.) attached -- if they do, you'll get an error explaining what's
+              blocking it, and you should Deactivate instead.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="destructive" disabled={deleting} onClick={handleDelete}>
+              {deleting ? 'Deleting...' : 'Delete permanently'}
             </Button>
           </DialogFooter>
         </DialogContent>

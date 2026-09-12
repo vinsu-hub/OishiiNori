@@ -10,6 +10,23 @@ from app.deps import get_supabase
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
+# Feature detection for migration 0040 (profiles.active) -- same
+# fail-open-until-migrated pattern transactions.py uses throughout, so
+# deploying this code doesn't break every authenticated request the
+# moment it ships, before the migration is hand-applied.
+_profile_active_supported: bool | None = None
+
+
+def _profile_active_supported_check(supabase) -> bool:
+    global _profile_active_supported
+    if _profile_active_supported is None:
+        try:
+            supabase.table("profiles").select("active").limit(1).execute()
+            _profile_active_supported = True
+        except Exception:
+            _profile_active_supported = False
+    return _profile_active_supported
+
 
 @dataclass
 class CurrentUser:
@@ -74,15 +91,19 @@ def get_current_user(
 
     user_id = auth_response.user.id
 
+    active_supported = _profile_active_supported_check(supabase)
+    columns = "role, department, full_name" + (", active" if active_supported else "")
     profile_result = (
         supabase.table("profiles")
-        .select("role, department, full_name")
+        .select(columns)
         .eq("id", user_id)
         .single()
         .execute()
     )
     if not profile_result.data:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No profile for this account")
+    if active_supported and profile_result.data.get("active") is False:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="This account has been deactivated")
 
     return CurrentUser(
         id=user_id,
@@ -119,9 +140,11 @@ def verify_employee_pin(employee_number: str, pin: str) -> dict | None:
     employee_number = employee_number.strip()
     pin = pin.strip()
     supabase = get_supabase()
+    active_supported = _profile_active_supported_check(supabase)
+    columns = "id, full_name, role, kiosk_pin_hash" + (", active" if active_supported else "")
     result = (
         supabase.table("profiles")
-        .select("id, full_name, role, kiosk_pin_hash")
+        .select(columns)
         .eq("employee_number", employee_number)
         .maybe_single()
         .execute()
@@ -129,6 +152,8 @@ def verify_employee_pin(employee_number: str, pin: str) -> dict | None:
     if not result or not result.data or not result.data.get("kiosk_pin_hash"):
         return None
     profile = result.data
+    if active_supported and profile.get("active") is False:
+        return None
     if not bcrypt.checkpw(pin.encode("utf-8"), profile["kiosk_pin_hash"].encode("utf-8")):
         return None
     return profile

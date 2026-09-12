@@ -1023,6 +1023,7 @@ export interface ApiEmployee {
   position: string | null;
   pay_rate: number;
   employee_number: string | null;
+  active: boolean;
 }
 
 export function fetchEmployees(): Promise<ApiEmployee[]> {
@@ -1056,6 +1057,14 @@ export function createEmployee(body: CreateEmployeeRequest): Promise<ApiEmployee
 
 export function setEmployeePin(employeeId: string, pin: string): Promise<{ status: string }> {
   return request(`/employees/${employeeId}/pin`, { method: 'PATCH', body: JSON.stringify({ pin }) });
+}
+
+export function setEmployeeActive(employeeId: string, active: boolean): Promise<ApiEmployee> {
+  return request(`/employees/${employeeId}`, { method: 'PATCH', body: JSON.stringify({ active }) });
+}
+
+export function deleteEmployee(employeeId: string): Promise<{ status: string }> {
+  return request(`/employees/${employeeId}`, { method: 'DELETE' });
 }
 
 // ---------------------------------------------------------------------------
