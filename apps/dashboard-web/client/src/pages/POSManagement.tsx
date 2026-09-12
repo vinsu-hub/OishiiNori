@@ -75,7 +75,7 @@ export default function POSManagement() {
     loadPaymentMethods();
   }, [load, loadPaymentMethods]);
 
-  if (user && user.role === 'employee') {
+  if (user && user.role === 'employee' && !user.extraPages.includes('pos-management')) {
     return (
       <DashboardLayout title="POS Management">
         <div className="p-6">

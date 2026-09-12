@@ -10,11 +10,20 @@ from fastapi.responses import Response
 from postgrest.exceptions import APIError
 
 from app.attendance_utils import auto_close_stale_attendance, hr_table
-from app.auth import CurrentUser, _profile_active_supported_check, get_current_user, require_role
+from app.auth import (
+    CurrentUser,
+    _profile_active_supported_check,
+    _profile_extra_pages_supported_check,
+    get_current_user,
+    require_role,
+    require_role_or_grant,
+)
+from app.permissions import EXECUTIVE_ONLY_GRANTS, GRANTABLE_PAGES
 from app.deps import get_supabase
 from app.payroll_pdf import build_payslip_pdf
 from app.schemas import (
     AttendanceLogResponse,
+    EmployeeAccessUpdate,
     EmployeeCreate,
     EmployeeCreatedResponse,
     EmployeeOut,
@@ -67,7 +76,7 @@ def list_attendance(
     limit: int = Query(100, le=500),
     user: CurrentUser = Depends(get_current_user),
 ):
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "hr-attendance", "manager", "executive")
     auto_close_stale_attendance()
 
     query = hr_table("attendance_logs").select(
@@ -266,14 +275,14 @@ def get_payroll_summary(
     user: CurrentUser = Depends(get_current_user),
 ):
     """Preview payroll over a date range (not persisted)."""
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "hr-payroll", "manager", "executive")
     supabase = get_supabase()
     return _compute_payroll_summary(supabase, date_from, date_to)
 
 
 @router.post("/payroll", response_model=PayrollRecordResponse)
 def generate_payroll(body: PayrollGenerateRequest, user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "hr-payroll", "manager", "executive")
     supabase = get_supabase()
     summary = _compute_payroll_summary(supabase, body.period_start, body.period_end)
 
@@ -328,7 +337,7 @@ def generate_payroll(body: PayrollGenerateRequest, user: CurrentUser = Depends(g
 
 @router.get("/payroll", response_model=list[PayrollRecordResponse])
 def list_payroll_records(limit: int = Query(50, le=200), user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "hr-payroll", "manager", "executive")
     result = hr_table("payroll_records").select("*").order("created_at", desc=True).limit(limit).execute()
     records = result.data
     for record in records:
@@ -362,7 +371,7 @@ def get_payroll_receipt_pdf(
     """Real PDF payslip for one employee: header, pay summary, and a full
     daily time-log table. Must be registered before /payroll/{payroll_id}
     so this literal path isn't swallowed by that dynamic route."""
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "hr-payroll", "manager", "executive")
     supabase = get_supabase()
     auto_close_stale_attendance()
 
@@ -415,7 +424,7 @@ def get_payroll_receipts_zip(
     """One PDF payslip per employee for a period, bundled into a ZIP --
     avoids the browser popup-blocker problem of opening one window per
     employee from the client."""
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "hr-payroll", "manager", "executive")
     supabase = get_supabase()
     summary = _compute_payroll_summary(supabase, period_start, period_end)
 
@@ -464,7 +473,7 @@ def get_payroll_receipts_zip(
 
 @router.get("/payroll/{payroll_id}", response_model=PayrollRecordResponse)
 def get_payroll_record(payroll_id: str, user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "hr-payroll", "manager", "executive")
     record_result = hr_table("payroll_records").select("*").eq("id", payroll_id).maybe_single().execute()
     if not record_result or not record_result.data:
         raise HTTPException(status_code=404, detail="Payroll record not found")
@@ -501,7 +510,7 @@ def _write_audit_log(
 
 @router.get("/hr/holidays", response_model=list[HolidayResponse])
 def list_holidays(year: int = Query(...), user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "hr-holiday-calendar", "manager", "executive")
     result = (
         hr_table("holidays")
         .select("*")
@@ -554,7 +563,7 @@ def delete_holiday(holiday_id: str, user: CurrentUser = Depends(get_current_user
 
 @router.get("/hr/pay-rules", response_model=list[PayMultiplierRuleResponse])
 def list_pay_rules(user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "hr-payroll-settings", "manager", "executive")
     result = hr_table("pay_multiplier_rules").select("*").order("scenario_key").execute()
     return result.data
 
@@ -583,7 +592,7 @@ def update_pay_rule(scenario_key: str, body: PayMultiplierRuleUpdate, user: Curr
 
 @router.post("/hr/payroll-overrides", response_model=PayrollOverrideResponse)
 def create_payroll_override(body: PayrollOverrideCreate, user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "hr-payroll", "manager", "executive")
     log_result = hr_table("attendance_logs").select("*").eq("id", body.attendance_log_id).maybe_single().execute()
     if not log_result or not log_result.data:
         raise HTTPException(status_code=404, detail="Attendance log not found")
@@ -630,7 +639,7 @@ def list_payroll_audit_log(
     limit: int = Query(100, le=500),
     user: CurrentUser = Depends(get_current_user),
 ):
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "hr-payroll", "manager", "executive")
     query = hr_table("payroll_audit_log").select("*")
     if entity_type:
         query = query.eq("entity_type", entity_type)
@@ -651,23 +660,44 @@ def _slugify(name: str) -> str:
     return slug or "employee"
 
 
+def _validate_and_authorize_grants(user: CurrentUser, extra_pages: list[str]) -> None:
+    """Shared by create_employee and the PATCH .../access endpoint: rejects
+    an unknown page key outright, and -- since granting Command Center/
+    Trends/P&L/Oishii AI is a bigger step up than any other tab (those are
+    normally executive-only, no manager tier at all) -- only an executive
+    may hand one of those four out. A manager can grant every other tab."""
+    unknown = [key for key in extra_pages if key not in GRANTABLE_PAGES]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown page key(s): {', '.join(unknown)}")
+    if user.role != "executive" and any(key in EXECUTIVE_ONLY_GRANTS for key in extra_pages):
+        raise HTTPException(
+            status_code=403,
+            detail="Only an executive can grant access to Command Center, Trend Analysis, P&L, or Oishii AI",
+        )
+
+
 @router.get("/employees", response_model=list[EmployeeOut])
 def list_employees(user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "employees", "manager", "executive")
     supabase = get_supabase()
     columns = "id, full_name, role, department, position, pay_rate, employee_number"
     if _profile_active_supported_check(supabase):
         columns += ", active"
+    extra_pages_supported = _profile_extra_pages_supported_check(supabase)
+    if extra_pages_supported:
+        columns += ", extra_pages"
     result = supabase.table("profiles").select(columns).order("full_name").execute()
     rows = result.data
     for row in rows:
         row.setdefault("active", True)
+        row.setdefault("extra_pages", [])
     return rows
 
 
 @router.post("/employees", response_model=EmployeeCreatedResponse)
 def create_employee(body: EmployeeCreate, user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "employees", "manager", "executive")
+    _validate_and_authorize_grants(user, body.extra_pages)
     supabase = get_supabase()
 
     slug = _slugify(body.full_name)
@@ -696,27 +726,33 @@ def create_employee(body: EmployeeCreate, user: CurrentUser = Depends(get_curren
     if employee_number is None:
         raise HTTPException(status_code=500, detail="Could not generate a unique employee number")
 
-    supabase.table("profiles").insert(
-        {
-            "id": user_id,
-            "role": body.role,
-            "full_name": body.full_name,
-            "department": body.department,
-            "position": body.position,
-            "pay_rate": body.pay_rate or 0,
-            "employee_number": employee_number,
-            "kiosk_pin_hash": _DEFAULT_PIN_HASH,
-        }
-    ).execute()
+    insert_row = {
+        "id": user_id,
+        "role": body.role,
+        "full_name": body.full_name,
+        "department": body.department,
+        "position": body.position,
+        "pay_rate": body.pay_rate or 0,
+        "employee_number": employee_number,
+        "kiosk_pin_hash": _DEFAULT_PIN_HASH,
+    }
+    extra_pages_supported = _profile_extra_pages_supported_check(supabase)
+    if extra_pages_supported and body.extra_pages:
+        insert_row["extra_pages"] = body.extra_pages
+    supabase.table("profiles").insert(insert_row).execute()
 
+    select_columns = "id, full_name, role, department, position, pay_rate, employee_number"
+    if extra_pages_supported:
+        select_columns += ", extra_pages"
     profile_result = (
         supabase.table("profiles")
-        .select("id, full_name, role, department, position, pay_rate, employee_number")
+        .select(select_columns)
         .eq("id", user_id)
         .single()
         .execute()
     )
     profile = profile_result.data
+    profile.setdefault("extra_pages", [])
     profile["email"] = email
     profile["default_password"] = _DEFAULT_PASSWORD
     profile["default_pin"] = _DEFAULT_PIN
@@ -725,7 +761,7 @@ def create_employee(body: EmployeeCreate, user: CurrentUser = Depends(get_curren
 
 @router.patch("/employees/{employee_id}/pin")
 def set_employee_pin(employee_id: str, body: SetPinRequest, user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "employees", "manager", "executive")
     supabase = get_supabase()
     existing = supabase.table("profiles").select("id").eq("id", employee_id).maybe_single().execute()
     if not existing or not existing.data:
@@ -747,7 +783,7 @@ def set_employee_active(
     movements) stays intact and referenceable -- same soft-delete pattern
     products/discount_types already use, kept separate from
     set_employee_pin above rather than overloading one endpoint."""
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "employees", "manager", "executive")
     supabase = get_supabase()
     if not _profile_active_supported_check(supabase):
         raise HTTPException(status_code=501, detail="Deactivate/reactivate needs migration 0040 applied first")
@@ -756,14 +792,63 @@ def set_employee_active(
         raise HTTPException(status_code=404, detail="Employee not found")
 
     supabase.table("profiles").update({"active": body.active}).eq("id", employee_id).execute()
+    select_columns = "id, full_name, role, department, position, pay_rate, employee_number, active"
+    if _profile_extra_pages_supported_check(supabase):
+        select_columns += ", extra_pages"
     profile_result = (
         supabase.table("profiles")
-        .select("id, full_name, role, department, position, pay_rate, employee_number, active")
+        .select(select_columns)
         .eq("id", employee_id)
         .single()
         .execute()
     )
-    return profile_result.data
+    row = profile_result.data
+    row.setdefault("extra_pages", [])
+    return row
+
+
+@router.patch("/employees/{employee_id}/access", response_model=EmployeeOut)
+def set_employee_access(
+    employee_id: str, body: EmployeeAccessUpdate, user: CurrentUser = Depends(get_current_user)
+):
+    """Edits role and/or extra tab grants after creation -- the ongoing-
+    management counterpart to EmployeeCreate.extra_pages (creation-time-only
+    isn't enough: an executive needs to be able to adjust a cashier's access
+    later without recreating the account). Same manager+executive floor and
+    same executive-only-grant guardrail as create_employee."""
+    require_role_or_grant(user, "employees", "manager", "executive")
+    supabase = get_supabase()
+    existing = supabase.table("profiles").select("id").eq("id", employee_id).maybe_single().execute()
+    if not existing or not existing.data:
+        raise HTTPException(status_code=404, detail="Employee not found")
+
+    update: dict = {}
+    if body.role is not None:
+        update["role"] = body.role
+    if body.extra_pages is not None:
+        if not _profile_extra_pages_supported_check(supabase):
+            raise HTTPException(status_code=501, detail="Tab access grants need migration 0043 applied first")
+        _validate_and_authorize_grants(user, body.extra_pages)
+        update["extra_pages"] = body.extra_pages
+    if update:
+        supabase.table("profiles").update(update).eq("id", employee_id).execute()
+
+    select_columns = "id, full_name, role, department, position, pay_rate, employee_number"
+    if _profile_active_supported_check(supabase):
+        select_columns += ", active"
+    if _profile_extra_pages_supported_check(supabase):
+        select_columns += ", extra_pages"
+    profile_result = (
+        supabase.table("profiles")
+        .select(select_columns)
+        .eq("id", employee_id)
+        .single()
+        .execute()
+    )
+    row = profile_result.data
+    row.setdefault("active", True)
+    row.setdefault("extra_pages", [])
+    return row
 
 
 @router.delete("/employees/{employee_id}")

@@ -49,7 +49,7 @@ export default function HolidayCalendar() {
     load();
   }, [load]);
 
-  if (user && user.role === 'employee') {
+  if (user && user.role === 'employee' && !user.extraPages.includes('hr-holiday-calendar')) {
     return (
       <DashboardLayout title="Holiday Calendar">
         <div className="p-6">

@@ -41,7 +41,7 @@ export default function TrendAnalysis() {
     load();
   }, [load]);
 
-  if (user && user.role !== 'executive') {
+  if (user && user.role !== 'executive' && !user.extraPages.includes('trends')) {
     return (
       <DashboardLayout title="Trend Analysis">
         <div className="p-6">

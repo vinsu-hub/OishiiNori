@@ -29,7 +29,7 @@ export default function CommandCenter() {
 
   useVisiblePolling(load, POLL_INTERVAL_MS);
 
-  if (user && user.role !== 'executive') {
+  if (user && user.role !== 'executive' && !user.extraPages.includes('command-center')) {
     return (
       <DashboardLayout title="Command Center">
         <div className="p-6">

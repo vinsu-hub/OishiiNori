@@ -71,7 +71,7 @@ export default function StockOverview() {
     load();
   }, [load]);
 
-  if (user && user.role === 'employee') {
+  if (user && user.role === 'employee' && !user.extraPages.includes('stock')) {
     return (
       <DashboardLayout title="Stock Overview">
         <div className="p-6">

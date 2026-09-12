@@ -1038,6 +1038,9 @@ class EmployeeOut(BaseModel):
     pay_rate: float
     employee_number: str | None = None
     active: bool = True
+    # Individually-granted extra tabs beyond what `role` alone unlocks --
+    # see app/permissions.py's GRANTABLE_PAGES for the valid key set.
+    extra_pages: list[str] = Field(default_factory=list)
 
 
 class EmployeeCreate(BaseModel):
@@ -1046,6 +1049,7 @@ class EmployeeCreate(BaseModel):
     department: DepartmentType | None = None
     position: str | None = None
     pay_rate: float = 0
+    extra_pages: list[str] = Field(default_factory=list)
 
 
 class EmployeeCreatedResponse(BaseModel):
@@ -1059,6 +1063,7 @@ class EmployeeCreatedResponse(BaseModel):
     email: str
     default_password: str
     default_pin: str
+    extra_pages: list[str] = Field(default_factory=list)
 
 
 class SetPinRequest(BaseModel):
@@ -1067,6 +1072,15 @@ class SetPinRequest(BaseModel):
 
 class SetEmployeeActiveRequest(BaseModel):
     active: bool
+
+
+class EmployeeAccessUpdate(BaseModel):
+    """PATCH /employees/{id}/access -- role and/or extra tab grants, editable
+    independently of the rest of the profile (name/department/pay_rate stay
+    on the plain profile-edit path, if one ever exists)."""
+
+    role: UserRole | None = None
+    extra_pages: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from postgrest.exceptions import APIError
 
-from app.auth import CurrentUser, get_current_user, require_role, verify_employee_pin
+from app.auth import CurrentUser, get_current_user, require_role, require_role_or_grant, verify_employee_pin
 from app.deps import get_supabase
 from app.ph_time import ph_day_bounds_utc, today_ph
 from app.schemas import (
@@ -158,7 +158,7 @@ def list_business_days(user: CurrentUser = Depends(get_current_user)):
     """Manager/executive only -- the register-vs-system variance review.
     Cashiers never reach this: BusinessDayAdminOut is the only shape that
     carries cash_register_total/system_eod_total."""
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "business-day-report", "manager", "executive")
     supabase = get_supabase()
     result = supabase.table("business_days").select("*").order("business_date", desc=True).execute()
     rows = []

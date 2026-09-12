@@ -113,7 +113,7 @@ export default function StockVS() {
     }
   }
 
-  if (user && user.role === 'employee') {
+  if (user && user.role === 'employee' && !user.extraPages.includes('stock')) {
     return (
       <DashboardLayout title="EOD Stock Count (VS)">
         <div className="p-6">

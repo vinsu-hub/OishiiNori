@@ -22,7 +22,7 @@ from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Query
 
-from app.auth import CurrentUser, get_current_user, require_role
+from app.auth import CurrentUser, get_current_user, require_role_or_grant
 from app.deps import get_supabase
 from app.routers.analytics import _range_bounds
 from app.routers.hr import _compute_payroll_summary
@@ -49,7 +49,7 @@ def _resolve_period_range(period: PnLPeriod) -> tuple[date, date]:
 
 @router.get("/pnl", response_model=PnLResponse)
 def get_pnl(period: PnLPeriod = Query("today"), user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "executive")
+    require_role_or_grant(user, "pnl", "executive")
     supabase = get_supabase()
     date_from, date_to = _resolve_period_range(period)
     start, end = _range_bounds(date_from, date_to)

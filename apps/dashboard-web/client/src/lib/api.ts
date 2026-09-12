@@ -150,7 +150,7 @@ export function fetchHealth(): Promise<{ status: string }> {
 export type KitchenStation = 'sushi_bar' | 'sushi_bar_oven' | 'hot_line' | 'salad_cold_bar' | 'cafe_bar';
 export type ProductAvailability = 'available' | 'low_stock' | 'unavailable';
 export type Department = 'kitchen' | 'cafe';
-export type UserRole = 'employee' | 'manager' | 'executive';
+export type UserRole = 'employee' | 'manager' | 'executive' | 'stocker' | 'rider';
 
 export interface ApiProductSize {
   id: string;
@@ -1029,6 +1029,7 @@ export interface ApiEmployee {
   pay_rate: number;
   employee_number: string | null;
   active: boolean;
+  extra_pages: string[];
 }
 
 export function fetchEmployees(): Promise<ApiEmployee[]> {
@@ -1041,6 +1042,7 @@ export interface CreateEmployeeRequest {
   department?: Department | null;
   position?: string | null;
   pay_rate?: number;
+  extra_pages?: string[];
 }
 
 export interface ApiEmployeeCreated {
@@ -1054,6 +1056,7 @@ export interface ApiEmployeeCreated {
   email: string;
   default_password: string;
   default_pin: string;
+  extra_pages: string[];
 }
 
 export function createEmployee(body: CreateEmployeeRequest): Promise<ApiEmployeeCreated> {
@@ -1070,6 +1073,15 @@ export function setEmployeeActive(employeeId: string, active: boolean): Promise<
 
 export function deleteEmployee(employeeId: string): Promise<{ status: string }> {
   return request(`/employees/${employeeId}`, { method: 'DELETE' });
+}
+
+export interface UpdateEmployeeAccessRequest {
+  role?: UserRole;
+  extra_pages?: string[];
+}
+
+export function updateEmployeeAccess(employeeId: string, body: UpdateEmployeeAccessRequest): Promise<ApiEmployee> {
+  return request(`/employees/${employeeId}/access`, { method: 'PATCH', body: JSON.stringify(body) });
 }
 
 // ---------------------------------------------------------------------------

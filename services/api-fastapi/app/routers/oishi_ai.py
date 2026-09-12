@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from openai import OpenAI
 
 from app.attendance_utils import hr_table
-from app.auth import CurrentUser, get_current_user, require_role
+from app.auth import CurrentUser, get_current_user, require_role_or_grant
 from app.deps import get_supabase
 from app.ph_time import ph_day_bounds_utc
 from app.routers.analytics import get_sales_trend, get_top_products
@@ -595,7 +595,7 @@ def query_oishi_ai(body: OishiAiQueryRequest, user: CurrentUser = Depends(get_cu
     # elsewhere in this app (Oishii is single-location, unlike the SMFC
     # reference's manager-scoped-to-own-branch model), so there is no
     # narrower scope a manager could safely see here anyway.
-    require_role(user, "executive")
+    require_role_or_grant(user, "oishii-ai", "executive")
 
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:

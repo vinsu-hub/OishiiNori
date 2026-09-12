@@ -31,7 +31,7 @@ export default function BusinessDayReport() {
     load();
   }, [load]);
 
-  if (user && user.role === 'employee') {
+  if (user && user.role === 'employee' && !user.extraPages.includes('business-day-report')) {
     return (
       <DashboardLayout title="Business Day Report">
         <div className="p-6">

@@ -44,7 +44,7 @@ export default function PayrollSettings() {
     load();
   }, [load]);
 
-  if (user && user.role === 'employee') {
+  if (user && user.role === 'employee' && !user.extraPages.includes('hr-payroll-settings')) {
     return (
       <DashboardLayout title="Payroll Settings">
         <div className="p-6">

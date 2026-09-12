@@ -79,7 +79,7 @@ export default function HRAttendance() {
     return map;
   }, [employees]);
 
-  if (user && user.role === 'employee') {
+  if (user && user.role === 'employee' && !user.extraPages.includes('hr-attendance')) {
     return (
       <DashboardLayout title="HR Attendance">
         <div className="p-6">

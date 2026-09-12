@@ -37,7 +37,7 @@ export default function PnL() {
     load();
   }, [load]);
 
-  if (user && user.role !== 'executive') {
+  if (user && user.role !== 'executive' && !user.extraPages.includes('pnl')) {
     return (
       <DashboardLayout title="P&L">
         <div className="p-6">

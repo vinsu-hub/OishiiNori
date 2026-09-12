@@ -33,7 +33,7 @@ from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from postgrest.exceptions import APIError
 
-from app.auth import CurrentUser, get_current_user, require_role
+from app.auth import CurrentUser, get_current_user, require_role_or_grant
 from app.deps import get_supabase
 from app.ph_time import ph_day_bounds_utc, today_ph
 from app.routers.inventory_movements import apply_inventory_movement
@@ -164,7 +164,7 @@ def list_stock_items(
 
 @router.post("/stock-items", response_model=StockItemOut)
 def create_stock_item(body: StockItemCreate, user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "manager", "executive", "stocker")
+    require_role_or_grant(user, "stock", "manager", "executive", "stocker")
     supabase = get_supabase()
     result = (
         supabase.table("stock_items")
@@ -189,7 +189,7 @@ def create_stock_item(body: StockItemCreate, user: CurrentUser = Depends(get_cur
 
 @router.patch("/stock-items/{stock_item_id}", response_model=StockItemOut)
 def update_stock_item(stock_item_id: str, body: StockItemUpdate, user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "manager", "executive", "stocker")
+    require_role_or_grant(user, "stock", "manager", "executive", "stocker")
     supabase = get_supabase()
     existing = supabase.table("stock_items").select("id").eq("id", stock_item_id).maybe_single().execute()
     if not existing or not existing.data:
@@ -727,7 +727,7 @@ def list_stock_consumption_rules(
 
 @router.post("/stock-consumption-rules", response_model=StockConsumptionRuleOut)
 def create_stock_consumption_rule(body: StockConsumptionRuleCreate, user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "stock", "manager", "executive")
     supabase = get_supabase()
     if body.trigger_type == "per_product_unit" and not body.product_size_id:
         raise HTTPException(status_code=400, detail="product_size_id is required for a per-product-unit rule")
@@ -758,7 +758,7 @@ def create_stock_consumption_rule(body: StockConsumptionRuleCreate, user: Curren
 def update_stock_consumption_rule(
     rule_id: str, body: StockConsumptionRuleUpdate, user: CurrentUser = Depends(get_current_user)
 ):
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "stock", "manager", "executive")
     supabase = get_supabase()
     update_data = body.model_dump(exclude_unset=True)
     update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -776,7 +776,7 @@ def update_stock_consumption_rule(
 
 @router.delete("/stock-consumption-rules/{rule_id}")
 def delete_stock_consumption_rule(rule_id: str, user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "stock", "manager", "executive")
     supabase = get_supabase()
     supabase.table("stock_consumption_rules").delete().eq("id", rule_id).execute()
     return {"ok": True}

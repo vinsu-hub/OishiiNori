@@ -13,11 +13,23 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 async function loadUser(authUserId: string, email: string): Promise<User> {
-  const { data: profile, error } = await supabase
+  // extra_pages (migration 0043) is selected separately and allowed to fail
+  // -- an explicit column list 400s outright if the column doesn't exist
+  // yet, and login is too critical a path to break on an unapplied
+  // migration. Falls back to no extra grants (role alone still works).
+  let { data: profile, error } = await supabase
     .from('profiles')
-    .select('role, full_name, department, employee_number')
+    .select('role, full_name, department, employee_number, extra_pages')
     .eq('id', authUserId)
     .single();
+
+  if (error) {
+    ({ data: profile, error } = await supabase
+      .from('profiles')
+      .select('role, full_name, department, employee_number')
+      .eq('id', authUserId)
+      .single());
+  }
 
   if (error || !profile) {
     throw new Error('No profile found for this account. Contact an administrator.');
@@ -31,6 +43,7 @@ async function loadUser(authUserId: string, email: string): Promise<User> {
     role: profile.role,
     employeeNumber: profile.employee_number,
     avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${email}`,
+    extraPages: profile.extra_pages ?? [],
   };
 }
 

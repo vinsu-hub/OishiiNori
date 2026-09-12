@@ -57,7 +57,7 @@ export default function RefundApproval() {
     }
   }
 
-  if (user && user.role === 'employee') {
+  if (user && user.role === 'employee' && !user.extraPages.includes('refund-approval')) {
     return (
       <DashboardLayout title="Refund Approval">
         <div className="p-6">

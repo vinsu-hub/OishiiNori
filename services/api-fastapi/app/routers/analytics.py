@@ -3,7 +3,7 @@ from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, Query
 
-from app.auth import CurrentUser, get_current_user, require_role
+from app.auth import CurrentUser, get_current_user, require_role_or_grant
 from app.deps import get_supabase
 from app.ph_time import ph_day_bounds_utc
 from app.schemas import SalesTrendPoint, SalesTrendResponse, TopProductRow, TopProductsResponse
@@ -35,7 +35,7 @@ def get_sales_trend(
 ):
     """Real daily revenue/order-count series for Trend Analysis (executive
     only) -- derived from actual transactions, not a mock/hardcoded chart."""
-    require_role(user, "executive")
+    require_role_or_grant(user, "trends", "executive")
     date_from, date_to = _resolve_range(date_from, date_to)
 
     supabase = get_supabase()
@@ -81,7 +81,7 @@ def get_top_products(
     """Real best-sellers by revenue for Trend Analysis (executive only),
     aggregated from actual transaction_items -- not a canned suggestion
     list."""
-    require_role(user, "executive")
+    require_role_or_grant(user, "trends", "executive")
     date_from, date_to = _resolve_range(date_from, date_to)
 
     supabase = get_supabase()

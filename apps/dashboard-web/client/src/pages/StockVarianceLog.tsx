@@ -154,7 +154,7 @@ export default function StockVarianceLog() {
     .filter((r) => kindFilter === 'all' || r.kind === kindFilter)
     .filter((r) => itemFilter === 'all' || r.targetKey === itemFilter);
 
-  if (user && user.role === 'employee') {
+  if (user && user.role === 'employee' && !user.extraPages.includes('stock')) {
     return (
       <DashboardLayout title="Variance Log">
         <div className="p-6">

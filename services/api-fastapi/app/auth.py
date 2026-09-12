@@ -28,12 +28,29 @@ def _profile_active_supported_check(supabase) -> bool:
     return _profile_active_supported
 
 
+# Feature detection for migration 0043 (profiles.extra_pages) -- same
+# fail-open-until-migrated pattern as _profile_active_supported_check above.
+_profile_extra_pages_supported: bool | None = None
+
+
+def _profile_extra_pages_supported_check(supabase) -> bool:
+    global _profile_extra_pages_supported
+    if _profile_extra_pages_supported is None:
+        try:
+            supabase.table("profiles").select("extra_pages").limit(1).execute()
+            _profile_extra_pages_supported = True
+        except Exception:
+            _profile_extra_pages_supported = False
+    return _profile_extra_pages_supported
+
+
 @dataclass
 class CurrentUser:
     id: str
     role: str
     department: str | None
     full_name: str | None
+    extra_pages: list[str]
 
 
 def _get_user_with_retry(supabase, token: str):
@@ -92,7 +109,12 @@ def get_current_user(
     user_id = auth_response.user.id
 
     active_supported = _profile_active_supported_check(supabase)
-    columns = "role, department, full_name" + (", active" if active_supported else "")
+    extra_pages_supported = _profile_extra_pages_supported_check(supabase)
+    columns = (
+        "role, department, full_name"
+        + (", active" if active_supported else "")
+        + (", extra_pages" if extra_pages_supported else "")
+    )
     profile_result = (
         supabase.table("profiles")
         .select(columns)
@@ -110,18 +132,36 @@ def get_current_user(
         role=profile_result.data["role"],
         department=profile_result.data.get("department"),
         full_name=profile_result.data.get("full_name"),
+        extra_pages=profile_result.data.get("extra_pages") or [],
     )
 
 
 def require_role(user: CurrentUser, *roles: str) -> None:
     """Raises 403 unless the caller's role is one of `roles`. No branch
-    dimension exists in this build, so this is the entire authorization
-    surface beyond "is logged in" (get_current_user)."""
+    dimension exists in this build, so beyond "is logged in"
+    (get_current_user), this and require_role_or_grant below are the entire
+    authorization surface."""
     if user.role not in roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Requires one of roles: {', '.join(roles)}",
         )
+
+
+def require_role_or_grant(user: CurrentUser, page_key: str, *roles: str) -> None:
+    """Same as require_role, but also passes if the caller was individually
+    granted this specific tab (profiles.extra_pages) -- additive on top of
+    the role floor, never a replacement for it. Used for a tab's baseline
+    gate only; a page's stricter nested executive-only sub-actions (e.g.
+    Employees' hard-delete, POS Management's payment-method CRUD) keep using
+    plain require_role so a grant here can never reach further than what a
+    real manager already sees on that page."""
+    if user.role in roles or page_key in user.extra_pages:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=f"Requires one of roles: {', '.join(roles)}, or a grant for '{page_key}'",
+    )
 
 
 def verify_employee_pin(employee_number: str, pin: str) -> dict | None:

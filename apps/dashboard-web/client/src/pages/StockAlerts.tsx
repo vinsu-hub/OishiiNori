@@ -155,7 +155,7 @@ export default function StockAlerts() {
     .filter((r) => r.itemName.toLowerCase().includes(search.trim().toLowerCase()))
     .sort((a, b) => VARIANT_RANK[a.variant] - VARIANT_RANK[b.variant] || a.itemName.localeCompare(b.itemName));
 
-  if (user && user.role === 'employee') {
+  if (user && user.role === 'employee' && !user.extraPages.includes('stock')) {
     return (
       <DashboardLayout title="Stock Alerts">
         <div className="p-6">

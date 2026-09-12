@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from postgrest.exceptions import APIError
 
 from app.attendance_utils import hr_table
-from app.auth import CurrentUser, get_current_user, require_role
+from app.auth import CurrentUser, get_current_user, require_role_or_grant
 from app.deps import get_supabase
 from app.ph_time import ph_day_bounds_utc
 from app.routers.inventory import get_low_stock_ingredients
@@ -30,7 +30,7 @@ def get_dashboard_summary(
     that, this degrades staff_clocked_in to None / hr_available=False, same
     resilience pattern as transactions.py's kitchen_status feature
     detection."""
-    require_role(user, "executive")
+    require_role_or_grant(user, "command-center", "executive")
     if on_date is None:
         on_date = date.today()
 

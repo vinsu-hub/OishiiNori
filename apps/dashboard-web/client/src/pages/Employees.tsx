@@ -16,6 +16,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   ApiEmployee,
   ApiEmployeeCreated,
@@ -26,12 +27,74 @@ import {
   fetchEmployees,
   setEmployeeActive,
   setEmployeePin,
+  updateEmployeeAccess,
 } from '@/lib/api';
+import { GRANTABLE_PAGES, EXECUTIVE_ONLY_GRANTS } from '@/lib/permissions';
+
+function groupGrantablePages(): [string, typeof GRANTABLE_PAGES][] {
+  const groups: Record<string, typeof GRANTABLE_PAGES> = {};
+  const order: string[] = [];
+  GRANTABLE_PAGES.forEach((page) => {
+    if (!groups[page.group]) {
+      groups[page.group] = [];
+      order.push(page.group);
+    }
+    groups[page.group].push(page);
+  });
+  return order.map((group) => [group, groups[group]]);
+}
+
+function AccessChecklist({
+  role,
+  selected,
+  onChange,
+  callerIsExecutive,
+}: {
+  role: UserRole;
+  selected: string[];
+  onChange: (next: string[]) => void;
+  callerIsExecutive: boolean;
+}) {
+  const toggle = (key: string, checked: boolean) => {
+    onChange(checked ? [...selected, key] : selected.filter((k) => k !== key));
+  };
+  return (
+    <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
+      {groupGrantablePages().map(([group, pages]) => (
+        <div key={group} className="space-y-1.5">
+          <p className="text-xs font-medium text-muted-foreground">{group}</p>
+          {pages.map((page) => {
+            const alreadyByRole =
+              (role === 'manager' || role === 'executive') && !EXECUTIVE_ONLY_GRANTS.has(page.key);
+            const restricted = EXECUTIVE_ONLY_GRANTS.has(page.key) && !callerIsExecutive;
+            return (
+              <label
+                key={page.key}
+                className={`flex items-center gap-2 text-sm ${alreadyByRole || restricted ? 'opacity-50' : ''}`}
+              >
+                <Checkbox
+                  checked={alreadyByRole || selected.includes(page.key)}
+                  disabled={alreadyByRole || restricted}
+                  onCheckedChange={(checked) => toggle(page.key, checked === true)}
+                />
+                {page.label}
+                {alreadyByRole && <span className="text-xs text-muted-foreground">(included in role)</span>}
+                {restricted && <span className="text-xs text-muted-foreground">(executive only)</span>}
+              </label>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function Employees() {
   const { user } = useAuth();
   const [employees, setEmployees] = useState<ApiEmployee[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const callerIsExecutive = user?.role === 'executive';
 
   const [addOpen, setAddOpen] = useState(false);
   const [fullName, setFullName] = useState('');
@@ -39,6 +102,7 @@ export default function Employees() {
   const [department, setDepartment] = useState<Department | 'none'>('none');
   const [position, setPosition] = useState('');
   const [payRate, setPayRate] = useState('');
+  const [extraPages, setExtraPages] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [created, setCreated] = useState<ApiEmployeeCreated | null>(null);
 
@@ -51,6 +115,11 @@ export default function Employees() {
 
   const [deleteTarget, setDeleteTarget] = useState<ApiEmployee | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  const [accessTarget, setAccessTarget] = useState<ApiEmployee | null>(null);
+  const [accessRole, setAccessRole] = useState<UserRole>('employee');
+  const [accessExtraPages, setAccessExtraPages] = useState<string[]>([]);
+  const [savingAccess, setSavingAccess] = useState(false);
 
   const load = useCallback(() => {
     fetchEmployees()
@@ -79,6 +148,7 @@ export default function Employees() {
     setDepartment('none');
     setPosition('');
     setPayRate('');
+    setExtraPages([]);
   }
 
   async function handleCreate() {
@@ -94,6 +164,7 @@ export default function Employees() {
         department: department === 'none' ? undefined : department,
         position: position.trim() || undefined,
         pay_rate: payRate.trim() ? Number(payRate) : undefined,
+        extra_pages: extraPages,
       });
       setAddOpen(false);
       resetAddForm();
@@ -103,6 +174,27 @@ export default function Employees() {
       toast.error(e instanceof Error ? e.message : 'Failed to create employee');
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  function openAccessEditor(e: ApiEmployee) {
+    setAccessTarget(e);
+    setAccessRole(e.role);
+    setAccessExtraPages(e.extra_pages);
+  }
+
+  async function handleSaveAccess() {
+    if (!accessTarget) return;
+    setSavingAccess(true);
+    try {
+      await updateEmployeeAccess(accessTarget.id, { role: accessRole, extra_pages: accessExtraPages });
+      toast.success(`Access updated for ${accessTarget.full_name}`);
+      setAccessTarget(null);
+      load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update access');
+    } finally {
+      setSavingAccess(false);
     }
   }
 
@@ -175,6 +267,7 @@ export default function Employees() {
                 <TableHead>Pay Rate</TableHead>
                 <TableHead>Employee #</TableHead>
                 <TableHead>Status</TableHead>
+                <TableHead>Access</TableHead>
                 <TableHead />
               </TableRow>
             </TableHeader>
@@ -196,7 +289,13 @@ export default function Employees() {
                       {e.active ? 'Active' : 'Inactive'}
                     </Badge>
                   </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {e.extra_pages.length > 0 ? `+${e.extra_pages.length} extra tab${e.extra_pages.length === 1 ? '' : 's'}` : '--'}
+                  </TableCell>
                   <TableCell className="space-x-2 whitespace-nowrap">
+                    <Button size="sm" variant="outline" onClick={() => openAccessEditor(e)}>
+                      Edit access
+                    </Button>
                     <Button size="sm" variant="outline" onClick={() => setPinTarget(e)}>
                       Set PIN
                     </Button>
@@ -238,6 +337,8 @@ export default function Employees() {
                     <SelectItem value="employee">Employee</SelectItem>
                     <SelectItem value="manager">Manager</SelectItem>
                     <SelectItem value="executive">Executive</SelectItem>
+                    <SelectItem value="stocker">Stocker</SelectItem>
+                    <SelectItem value="rider">Rider</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -265,10 +366,59 @@ export default function Employees() {
                 <Input type="number" min={0} step="0.01" value={payRate} onChange={(e) => setPayRate(e.target.value)} />
               </div>
             </div>
+            <div className="space-y-1">
+              <Label>Additional tab access (beyond what the role above already unlocks)</Label>
+              <AccessChecklist
+                role={role}
+                selected={extraPages}
+                onChange={setExtraPages}
+                callerIsExecutive={callerIsExecutive}
+              />
+            </div>
           </div>
           <DialogFooter>
             <Button disabled={submitting} onClick={handleCreate}>
               {submitting ? 'Creating...' : 'Create employee'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit access (role + extra tab grants) */}
+      <Dialog open={!!accessTarget} onOpenChange={(open) => !open && setAccessTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit access for {accessTarget?.full_name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label>Role</Label>
+              <Select value={accessRole} onValueChange={(v) => setAccessRole(v as UserRole)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="employee">Employee</SelectItem>
+                  <SelectItem value="manager">Manager</SelectItem>
+                  <SelectItem value="executive">Executive</SelectItem>
+                  <SelectItem value="stocker">Stocker</SelectItem>
+                  <SelectItem value="rider">Rider</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>Additional tab access</Label>
+              <AccessChecklist
+                role={accessRole}
+                selected={accessExtraPages}
+                onChange={setAccessExtraPages}
+                callerIsExecutive={callerIsExecutive}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button disabled={savingAccess} onClick={handleSaveAccess}>
+              {savingAccess ? 'Saving...' : 'Save access'}
             </Button>
           </DialogFooter>
         </DialogContent>

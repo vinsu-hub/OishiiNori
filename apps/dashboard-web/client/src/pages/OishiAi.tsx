@@ -137,7 +137,7 @@ export default function OishiAi() {
     localStorage.setItem(storageKey, JSON.stringify(messages.slice(-100)));
   }, [messages, storageKey, hydrated]);
 
-  if (user && user.role !== 'executive') {
+  if (user && user.role !== 'executive' && !user.extraPages.includes('oishii-ai')) {
     return (
       <DashboardLayout title="Oishii AI">
         <div className="p-6">

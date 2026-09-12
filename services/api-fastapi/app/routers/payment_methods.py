@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
-from app.auth import CurrentUser, get_current_user, require_role
+from app.auth import CurrentUser, get_current_user, require_role, require_role_or_grant
 from app.deps import get_supabase
 from app.schemas import OnlinePaymentMethodCreate, OnlinePaymentMethodOut, OnlinePaymentMethodUpdate
 
@@ -45,7 +45,7 @@ def list_active_payment_methods():
 @router.get("/payment-methods/all", response_model=list[OnlinePaymentMethodOut])
 def list_all_payment_methods(user: CurrentUser = Depends(get_current_user)):
     """Manager/executive -- includes inactive rows, for the management UI."""
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "pos-management", "manager", "executive")
     supabase = get_supabase()
     result = supabase.table("online_payment_methods").select("*").order("sort_order").execute()
     return result.data

@@ -98,7 +98,7 @@ export default function HRPayroll() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (user && user.role === 'employee') {
+  if (user && user.role === 'employee' && !user.extraPages.includes('hr-payroll')) {
     return (
       <DashboardLayout title="Payroll">
         <div className="p-6">
@@ -224,7 +224,7 @@ export default function HRPayroll() {
             <Button variant="outline" onClick={loadPreview} disabled={loadingSummary}>
               {loadingSummary ? 'Loading...' : 'Load preview'}
             </Button>
-            {user?.role === 'executive' || user?.role === 'manager' ? (
+            {user?.role === 'executive' || user?.role === 'manager' || user?.extraPages.includes('hr-payroll') ? (
               <Button onClick={handleGenerate} disabled={generating} className="gap-2">
                 {generating && <Loader2 className="w-4 h-4 animate-spin" />}
                 Generate payroll

@@ -77,6 +77,10 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
   // needs the Delivery tab (built in Phase 6; /delivery is a stub until then).
   const isStocker = user.role === 'stocker';
   const isRider = user.role === 'rider';
+  // Individually-granted extra tabs (profiles.extra_pages) -- additive on
+  // top of the role tiers above, e.g. a cashier granted just 'refund-approval'.
+  const hasGrant = (pageKey: string) => user.extraPages.includes(pageKey);
+  const canSeeStock = isManagerOrExecutive || isStocker || hasGrant('stock');
 
   const handleStockGroupOpenChange = (open: boolean) => {
     setStockGroupOpen(open);
@@ -106,19 +110,19 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
     isVSActive;
 
   const stockChildren: (NavItem & { isActive: boolean })[] = [
-    ...(isManagerOrExecutive || isStocker
+    ...(canSeeStock
       ? [{ icon: ClipboardList, label: 'Overview', href: '/stock/overview', isActive: isOverviewActive }]
       : []),
     { icon: Package, label: 'Ingredient Stock', href: '/stock', isActive: isRecipeIngredientsActive },
     { icon: Boxes, label: 'Station Items', href: '/stock?tab=stations', isActive: isStationItemsActive },
     { icon: Truck, label: 'Receive Shipment', href: '/inventory-movements', isActive: isReceiveShipmentActive },
-    ...(isManagerOrExecutive || isStocker
+    ...(canSeeStock
       ? [{ icon: Bell, label: 'Alerts', href: '/stock/alerts', isActive: isAlertsActive, badge: lowStockCount }]
       : []),
-    ...(isManagerOrExecutive || isStocker
+    ...(canSeeStock
       ? [{ icon: ListChecks, label: 'Variance Log', href: '/stock/variance-log', isActive: isVarianceLogActive }]
       : []),
-    ...(isManagerOrExecutive || isStocker
+    ...(canSeeStock
       ? [{ icon: ListChecks, label: 'EOD Stock Count (VS)', href: '/stock/vs', isActive: isVSActive }]
       : []),
   ];
@@ -134,35 +138,57 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
   const beforeStockItems: NavItem[] = [
     { icon: ShoppingCart, label: 'POS Terminal', href: '/pos' },
     { icon: ListOrdered, label: 'Order Queue', href: '/order-queue' },
-    ...(isManagerOrExecutive ? [{ icon: QrCode, label: 'Table Orders', href: '/pending-orders' }] : []),
+    ...(isManagerOrExecutive || hasGrant('pending-orders')
+      ? [{ icon: QrCode, label: 'Table Orders', href: '/pending-orders' }]
+      : []),
     { icon: ChefHat, label: 'Kitchen Display', href: '/kitchen-display' },
     { icon: Truck, label: 'Delivery Requests', href: '/delivery-requests' },
-    ...(isManagerOrExecutive ? [{ icon: Truck, label: 'Online Orders', href: '/online-orders' }] : []),
+    ...(isManagerOrExecutive || hasGrant('online-orders')
+      ? [{ icon: Truck, label: 'Online Orders', href: '/online-orders' }]
+      : []),
     { icon: CalendarCheck, label: 'Reservations', href: '/reservations' },
   ];
 
   const afterStockItems: NavItem[] = [
-    ...(isManagerOrExecutive
-      ? [
-          { icon: ClipboardList, label: 'Business Day Report', href: '/business-day-report' },
-          { icon: Undo2, label: 'Refund Approval', href: '/refund-approval' },
-          { icon: AlertCircle, label: 'Loss Log', href: '/loss-log' },
-          { icon: Zap, label: 'Utility Log', href: '/utility-log' },
-          { icon: Percent, label: 'POS Management', href: '/pos-management' },
-          { icon: Users, label: 'Employees', href: '/employees' },
-          { icon: Users, label: 'HR Attendance', href: '/hr/attendance' },
-          { icon: Wallet, label: 'Payroll', href: '/hr/payroll' },
-          { icon: CalendarDays, label: 'Holiday Calendar', href: '/hr/holiday-calendar' },
-          { icon: Wallet, label: 'Payroll Settings', href: '/hr/payroll-settings' },
-        ]
+    ...(isManagerOrExecutive || hasGrant('business-day-report')
+      ? [{ icon: ClipboardList, label: 'Business Day Report', href: '/business-day-report' }]
       : []),
-    ...(isExecutive
-      ? [
-          { icon: LayoutDashboard, label: 'Command Center', href: '/command-center' },
-          { icon: TrendingUp, label: 'Trend Analysis', href: '/trends' },
-          { icon: DollarSign, label: 'P&L', href: '/pnl' },
-          { icon: Sparkles, label: 'Oishii AI', href: '/oishii-ai' },
-        ]
+    ...(isManagerOrExecutive || hasGrant('refund-approval')
+      ? [{ icon: Undo2, label: 'Refund Approval', href: '/refund-approval' }]
+      : []),
+    ...(isManagerOrExecutive || hasGrant('loss-log')
+      ? [{ icon: AlertCircle, label: 'Loss Log', href: '/loss-log' }]
+      : []),
+    ...(isManagerOrExecutive || hasGrant('utility-log')
+      ? [{ icon: Zap, label: 'Utility Log', href: '/utility-log' }]
+      : []),
+    ...(isManagerOrExecutive || hasGrant('pos-management')
+      ? [{ icon: Percent, label: 'POS Management', href: '/pos-management' }]
+      : []),
+    ...(isManagerOrExecutive || hasGrant('employees')
+      ? [{ icon: Users, label: 'Employees', href: '/employees' }]
+      : []),
+    ...(isManagerOrExecutive || hasGrant('hr-attendance')
+      ? [{ icon: Users, label: 'HR Attendance', href: '/hr/attendance' }]
+      : []),
+    ...(isManagerOrExecutive || hasGrant('hr-payroll')
+      ? [{ icon: Wallet, label: 'Payroll', href: '/hr/payroll' }]
+      : []),
+    ...(isManagerOrExecutive || hasGrant('hr-holiday-calendar')
+      ? [{ icon: CalendarDays, label: 'Holiday Calendar', href: '/hr/holiday-calendar' }]
+      : []),
+    ...(isManagerOrExecutive || hasGrant('hr-payroll-settings')
+      ? [{ icon: Wallet, label: 'Payroll Settings', href: '/hr/payroll-settings' }]
+      : []),
+    ...(isExecutive || hasGrant('command-center')
+      ? [{ icon: LayoutDashboard, label: 'Command Center', href: '/command-center' }]
+      : []),
+    ...(isExecutive || hasGrant('trends')
+      ? [{ icon: TrendingUp, label: 'Trend Analysis', href: '/trends' }]
+      : []),
+    ...(isExecutive || hasGrant('pnl') ? [{ icon: DollarSign, label: 'P&L', href: '/pnl' }] : []),
+    ...(isExecutive || hasGrant('oishii-ai')
+      ? [{ icon: Sparkles, label: 'Oishii AI', href: '/oishii-ai' }]
       : []),
     { icon: UtensilsCrossed, label: 'Menu Editing', href: '/menu-editing' },
     { icon: HelpCircle, label: 'Help', href: '/help' },
@@ -288,7 +314,7 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
           ) : (
             <>
               {beforeStockItems.map((item) => renderNavButton(item, location === item.href, isCollapsed, onNavigate))}
-              {isManagerOrExecutive && renderStockGroup(isCollapsed, onNavigate)}
+              {canSeeStock && renderStockGroup(isCollapsed, onNavigate)}
               {afterStockItems.map((item) => renderNavButton(item, location === item.href, isCollapsed, onNavigate))}
             </>
           )}

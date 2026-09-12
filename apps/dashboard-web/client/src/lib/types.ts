@@ -20,6 +20,9 @@ export interface User {
   role: Role;
   employeeNumber: string | null;
   avatar?: string;
+  // Individually-granted extra tabs beyond what `role` alone unlocks -- see
+  // lib/permissions.ts's GRANTABLE_PAGES for the valid key set.
+  extraPages: string[];
 }
 
 export const DEPARTMENT_CONFIG: Record<Department, { name: string; color: string }> = {

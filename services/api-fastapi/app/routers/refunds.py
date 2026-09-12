@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.auth import CurrentUser, get_current_user, require_role
+from app.auth import CurrentUser, get_current_user, require_role_or_grant
 from app.deps import get_supabase
 from app.routers.transactions import _fetch_transaction_with_items, void_transaction_core
 from app.schemas import RefundCreateRequest, RefundOut
@@ -88,7 +88,7 @@ def create_refund(body: RefundCreateRequest, user: CurrentUser = Depends(get_cur
 @router.get("/refunds", response_model=list[RefundOut])
 def list_refunds(user: CurrentUser = Depends(get_current_user)):
     """Manager/executive only -- the Refund Approval tab."""
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "refund-approval", "manager", "executive")
     supabase = get_supabase()
     result = supabase.table("refunds").select("*").order("requested_at", desc=True).execute()
     return _decorate(supabase, result.data)
@@ -106,7 +106,7 @@ def _fetch_pending_refund(supabase, refund_id: str) -> dict:
 
 @router.post("/refunds/{refund_id}/approve", response_model=RefundOut)
 def approve_refund(refund_id: str, user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "refund-approval", "manager", "executive")
     supabase = get_supabase()
     refund = _fetch_pending_refund(supabase, refund_id)
 
@@ -135,7 +135,7 @@ def approve_refund(refund_id: str, user: CurrentUser = Depends(get_current_user)
 
 @router.post("/refunds/{refund_id}/reject", response_model=RefundOut)
 def reject_refund(refund_id: str, user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "refund-approval", "manager", "executive")
     supabase = get_supabase()
     _fetch_pending_refund(supabase, refund_id)
 

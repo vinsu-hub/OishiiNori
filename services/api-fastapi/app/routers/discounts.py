@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from cachetools import TTLCache
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.auth import CurrentUser, get_current_user, require_role
+from app.auth import CurrentUser, get_current_user, require_role_or_grant
 from app.deps import get_supabase
 from app.schemas import DiscountTypeCreate, DiscountTypeOut, DiscountTypeUpdate
 
@@ -33,7 +33,7 @@ def list_discount_types(active_only: bool = Query(False), user: CurrentUser = De
 
 @router.post("/discount-types", response_model=DiscountTypeOut)
 def create_discount_type(body: DiscountTypeCreate, user: CurrentUser = Depends(get_current_user)):
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "pos-management", "manager", "executive")
     supabase = get_supabase()
     result = (
         supabase.table("discount_types")
@@ -49,7 +49,7 @@ def update_discount_type(
     body: DiscountTypeUpdate,
     user: CurrentUser = Depends(get_current_user),
 ):
-    require_role(user, "manager", "executive")
+    require_role_or_grant(user, "pos-management", "manager", "executive")
     supabase = get_supabase()
 
     existing = (
