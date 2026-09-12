@@ -175,6 +175,25 @@ export default function POSTerminal() {
   const [endDayForm, setEndDayForm] = useState({ cashRegisterTotal: '', employeeNumber: '', pin: '' });
   const [endDaySubmitting, setEndDaySubmitting] = useState(false);
 
+  // WS-13: the backend 403s with a terse "did not match your logged-in
+  // account" detail whenever the entered Employee Number + PIN belong to a
+  // DIFFERENT account than whoever is currently logged into the dashboard
+  // (Start/End Business Day always re-verifies against the caller's own
+  // profile, not just any valid kiosk credential). That's easy to trigger
+  // by accident -- e.g. typing a cashier's number while still logged in as
+  // a manager/executive -- so it gets its own explanatory dialog instead of
+  // a generic toast that's easy to misread as a typo or a bad PIN.
+  const [credentialMismatchOpen, setCredentialMismatchOpen] = useState(false);
+
+  function handleBusinessDayError(e: unknown) {
+    const message = e instanceof Error ? e.message : 'Failed to update business day status';
+    if (message.includes('did not match your logged-in account')) {
+      setCredentialMismatchOpen(true);
+    } else {
+      toast.error(message);
+    }
+  }
+
   function resetStartDayDialog() {
     setStartDayOpen(false);
     setStartDayStep('credentials');
@@ -199,7 +218,7 @@ export default function POSTerminal() {
       resetStartDayDialog();
       toast.success('Business day started');
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to start business day');
+      handleBusinessDayError(e);
     } finally {
       setStartDaySubmitting(false);
     }
@@ -222,7 +241,7 @@ export default function POSTerminal() {
       resetEndDayDialog();
       toast.success('Business day closed');
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to close business day');
+      handleBusinessDayError(e);
     } finally {
       setEndDaySubmitting(false);
     }
@@ -819,27 +838,22 @@ export default function POSTerminal() {
     }
   }
 
-  return (
-    <DashboardLayout title="POS Terminal">
-      <div className="relative flex h-full overflow-hidden">
-        {/* WS-13: Business Day cycle -- one button, two modes, always on top
-            so it's reachable even while the lock overlay below is up. */}
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30">
-          {businessDay?.is_open ? (
-            <Button variant="destructive" className="gap-2 shadow-l2-raised" onClick={() => setEndDayOpen(true)}>
-              <Square className="w-4 h-4" /> End Business Day
-            </Button>
-          ) : (
-            <Button
-              className="gap-2 shadow-l2-raised"
-              onClick={() => setStartDayOpen(true)}
-              disabled={businessDayLoading}
-            >
-              <Play className="w-4 h-4" /> Start Business Day
-            </Button>
-          )}
-        </div>
+  // WS-13: Business Day cycle -- one button, two modes, rendered in the
+  // header beside "Synced" (via DashboardLayout's headerExtra) instead of
+  // floating over the POS canvas.
+  const businessDayButton = businessDay?.is_open ? (
+    <Button variant="destructive" size="sm" className="gap-2" onClick={() => setEndDayOpen(true)}>
+      <Square className="w-4 h-4" /> End Business Day
+    </Button>
+  ) : (
+    <Button size="sm" className="gap-2" onClick={() => setStartDayOpen(true)} disabled={businessDayLoading}>
+      <Play className="w-4 h-4" /> Start Business Day
+    </Button>
+  );
 
+  return (
+    <DashboardLayout title="POS Terminal" headerExtra={businessDayButton}>
+      <div className="relative flex h-full overflow-hidden">
         <div className="flex-1 overflow-auto p-6">
           <div className="flex items-center gap-3 mb-3">
             <div className="relative flex-1">
@@ -1631,6 +1645,35 @@ export default function POSTerminal() {
               </DialogFooter>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* WS-13: explains the 403 mismatch instead of a generic toast --
+          see handleBusinessDayError above. */}
+      <Dialog open={credentialMismatchOpen} onOpenChange={setCredentialMismatchOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Employee ID doesn't match your login</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 text-sm">
+            <p>
+              You're currently logged into the dashboard as{' '}
+              <strong>{user?.name}</strong>
+              {user?.employeeNumber ? ` (${user.employeeNumber})` : ''}.
+            </p>
+            <p>
+              Start/End Business Day only accepts <strong>this same account's</strong> Employee
+              Number and PIN -- not any valid employee's credentials. The number and PIN you just
+              entered belong to a different account.
+            </p>
+            <p className="text-muted-foreground">
+              If you meant to use a different employee's credentials, log out and log back into
+              the dashboard as that employee first, then try Start/End Business Day again.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setCredentialMismatchOpen(false)}>Got it</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

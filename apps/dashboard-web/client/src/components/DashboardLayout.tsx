@@ -7,9 +7,10 @@ import { Sidebar } from '@/components/Sidebar';
 interface DashboardLayoutProps {
   children: React.ReactNode;
   title?: string;
+  headerExtra?: React.ReactNode;
 }
 
-export function DashboardLayout({ children, title }: DashboardLayoutProps) {
+export function DashboardLayout({ children, title, headerExtra }: DashboardLayoutProps) {
   const { isAuthenticated, loading } = useAuth();
   const [, navigate] = useLocation();
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
@@ -55,7 +56,7 @@ export function DashboardLayout({ children, title }: DashboardLayoutProps) {
         onCloseMobile={() => setMobileNavOpen(false)}
       />
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-        <Header title={title} onMenuClick={() => setMobileNavOpen(true)} />
+        <Header title={title} onMenuClick={() => setMobileNavOpen(true)} extra={headerExtra} />
         <main className="flex-1 overflow-auto">{children}</main>
       </div>
     </div>

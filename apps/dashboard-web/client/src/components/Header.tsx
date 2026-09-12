@@ -10,9 +10,10 @@ import { useLocation } from 'wouter';
 interface HeaderProps {
   title?: string;
   onMenuClick?: () => void;
+  extra?: React.ReactNode;
 }
 
-export function Header({ title, onMenuClick }: HeaderProps) {
+export function Header({ title, onMenuClick, extra }: HeaderProps) {
   const { user, logout } = useAuth();
   const { syncStatus } = useSync();
   const [, navigate] = useLocation();
@@ -66,6 +67,8 @@ export function Header({ title, onMenuClick }: HeaderProps) {
         </div>
 
         <div className="flex items-center gap-4">
+          {extra}
+
           <div className="flex items-center gap-2">
             <div className={`sync-dot ${getSyncDotColor()}`} />
             <span className="text-xs text-muted-foreground hidden sm:inline">
