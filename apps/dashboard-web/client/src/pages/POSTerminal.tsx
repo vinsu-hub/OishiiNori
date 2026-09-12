@@ -1546,7 +1546,7 @@ export default function POSTerminal() {
           </div>
         </div>
 
-        {!businessDayLoading && !businessDay?.is_open && (
+        {user?.role !== 'executive' && !businessDayLoading && !businessDay?.is_open && (
           <div className="absolute inset-0 z-20 bg-background/85 backdrop-blur-sm flex items-center justify-center">
             <div className="text-center max-w-sm px-6">
               <Lock className="w-8 h-8 mx-auto mb-3 text-muted-foreground" />

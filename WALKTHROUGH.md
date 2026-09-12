@@ -259,7 +259,9 @@ Charging finalizes the sale — this is the same underlying transaction-creation
 ![Charge confirm](walkthrough-screenshots/04-pos-orders-kitchen/04-pos-charge-confirm.png)
 ![Sale complete](walkthrough-screenshots/04-pos-orders-kitchen/05-pos-sale-complete.png)
 
-Other POS Terminal capabilities not pictured step-by-step here: **Held Orders** (park an in-progress cart, resume later in the same shift), **Favorites** (star frequently-sold items), an ingredient-hold editor identical in spirit to the customer menu's, and an "Owner's Request" PIN re-verification flow for manager/executive overrides.
+Choosing **Card** as the payment method now prompts for Debit or Credit before it's accepted, and a **VAT/Non-VAT** toggle sits beside the discount picker — independent of any discount's own VAT-exempt flag, it lets a cashier book an order non-VAT even with no VAT-exempt discount applied. Category filter pills were also made larger and bolder for easier tapping on a tablet, and the Dine In "Pick a table" dropdown is now a high-visibility red control. (The screenshots below predate these changes — the underlying flow they show is otherwise unchanged.)
+
+Other POS Terminal capabilities not pictured step-by-step here: **Held Orders** (park an in-progress cart, resume later in the same shift), **Favorites** (star frequently-sold items), an ingredient-hold editor identical in spirit to the customer menu's, an "Owner's Request" PIN re-verification flow for manager/executive overrides, and a **Start/End Business Day** control in the header that locks POS until the cashier's own kiosk credentials confirm the day has started.
 
 ### Order Queue
 

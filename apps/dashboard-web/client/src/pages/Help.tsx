@@ -85,7 +85,9 @@ const HELP_GROUPS: HelpGroup[] = [
             hold an ingredient for a walk-in customer, open the order editor and check the ingredients to exclude —
             those are skipped entirely, not deducted and reversed. You can also park a cart with <strong>Held
             Orders</strong> and resume it later, and star frequently-sold items as <strong>Favorites</strong> for
-            quick access.
+            quick access. Choosing <strong>Card</strong> as the payment method prompts for Debit or Credit before
+            it's accepted. A <strong>VAT/Non-VAT</strong> toggle next to the discount picker lets you book an order
+            non-VAT even with no VAT-exempt discount applied — a VAT-exempt discount still zeroes tax either way.
           </p>
         ),
       },
@@ -96,6 +98,18 @@ const HELP_GROUPS: HelpGroup[] = [
             Void a sale from <strong>Order Queue</strong>. Voiding restores exactly the stock that sale deducted —
             nothing more — and correctly leaves any held ingredients untouched, since they were never deducted in
             the first place.
+          </p>
+        ),
+      },
+      {
+        question: 'What is Start/End Business Day?',
+        answer: (
+          <p>
+            POS is locked until someone starts the current business day, via the button in the header next to the
+            sync indicator -- it asks for your own Employee Number + PIN (the same credentials as Owner's Request),
+            not your login password. It only needs to happen once per calendar day, not per cashier login. Ending
+            the day is the same credential check plus a counted cash-register total, and is one-way -- a closed day
+            can't be reopened. Executives are exempt from this lock and can use POS at any time.
           </p>
         ),
       },

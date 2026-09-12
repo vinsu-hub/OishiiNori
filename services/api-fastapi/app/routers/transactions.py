@@ -568,8 +568,10 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
 
     # WS-13: Business Day lock -- backend defense to match the frontend
     # overlay (POSTerminal.tsx), same belt-and-braces posture as the
-    # kitchen-completed void guard.
-    if _business_days_supported_check(supabase):
+    # kitchen-completed void guard. Executives are exempt -- the admin
+    # account needs to be able to use POS regardless of whether a cashier
+    # has started the day (e.g. testing, an ad-hoc sale, covering a shift).
+    if user.role != "executive" and _business_days_supported_check(supabase):
         today_row = (
             supabase.table("business_days")
             .select("closed_at")
