@@ -23,10 +23,11 @@ const HELP_GROUPS: HelpGroup[] = [
           <>
             <p>Four connected apps share one system:</p>
             <ul className="list-disc pl-5 space-y-1 mt-1">
-              <li><strong>This dashboard</strong> — POS, kitchen, inventory, HR/payroll, and executive tools.</li>
+              <li><strong>This dashboard</strong> — POS, kitchen, inventory, HR/payroll, delivery, and executive tools.</li>
               <li><strong>Staff Clock</strong> — a shared kiosk device where employees clock in/out with an Employee Number + PIN.</li>
-              <li><strong>Customer Menu</strong> — the QR-code menu customers order from on their own phone, no login required.</li>
-              <li>All three talk to one backend, so a sale, a stock count, or an approved QR order updates everywhere at once.</li>
+              <li><strong>Customer Menu</strong> — customers order on their own phone, no login required: dine-in via a table's QR code, or Delivery/Pickup from the general link.</li>
+              <li><strong>Landing Page</strong> — the public marketing site (menu highlights, hours, reservation link) — not something staff log into.</li>
+              <li>All of them talk to one backend, so a sale, a stock count, or an approved order updates everywhere at once.</li>
             </ul>
           </>
         ),
@@ -37,11 +38,13 @@ const HELP_GROUPS: HelpGroup[] = [
           <>
             <p>Every account has one role, shown in the sidebar footer:</p>
             <ul className="list-disc pl-5 space-y-1 mt-1">
-              <li><strong>Employee</strong> — POS, Order Queue, Pending Orders, Kitchen Display, the Stock group's Ingredient Stock/Station Items/Receive Shipment, Loss Log, Utility Log, Settings.</li>
-              <li><strong>Manager</strong> — everything above, plus the Stock group's Overview/Alerts/Variance Log, POS Management, Employees, HR Attendance, Payroll, Holiday Calendar, and Payroll Settings.</li>
-              <li><strong>Executive</strong> — everything above, plus Command Center, Trend Analysis, Menu Editing, P&amp;L, Oishii AI, and this Help page. Executives land on Command Center after logging in instead of Home.</li>
+              <li><strong>Employee</strong> — POS Terminal, Order Queue, Kitchen Display, Delivery Requests, Reservations, the Stock group's Ingredient Stock/Station Items/Receive Shipment, Menu Editing, Settings.</li>
+              <li><strong>Manager</strong> — everything above, plus Table Orders, Online Orders, the Stock group's Overview/Alerts/Variance Log/EOD Stock Count (VS), Business Day Report, Refund Approval, Loss Log, Utility Log, POS Management, Employees, HR Attendance, Payroll, Holiday Calendar, and Payroll Settings.</li>
+              <li><strong>Executive</strong> — everything above, plus Command Center, Trend Analysis, P&amp;L, and Oishii AI. Executives land on Command Center after logging in instead of Home, and are the only role exempt from the Business Day POS lock (see below).</li>
+              <li><strong>Rider</strong> — a deliberately narrow role: just a Delivery panel showing assigned delivery orders with a map link to the drop-off address, and a way to mark one delivered.</li>
+              <li><strong>Stocker</strong> — a deliberately narrow role too: the Stock &amp; Inventory group only, nothing else. No standing account is provisioned by default; create one from Employees if needed.</li>
             </ul>
-            <p className="mt-1">The sidebar only shows what a role can use — if something isn't listed here, that section is not relevant to your role.</p>
+            <p className="mt-1">Menu Editing, Help, and Settings are open to every role. The sidebar only shows what a role can use — if something isn't listed here, that section is not relevant to your role.</p>
           </>
         ),
       },
@@ -65,7 +68,7 @@ const HELP_GROUPS: HelpGroup[] = [
         question: 'Where do QR orders show up for staff?',
         answer: (
           <p>
-            Every submitted order lands on <strong>Pending Orders</strong> first — it is not a real sale yet.
+            Every submitted order lands on <strong>Table Orders</strong> (manager/executive) first — it is not a real sale yet.
             Approving it there turns it into a normal transaction (it then appears on Kitchen Display and deducts
             stock automatically); declining it requires a reason and never touches inventory. The customer's screen
             polls automatically and updates the moment staff act.
@@ -95,9 +98,23 @@ const HELP_GROUPS: HelpGroup[] = [
         question: 'How do refunds/mistakes work?',
         answer: (
           <p>
-            Void a sale from <strong>Order Queue</strong>. Voiding restores exactly the stock that sale deducted —
-            nothing more — and correctly leaves any held ingredients untouched, since they were never deducted in
-            the first place.
+            Void a sale from <strong>Order Queue</strong> — but only while it's still <strong>queued</strong> in the
+            kitchen. Voiding restores exactly the stock that sale deducted — nothing more — and correctly leaves any
+            held ingredients untouched, since they were never deducted in the first place. Once an order has moved to
+            preparing or ready, file a request instead: open the order and choose Refund, give a reason, and a
+            manager/executive reviews it on <strong>Refund Approval</strong> (manager/executive). Approving performs
+            the real void and stock restore; rejecting leaves the sale as-is. A <strong>completed</strong> order
+            can't be corrected by either path.
+          </p>
+        ),
+      },
+      {
+        question: "What's on Business Day Report?",
+        answer: (
+          <p>
+            (manager/executive) A per-day history of Start/End Business Day: who opened and closed each day, the
+            cashier's counted cash-register total versus the system's own computed total, and the variance between
+            them.
           </p>
         ),
       },
@@ -146,7 +163,7 @@ const HELP_GROUPS: HelpGroup[] = [
         answer: (
           <>
             <p>
-              The sidebar's <strong>Stock &amp; Inventory</strong> group holds six pages, in order:
+              The sidebar's <strong>Stock &amp; Inventory</strong> group holds seven pages, in order:
             </p>
             <p className="mt-1">
               <strong>Overview</strong> (manager/executive) — a landing dashboard: low-stock count, expiring-soon
@@ -177,6 +194,10 @@ const HELP_GROUPS: HelpGroup[] = [
               <strong>Variance Log</strong> (manager/executive) — a chronological history of real loss records and
               count adjustments, with signed variance, cost impact, and who recorded it.
             </p>
+            <p className="mt-1">
+              <strong>EOD Stock Count (VS)</strong> (manager/executive) — the end-of-day physical verification sheet,
+              for spot-checking the computed running totals against what's actually on the shelf.
+            </p>
           </>
         ),
       },
@@ -184,9 +205,9 @@ const HELP_GROUPS: HelpGroup[] = [
         question: 'How do I log a delivery, spoilage, or a utility bill?',
         answer: (
           <ul className="list-disc pl-5 space-y-1">
-            <li><strong>Receive Shipment</strong> — log what came in from a supplier (quantity, unit cost, expiry).</li>
-            <li><strong>Loss Log</strong> — spoilage, breakage, comps, or shrinkage not tied to a specific kitchen order.</li>
-            <li><strong>Utility Log</strong> — electricity/water/gas meter readings; cost is computed automatically.</li>
+            <li><strong>Receive Shipment</strong> — log what came in from a supplier (quantity, unit cost, expiry). Open to every role.</li>
+            <li><strong>Loss Log</strong> (manager/executive) — spoilage, breakage, comps, or shrinkage not tied to a specific kitchen order.</li>
+            <li><strong>Utility Log</strong> (manager/executive) — electricity/water/gas meter readings; cost is computed automatically.</li>
           </ul>
         ),
       },
@@ -204,14 +225,49 @@ const HELP_GROUPS: HelpGroup[] = [
     ],
   },
   {
+    title: 'Delivery & Online Orders',
+    sections: [
+      {
+        question: 'How does a customer order delivery or pickup?',
+        answer: (
+          <p>
+            The Customer Menu app's general link (not a specific table's QR code) offers <strong>Delivery</strong>{' '}
+            or <strong>Pickup</strong> instead of dine-in. For delivery, the customer picks their barangay and sees
+            the delivery fee for that area before confirming.
+          </p>
+        ),
+      },
+      {
+        question: 'Where do delivery/pickup orders show up for staff?',
+        answer: (
+          <p>
+            <strong>Delivery Requests</strong> — every role sees this; it's the working view for delivery orders
+            that need fulfilling. <strong>Online Orders</strong> (manager/executive) shows every channel at once —
+            dine-in QR, delivery, and pickup — in one table.
+          </p>
+        ),
+      },
+      {
+        question: "What does the Rider role see?",
+        answer: (
+          <p>
+            A Rider account has a single <strong>Delivery</strong> page: assigned delivery orders with a map link
+            straight to the drop-off address, and a way to mark a delivery done once it's handed over. Nothing else
+            is in a Rider's sidebar — it's deliberately a one-job account.
+          </p>
+        ),
+      },
+    ],
+  },
+  {
     title: 'Menu, pricing & discounts',
     sections: [
       {
         question: 'How do I add or change a menu item?',
         answer: (
           <p>
-            <strong>Menu Editing</strong> (executive) — create a new item, edit prices per size, edit the recipe's
-            ingredients, and upload a photo. Deactivating an item (instead of deleting it) is how you retire
+            <strong>Menu Editing</strong> (open to every role) — create a new item, edit prices per size, edit the
+            recipe's ingredients, and upload a photo. Deactivating an item (instead of deleting it) is how you retire
             something without breaking its sales history.
           </p>
         ),
