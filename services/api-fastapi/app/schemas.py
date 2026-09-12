@@ -1070,14 +1070,24 @@ class SetPinRequest(BaseModel):
     pin: str = Field(min_length=4, max_length=8)
 
 
-class SetEmployeeActiveRequest(BaseModel):
-    active: bool
+class EmployeeProfileUpdate(BaseModel):
+    """PATCH /employees/{id} -- basic profile fields plus Deactivate/
+    Reactivate, all optional so a partial edit (e.g. just the name) doesn't
+    require resending the rest. Role/tab-access grants are a separate,
+    stricter-gated path (EmployeeAccessUpdate below); the kiosk PIN is also
+    separate (PATCH /employees/{id}/pin) since it's write-only."""
+
+    full_name: str | None = None
+    department: DepartmentType | None = None
+    position: str | None = None
+    pay_rate: float | None = None
+    active: bool | None = None
 
 
 class EmployeeAccessUpdate(BaseModel):
     """PATCH /employees/{id}/access -- role and/or extra tab grants, editable
     independently of the rest of the profile (name/department/pay_rate stay
-    on the plain profile-edit path, if one ever exists)."""
+    on the plain profile-edit path, EmployeeProfileUpdate above)."""
 
     role: UserRole | None = None
     extra_pages: list[str] | None = None

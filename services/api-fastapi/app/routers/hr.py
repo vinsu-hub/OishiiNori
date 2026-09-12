@@ -27,6 +27,7 @@ from app.schemas import (
     EmployeeCreate,
     EmployeeCreatedResponse,
     EmployeeOut,
+    EmployeeProfileUpdate,
     HolidayCreate,
     HolidayResponse,
     HolidayUpdate,
@@ -38,7 +39,6 @@ from app.schemas import (
     PayrollOverrideResponse,
     PayrollRecordResponse,
     PayrollSummary,
-    SetEmployeeActiveRequest,
     SetPinRequest,
 )
 
@@ -773,26 +773,34 @@ def set_employee_pin(employee_id: str, body: SetPinRequest, user: CurrentUser = 
 
 
 @router.patch("/employees/{employee_id}", response_model=EmployeeOut)
-def set_employee_active(
-    employee_id: str, body: SetEmployeeActiveRequest, user: CurrentUser = Depends(get_current_user)
+def update_employee_profile(
+    employee_id: str, body: EmployeeProfileUpdate, user: CurrentUser = Depends(get_current_user)
 ):
-    """Deactivate/reactivate -- the safe default for offboarding. A
-    deactivated employee is blocked immediately from both dashboard login
-    (get_current_user) and kiosk PIN use (verify_employee_pin), but every
-    real record they're attached to (sales, attendance, inventory
-    movements) stays intact and referenceable -- same soft-delete pattern
-    products/discount_types already use, kept separate from
-    set_employee_pin above rather than overloading one endpoint."""
+    """Basic profile edit (rename, department/position/pay_rate) plus
+    Deactivate/Reactivate -- all optional so a partial edit doesn't require
+    resending the rest (exclude_unset, same pattern discounts.py's
+    update_discount_type uses). Deactivating blocks dashboard login
+    (get_current_user) and kiosk PIN use (verify_employee_pin) immediately,
+    but every real record this employee is attached to (sales, attendance,
+    inventory movements) stays intact -- same soft-delete pattern
+    products/discount_types already use. Role and tab-access grants are a
+    separate, stricter-gated path (PATCH .../access below); the kiosk PIN
+    is also separate (PATCH .../pin) since it's write-only."""
     require_role_or_grant(user, "employees", "manager", "executive")
     supabase = get_supabase()
-    if not _profile_active_supported_check(supabase):
-        raise HTTPException(status_code=501, detail="Deactivate/reactivate needs migration 0040 applied first")
     existing = supabase.table("profiles").select("id").eq("id", employee_id).maybe_single().execute()
     if not existing or not existing.data:
         raise HTTPException(status_code=404, detail="Employee not found")
 
-    supabase.table("profiles").update({"active": body.active}).eq("id", employee_id).execute()
-    select_columns = "id, full_name, role, department, position, pay_rate, employee_number, active"
+    update = body.model_dump(exclude_unset=True)
+    if "active" in update and not _profile_active_supported_check(supabase):
+        raise HTTPException(status_code=501, detail="Deactivate/reactivate needs migration 0040 applied first")
+    if update:
+        supabase.table("profiles").update(update).eq("id", employee_id).execute()
+
+    select_columns = "id, full_name, role, department, position, pay_rate, employee_number"
+    if _profile_active_supported_check(supabase):
+        select_columns += ", active"
     if _profile_extra_pages_supported_check(supabase):
         select_columns += ", extra_pages"
     profile_result = (
@@ -803,6 +811,7 @@ def set_employee_active(
         .execute()
     )
     row = profile_result.data
+    row.setdefault("active", True)
     row.setdefault("extra_pages", [])
     return row
 

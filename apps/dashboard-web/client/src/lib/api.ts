@@ -1071,6 +1071,17 @@ export function setEmployeeActive(employeeId: string, active: boolean): Promise<
   return request(`/employees/${employeeId}`, { method: 'PATCH', body: JSON.stringify({ active }) });
 }
 
+export interface UpdateEmployeeProfileRequest {
+  full_name?: string;
+  department?: Department | null;
+  position?: string | null;
+  pay_rate?: number;
+}
+
+export function updateEmployeeProfile(employeeId: string, body: UpdateEmployeeProfileRequest): Promise<ApiEmployee> {
+  return request(`/employees/${employeeId}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
 export function deleteEmployee(employeeId: string): Promise<{ status: string }> {
   return request(`/employees/${employeeId}`, { method: 'DELETE' });
 }

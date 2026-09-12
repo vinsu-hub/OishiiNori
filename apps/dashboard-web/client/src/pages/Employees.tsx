@@ -28,6 +28,7 @@ import {
   setEmployeeActive,
   setEmployeePin,
   updateEmployeeAccess,
+  updateEmployeeProfile,
 } from '@/lib/api';
 import { GRANTABLE_PAGES, EXECUTIVE_ONLY_GRANTS } from '@/lib/permissions';
 
@@ -121,6 +122,14 @@ export default function Employees() {
   const [accessExtraPages, setAccessExtraPages] = useState<string[]>([]);
   const [savingAccess, setSavingAccess] = useState(false);
 
+  const [editTarget, setEditTarget] = useState<ApiEmployee | null>(null);
+  const [editFullName, setEditFullName] = useState('');
+  const [editDepartment, setEditDepartment] = useState<Department | 'none'>('none');
+  const [editPosition, setEditPosition] = useState('');
+  const [editPayRate, setEditPayRate] = useState('');
+  const [editPin, setEditPin] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
+
   const load = useCallback(() => {
     fetchEmployees()
       .then((data) => setEmployees([...data].sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''))))
@@ -195,6 +204,46 @@ export default function Employees() {
       toast.error(e instanceof Error ? e.message : 'Failed to update access');
     } finally {
       setSavingAccess(false);
+    }
+  }
+
+  function openEditor(e: ApiEmployee) {
+    setEditTarget(e);
+    setEditFullName(e.full_name || '');
+    setEditDepartment(e.department || 'none');
+    setEditPosition(e.position || '');
+    setEditPayRate(e.pay_rate ? String(e.pay_rate) : '');
+    setEditPin('');
+  }
+
+  async function handleSaveEdit() {
+    if (!editTarget) return;
+    if (!editFullName.trim()) {
+      toast.error('Full name is required');
+      return;
+    }
+    if (editPin && !/^\d{4,8}$/.test(editPin)) {
+      toast.error('PIN must be 4-8 digits');
+      return;
+    }
+    setSavingEdit(true);
+    try {
+      await updateEmployeeProfile(editTarget.id, {
+        full_name: editFullName.trim(),
+        department: editDepartment === 'none' ? null : editDepartment,
+        position: editPosition.trim() || null,
+        pay_rate: editPayRate.trim() ? Number(editPayRate) : 0,
+      });
+      if (editPin) {
+        await setEmployeePin(editTarget.id, editPin);
+      }
+      toast.success(`${editFullName.trim()} updated`);
+      setEditTarget(null);
+      load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update employee');
+    } finally {
+      setSavingEdit(false);
     }
   }
 
@@ -293,6 +342,9 @@ export default function Employees() {
                     {e.extra_pages.length > 0 ? `+${e.extra_pages.length} extra tab${e.extra_pages.length === 1 ? '' : 's'}` : '--'}
                   </TableCell>
                   <TableCell className="space-x-2 whitespace-nowrap">
+                    <Button size="sm" variant="outline" onClick={() => openEditor(e)}>
+                      Edit
+                    </Button>
                     <Button size="sm" variant="outline" onClick={() => openAccessEditor(e)}>
                       Edit access
                     </Button>
@@ -379,6 +431,65 @@ export default function Employees() {
           <DialogFooter>
             <Button disabled={submitting} onClick={handleCreate}>
               {submitting ? 'Creating...' : 'Create employee'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit (name, department, position, pay rate, PIN) */}
+      <Dialog open={!!editTarget} onOpenChange={(open) => !open && setEditTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit {editTarget?.full_name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label>Full name</Label>
+              <Input value={editFullName} onChange={(e) => setEditFullName(e.target.value)} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label>Department</Label>
+                <Select value={editDepartment} onValueChange={(v) => setEditDepartment(v as Department | 'none')}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    <SelectItem value="kitchen">Kitchen</SelectItem>
+                    <SelectItem value="cafe">Cafe</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label>Position</Label>
+                <Input value={editPosition} onChange={(e) => setEditPosition(e.target.value)} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label>Pay rate (per hour)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={editPayRate}
+                  onChange={(e) => setEditPayRate(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>New PIN (optional)</Label>
+                <Input
+                  placeholder="Leave blank to keep current"
+                  value={editPin}
+                  onChange={(e) => setEditPin(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button disabled={savingEdit} onClick={handleSaveEdit}>
+              {savingEdit ? 'Saving...' : 'Save changes'}
             </Button>
           </DialogFooter>
         </DialogContent>
