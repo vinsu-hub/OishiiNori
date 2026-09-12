@@ -122,6 +122,8 @@ export default function Employees() {
   const [accessExtraPages, setAccessExtraPages] = useState<string[]>([]);
   const [savingAccess, setSavingAccess] = useState(false);
 
+  const [credsTarget, setCredsTarget] = useState<ApiEmployee | null>(null);
+
   const [editTarget, setEditTarget] = useState<ApiEmployee | null>(null);
   const [editFullName, setEditFullName] = useState('');
   const [editDepartment, setEditDepartment] = useState<Department | 'none'>('none');
@@ -348,6 +350,11 @@ export default function Employees() {
                     <Button size="sm" variant="outline" onClick={() => openAccessEditor(e)}>
                       Edit access
                     </Button>
+                    {callerIsExecutive && (
+                      <Button size="sm" variant="outline" onClick={() => setCredsTarget(e)}>
+                        View credentials
+                      </Button>
+                    )}
                     <Button size="sm" variant="outline" onClick={() => setPinTarget(e)}>
                       Set PIN
                     </Button>
@@ -432,6 +439,27 @@ export default function Employees() {
             <Button disabled={submitting} onClick={handleCreate}>
               {submitting ? 'Creating...' : 'Create employee'}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View credentials (executive only) */}
+      <Dialog open={!!credsTarget} onOpenChange={(open) => !open && setCredsTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Credentials for {credsTarget?.full_name}</DialogTitle>
+            <DialogDescription>
+              This employee's actual current login email, password, and kiosk PIN -- not a reset. Share carefully.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1 text-sm font-mono bg-muted rounded-md p-3">
+            <p>Email: {credsTarget?.email || '--'}</p>
+            <p>Employee #: {credsTarget?.employee_number || '--'}</p>
+            <p>Password: {credsTarget?.current_password || '--'}</p>
+            <p>Kiosk PIN: {credsTarget?.current_pin || '--'}</p>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setCredsTarget(null)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

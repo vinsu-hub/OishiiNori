@@ -44,6 +44,22 @@ def _profile_extra_pages_supported_check(supabase) -> bool:
     return _profile_extra_pages_supported
 
 
+# Feature detection for migration 0044 (profiles.email/current_password/
+# current_pin) -- same fail-open-until-migrated pattern as above.
+_profile_credentials_supported: bool | None = None
+
+
+def _profile_credentials_supported_check(supabase) -> bool:
+    global _profile_credentials_supported
+    if _profile_credentials_supported is None:
+        try:
+            supabase.table("profiles").select("email").limit(1).execute()
+            _profile_credentials_supported = True
+        except Exception:
+            _profile_credentials_supported = False
+    return _profile_credentials_supported
+
+
 @dataclass
 class CurrentUser:
     id: str

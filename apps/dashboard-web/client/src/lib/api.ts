@@ -1030,6 +1030,10 @@ export interface ApiEmployee {
   employee_number: string | null;
   active: boolean;
   extra_pages: string[];
+  // Executive-only -- null for any other caller (masked server-side).
+  email: string | null;
+  current_password: string | null;
+  current_pin: string | null;
 }
 
 export function fetchEmployees(): Promise<ApiEmployee[]> {

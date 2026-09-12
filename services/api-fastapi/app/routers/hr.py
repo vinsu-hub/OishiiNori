@@ -13,6 +13,7 @@ from app.attendance_utils import auto_close_stale_attendance, hr_table
 from app.auth import (
     CurrentUser,
     _profile_active_supported_check,
+    _profile_credentials_supported_check,
     _profile_extra_pages_supported_check,
     get_current_user,
     require_role,
@@ -676,6 +677,20 @@ def _validate_and_authorize_grants(user: CurrentUser, extra_pages: list[str]) ->
         )
 
 
+def _mask_credentials(row: dict, user: CurrentUser) -> dict:
+    """Zeroes out the plain-text password/PIN for anyone who isn't
+    literally an executive -- applied regardless of how the caller reached
+    this endpoint (role floor or an 'employees' tab grant), since viewing
+    another employee's live login credentials is a materially bigger
+    privilege than the CRUD access require_role_or_grant otherwise allows
+    a manager or a granted employee. email/employee_number stay visible,
+    unchanged from today's behavior."""
+    if user.role != "executive":
+        row["current_password"] = None
+        row["current_pin"] = None
+    return row
+
+
 @router.get("/employees", response_model=list[EmployeeOut])
 def list_employees(user: CurrentUser = Depends(get_current_user)):
     require_role_or_grant(user, "employees", "manager", "executive")
@@ -686,11 +701,14 @@ def list_employees(user: CurrentUser = Depends(get_current_user)):
     extra_pages_supported = _profile_extra_pages_supported_check(supabase)
     if extra_pages_supported:
         columns += ", extra_pages"
+    if _profile_credentials_supported_check(supabase):
+        columns += ", email, current_password, current_pin"
     result = supabase.table("profiles").select(columns).order("full_name").execute()
     rows = result.data
     for row in rows:
         row.setdefault("active", True)
         row.setdefault("extra_pages", [])
+        _mask_credentials(row, user)
     return rows
 
 
@@ -739,6 +757,10 @@ def create_employee(body: EmployeeCreate, user: CurrentUser = Depends(get_curren
     extra_pages_supported = _profile_extra_pages_supported_check(supabase)
     if extra_pages_supported and body.extra_pages:
         insert_row["extra_pages"] = body.extra_pages
+    if _profile_credentials_supported_check(supabase):
+        insert_row["email"] = email
+        insert_row["current_password"] = _DEFAULT_PASSWORD
+        insert_row["current_pin"] = _DEFAULT_PIN
     supabase.table("profiles").insert(insert_row).execute()
 
     select_columns = "id, full_name, role, department, position, pay_rate, employee_number"
@@ -768,7 +790,10 @@ def set_employee_pin(employee_id: str, body: SetPinRequest, user: CurrentUser = 
         raise HTTPException(status_code=404, detail="Employee not found")
 
     kiosk_pin_hash = bcrypt.hashpw(body.pin.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-    supabase.table("profiles").update({"kiosk_pin_hash": kiosk_pin_hash}).eq("id", employee_id).execute()
+    update = {"kiosk_pin_hash": kiosk_pin_hash}
+    if _profile_credentials_supported_check(supabase):
+        update["current_pin"] = body.pin
+    supabase.table("profiles").update(update).eq("id", employee_id).execute()
     return {"status": "ok"}
 
 
@@ -803,6 +828,8 @@ def update_employee_profile(
         select_columns += ", active"
     if _profile_extra_pages_supported_check(supabase):
         select_columns += ", extra_pages"
+    if _profile_credentials_supported_check(supabase):
+        select_columns += ", email, current_password, current_pin"
     profile_result = (
         supabase.table("profiles")
         .select(select_columns)
@@ -813,7 +840,7 @@ def update_employee_profile(
     row = profile_result.data
     row.setdefault("active", True)
     row.setdefault("extra_pages", [])
-    return row
+    return _mask_credentials(row, user)
 
 
 @router.patch("/employees/{employee_id}/access", response_model=EmployeeOut)
@@ -847,6 +874,8 @@ def set_employee_access(
         select_columns += ", active"
     if _profile_extra_pages_supported_check(supabase):
         select_columns += ", extra_pages"
+    if _profile_credentials_supported_check(supabase):
+        select_columns += ", email, current_password, current_pin"
     profile_result = (
         supabase.table("profiles")
         .select(select_columns)
@@ -857,7 +886,7 @@ def set_employee_access(
     row = profile_result.data
     row.setdefault("active", True)
     row.setdefault("extra_pages", [])
-    return row
+    return _mask_credentials(row, user)
 
 
 @router.delete("/employees/{employee_id}")

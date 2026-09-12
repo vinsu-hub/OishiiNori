@@ -1041,6 +1041,13 @@ class EmployeeOut(BaseModel):
     # Individually-granted extra tabs beyond what `role` alone unlocks --
     # see app/permissions.py's GRANTABLE_PAGES for the valid key set.
     extra_pages: list[str] = Field(default_factory=list)
+    # Plain-text login email/password/PIN for the executive-only "View
+    # credentials" feature -- masked to null for any non-executive caller
+    # by _mask_credentials() in hr.py, regardless of what this endpoint's
+    # role/grant floor otherwise allows through.
+    email: str | None = None
+    current_password: str | None = None
+    current_pin: str | None = None
 
 
 class EmployeeCreate(BaseModel):
