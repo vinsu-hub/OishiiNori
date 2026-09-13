@@ -195,6 +195,11 @@ export function DigitalOrdersQueue({
                 <Button size="sm" variant="destructive" onClick={() => setRejectTarget(order)}>
                   {channel === 'dine_in_qr' ? 'Decline' : 'Delete / Decline'}
                 </Button>
+                {order.payment_proof_url && (
+                  <Button size="sm" variant="outline" onClick={() => setDetailTarget(order)}>
+                    Show proof of payment
+                  </Button>
+                )}
               </div>
             </CardContent>
           </Card>
