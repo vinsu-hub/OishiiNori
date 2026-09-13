@@ -1145,7 +1145,11 @@ export default function App() {
                               }}
                             >
                               <span>{m.name}</span>
-                              <small>Show QR code, then upload proof of payment</small>
+                              <small>
+                                {m.qr_code_url
+                                  ? 'Show QR code, then upload proof of payment'
+                                  : 'View account details, then upload proof of payment'}
+                              </small>
                             </button>
                           ))
                         )}
