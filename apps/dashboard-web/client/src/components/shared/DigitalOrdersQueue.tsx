@@ -50,6 +50,7 @@ export function DigitalOrdersQueue({
   const [orders, setOrders] = useState<ApiDigitalOrder[]>([]);
   const { products, error: productsError } = useProductCatalog();
   const [loading, setLoading] = useState(true);
+  const [detailTarget, setDetailTarget] = useState<ApiDigitalOrder | null>(null);
   const [approveTarget, setApproveTarget] = useState<ApiDigitalOrder | null>(null);
   const [rejectTarget, setRejectTarget] = useState<ApiDigitalOrder | null>(null);
   const [rejectReason, setRejectReason] = useState('');
@@ -127,7 +128,13 @@ export function DigitalOrdersQueue({
             <CardContent className="py-3 space-y-2">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div className="flex items-center gap-2">
-                  <span className="font-corp-display text-sm">Order #{order.order_number}</span>
+                  <button
+                    type="button"
+                    className="font-corp-display text-sm underline-offset-2 hover:underline"
+                    onClick={() => setDetailTarget(order)}
+                  >
+                    Order #{order.order_number}
+                  </button>
                   {channel === 'dine_in_qr' && <Badge variant="outline">Table {order.table_number}</Badge>}
                   {channel === 'delivery' && order.delivery?.barangay && (
                     <Badge variant="outline">{order.delivery.barangay}</Badge>
@@ -193,6 +200,104 @@ export function DigitalOrdersQueue({
           </Card>
         ))}
       </div>
+
+      <Dialog open={!!detailTarget} onOpenChange={(open) => !open && setDetailTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Order #{detailTarget?.order_number}</DialogTitle>
+            <DialogDescription>
+              {detailTarget
+                ? formatCurrency(detailTarget.subtotal + (detailTarget.delivery?.delivery_fee ?? 0))
+                : ''}{' '}
+              via {detailTarget?.payment_method}
+              {channel === 'dine_in_qr'
+                ? ` -- Table ${detailTarget?.table_number}`
+                : detailTarget?.delivery
+                  ? ` -- ${detailTarget.delivery.customer_name}`
+                  : ''}
+            </DialogDescription>
+          </DialogHeader>
+
+          {detailTarget?.delivery && (
+            <div className="text-sm text-muted-foreground">
+              <p>
+                {detailTarget.delivery.customer_name} &middot; {detailTarget.delivery.customer_phone}
+              </p>
+              {detailTarget.delivery.address && (
+                <p>
+                  {detailTarget.delivery.address}
+                  {detailTarget.delivery.landmark ? ` (${detailTarget.delivery.landmark})` : ''}
+                </p>
+              )}
+              {detailTarget.delivery.delivery_fee != null && (
+                <p>Delivery fee: {formatCurrency(detailTarget.delivery.delivery_fee)}</p>
+              )}
+            </div>
+          )}
+
+          {detailTarget && (
+            <ul className="text-sm text-muted-foreground space-y-0.5">
+              {detailTarget.items.map((item) => {
+                const resolved = sizeIndex.get(item.product_size_id);
+                return (
+                  <li key={item.id}>
+                    {item.quantity}x {resolved ? `${resolved.product.name} (${resolved.size.size_label})` : 'Unknown item'}
+                    {item.held_ingredients.length > 0 && (
+                      <span className="text-destructive"> -- hold: {item.held_ingredients.join(', ')}</span>
+                    )}
+                  </li>
+                );
+              })}
+              {detailTarget.addons.map((addon) => (
+                <li key={addon.id}>
+                  {addon.quantity}x {addon.addon_name || 'Add-on'}{' '}
+                  <span className="text-xs">(add-on, {formatCurrency(addon.unit_price)} ea)</span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {detailTarget?.customer_note && (
+            <p className="text-sm italic text-muted-foreground">Note: {detailTarget.customer_note}</p>
+          )}
+
+          {detailTarget?.payment_proof_url ? (
+            <a href={detailTarget.payment_proof_url} target="_blank" rel="noreferrer">
+              <img
+                src={detailTarget.payment_proof_url}
+                alt="Proof of payment"
+                className="max-h-80 w-full rounded-md border object-contain"
+              />
+            </a>
+          ) : (
+            detailTarget?.payment_method !== 'cash' && (
+              <p className="text-sm text-destructive">No proof of payment was uploaded for this order.</p>
+            )
+          )}
+
+          <DialogFooter>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                const order = detailTarget;
+                setDetailTarget(null);
+                setRejectTarget(order);
+              }}
+            >
+              {channel === 'dine_in_qr' ? 'Decline' : 'Delete / Decline'}
+            </Button>
+            <Button
+              onClick={() => {
+                const order = detailTarget;
+                setDetailTarget(null);
+                setApproveTarget(order);
+              }}
+            >
+              Approve
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!approveTarget} onOpenChange={(open) => !open && setApproveTarget(null)}>
         <DialogContent>
