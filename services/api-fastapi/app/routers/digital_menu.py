@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
 from app.auth import CurrentUser, get_current_user
 from app.deps import get_supabase
+from app.routers.business_days import is_open_today
 from app.routers.products import _list_products_data
 from app.routers.recipes import _get_recipe_data
 from app.routers.transactions import _create_transaction_row, _get_vat_rate
@@ -116,6 +117,13 @@ def submit_digital_order(body: CreateDigitalOrderRequest):
     if not body.items:
         raise HTTPException(status_code=400, detail="Order must have at least one item")
     supabase = get_supabase()
+
+    # Backstop for a stale customer-menu page/cart built before the cashier
+    # closed (or before they've opened) today's business day -- the
+    # frontend gates this at "press an item," this just makes sure it
+    # can't be bypassed by an already-open tab.
+    if not is_open_today(supabase):
+        raise HTTPException(status_code=403, detail="The shop is currently closed")
 
     delivery_fee: float | None = None
     if body.order_channel == "dine_in_qr":

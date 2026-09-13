@@ -109,6 +109,15 @@ export function fetchDeliveryFees(): Promise<DeliveryFee[]> {
   return request('/public/delivery-fees');
 }
 
+export interface BusinessDayStatus {
+  business_date: string;
+  is_open: boolean;
+}
+
+export function fetchBusinessDayStatus(): Promise<BusinessDayStatus> {
+  return request('/public/business-day-status');
+}
+
 export interface DigitalOrderStatusItem {
   id: string;
   digital_order_id: string;

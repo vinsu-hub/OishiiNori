@@ -33,6 +33,7 @@ import {
   OrderChannel,
   PaymentMethod,
   fetchAddons,
+  fetchBusinessDayStatus,
   fetchDeliveryFees,
   fetchMenu,
   fetchOrderStatus,
@@ -149,6 +150,11 @@ export default function App() {
   const [addons, setAddons] = useState<AddonLine[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
   const [itemOpen, setItemOpen] = useState<ApiProduct | null>(null);
+  // null = not yet loaded, so we never flash a false "closed" state before
+  // the first poll resolves. Menu browsing always stays open; this only
+  // gates pressing an item to order (see openItem) and final submission.
+  const [shopOpen, setShopOpen] = useState<boolean | null>(null);
+  const [closedNoticeOpen, setClosedNoticeOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [language, setLanguage] = useState<'EN' | '日本語'>('EN');
   const [customizeMode, setCustomizeMode] = useState(false);
@@ -176,6 +182,26 @@ export default function App() {
         });
     }
   }, [effectiveChannel, onlinePaymentMethods.length]);
+
+  useEffect(() => {
+    let cancelled = false;
+    function load() {
+      fetchBusinessDayStatus()
+        .then((status) => {
+          if (!cancelled) setShopOpen(status.is_open);
+        })
+        .catch(() => {
+          // Leave whatever we last knew (or null) rather than flip to
+          // closed on a transient network error.
+        });
+    }
+    load();
+    const interval = setInterval(load, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
   const [customerNote, setCustomerNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [justPlaced, setJustPlaced] = useState(false);
@@ -264,6 +290,10 @@ export default function App() {
   }
 
   function openItem(product: ApiProduct) {
+    if (shopOpen === false) {
+      setClosedNoticeOpen(true);
+      return;
+    }
     const cheapest = [...product.sizes].sort((a, b) => a.price - b.price)[0];
     if (cheapest) ensureRecipeLoaded(cheapest.id);
     setItemOpen(product);
@@ -354,6 +384,10 @@ export default function App() {
   // delivery/pickup instead advances to the QR/account-details screen --
   // the order isn't created until proof of payment is uploaded.
   async function handlePlaceOrder() {
+    if (shopOpen === false) {
+      setClosedNoticeOpen(true);
+      return;
+    }
     if (!effectiveChannel || !paymentMethod || cart.length === 0) return;
     if (effectiveChannel === 'dine_in_qr' && !tableNumber) return;
     if (effectiveChannel !== 'dine_in_qr' && !validateDeliveryPickupForm()) return;
@@ -390,6 +424,10 @@ export default function App() {
   }
 
   async function handleSubmitWithProof() {
+    if (shopOpen === false) {
+      setClosedNoticeOpen(true);
+      return;
+    }
     if (!selectedOnlineMethod || !proofFile) {
       toast('Attach a screenshot of the transfer first', 'error');
       return;
@@ -745,6 +783,27 @@ export default function App() {
           <span className="cart-label">{cartCount ? `${cartCount} item${cartCount > 1 ? 's' : ''} · view order` : 'View order'}</span>
           <strong>{cartCount ? peso(cartTotal) : '0'}</strong>
         </button>
+      )}
+
+      {closedNoticeOpen && (
+        <div className="modal-backdrop" role="presentation" onClick={() => setClosedNoticeOpen(false)}>
+          <div
+            className="item-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="We're currently closed"
+            style={{ maxWidth: 340 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-body" style={{ textAlign: 'center' }}>
+              <h2>We're currently closed</h2>
+              <p>Sorry, we're not accepting orders right now -- please check back during business hours.</p>
+              <button className="primary-button" type="button" style={{ width: '100%', marginTop: 12 }} onClick={() => setClosedNoticeOpen(false)}>
+                Okay
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {itemOpen && (

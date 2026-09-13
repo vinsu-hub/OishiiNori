@@ -73,12 +73,35 @@ def _status_out(d, row: dict | None) -> dict:
     }
 
 
+def is_open_today(supabase) -> bool:
+    """Shared by the public status endpoint and digital_menu.py's own
+    submit-time guard -- same fail-open-until-migrated posture as the
+    cashier-facing check."""
+    d = today_ph()
+    if not _business_days_supported_check(supabase):
+        return False
+    row = _fetch_today(supabase, d)
+    return _status_out(d, row)["is_open"]
+
+
 @router.get("/business-days/today", response_model=BusinessDayStatusOut)
 def get_today_status(user: CurrentUser = Depends(get_current_user)):
     """Any authenticated user -- the POS lock check needs this before a
     cashier has necessarily done anything else. Degrades to 'not open'
     (locked) rather than 500ing the whole POS page before migration 0035
     is applied -- see _business_days_supported_check."""
+    supabase = get_supabase()
+    d = today_ph()
+    if not _business_days_supported_check(supabase):
+        return _status_out(d, None)
+    return _status_out(d, _fetch_today(supabase, d))
+
+
+@router.get("/public/business-day-status", response_model=BusinessDayStatusOut)
+def get_public_today_status():
+    """Unauthenticated mirror of /business-days/today for customer-menu
+    (which has no login) -- BusinessDayStatusOut already carries no
+    financial fields, so it's safe to expose without auth."""
     supabase = get_supabase()
     d = today_ph()
     if not _business_days_supported_check(supabase):
