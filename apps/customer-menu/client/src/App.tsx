@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import {
   ArrowRight,
+  CheckCircle2,
   ChevronDown,
   ChevronLeft,
   Coffee,
@@ -177,6 +178,7 @@ export default function App() {
   }, [effectiveChannel, onlinePaymentMethods.length]);
   const [customerNote, setCustomerNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [justPlaced, setJustPlaced] = useState(false);
   const [order, setOrder] = useState<DigitalOrderStatus | null>(null);
 
   useEffect(() => {
@@ -365,14 +367,17 @@ export default function App() {
     try {
       const result = await submitFinalOrder(paymentMethod);
       if (!result) return;
-      setOrder(result);
       setCartOpen(false);
       setCart([]);
       setAddons([]);
+      setJustPlaced(true);
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      setOrder(result);
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Failed to place order', 'error');
     } finally {
       setSubmitting(false);
+      setJustPlaced(false);
     }
   }
 
@@ -393,14 +398,13 @@ export default function App() {
     try {
       const result = await submitFinalOrder(selectedOnlineMethod.name);
       if (!result) return;
+      let finalOrder = result;
       try {
-        const withProof = await uploadProofOfPayment(result.id, proofFile);
-        setOrder(withProof);
+        finalOrder = await uploadProofOfPayment(result.id, proofFile);
       } catch (uploadError) {
         // The order itself was created successfully -- don't lose it, just
         // surface the upload failure so the customer knows to retry (the
         // order id/proof endpoint stays valid while the order is pending).
-        setOrder(result);
         toast(
           uploadError instanceof Error
             ? `Order placed, but the proof upload failed: ${uploadError.message}`
@@ -413,10 +417,14 @@ export default function App() {
       setAddons([]);
       setCheckoutStage('form');
       handleProofFileChange(null);
+      setJustPlaced(true);
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      setOrder(finalOrder);
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Failed to place order', 'error');
     } finally {
       setSubmitting(false);
+      setJustPlaced(false);
     }
   }
 
@@ -543,6 +551,15 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {justPlaced && (
+        <div className="order-placed-overlay" role="status" aria-live="polite">
+          <div className="order-placed-card">
+            <CheckCircle2 size={48} />
+            <p>Order placed!</p>
+          </div>
+        </div>
+      )}
 
       {order ? (
         <main id="top" className="order-status-main">
@@ -1176,6 +1193,12 @@ export default function App() {
                   </>
                 )}
               </>
+            )}
+            {submitting && (
+              <div className="cart-processing-overlay">
+                <Loader2 size={26} className="animate-spin" />
+                <p>Processing your order...</p>
+              </div>
             )}
           </aside>
         </div>
