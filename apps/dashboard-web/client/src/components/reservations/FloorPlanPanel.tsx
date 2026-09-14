@@ -29,6 +29,7 @@ import {
   fetchReservations,
   fetchTables,
   fetchTransactions,
+  fireAdvanceOrders,
   placeReservation,
   switchTable,
   updateTable,
@@ -262,12 +263,21 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(() => {
-    Promise.all([
-      fetchTables(),
-      fetchTransactions({ date: selectedDay }),
-      fetchReservations('confirmed', selectedDay),
-      fetchProducts(true),
-    ])
+    // No server-side cron on this plan (see reservations.py's
+    // fire_advance_orders docstring) -- fire due advance orders on the same
+    // poll cycle, before re-fetching, so a freshly-created kitchen ticket
+    // shows up immediately. Only while looking at today (firing itself is
+    // always evaluated against the real "now" server-side regardless).
+    // Best-effort: never blocks the rest of the Floor Plan from loading.
+    const fire = isToday ? fireAdvanceOrders().catch(() => {}) : Promise.resolve();
+    fire.then(() =>
+      Promise.all([
+        fetchTables(),
+        fetchTransactions({ date: selectedDay }),
+        fetchReservations('confirmed', selectedDay),
+        fetchProducts(true),
+      ])
+    )
       .then(([t, tx, r, p]) => {
         setTables(t);
         setTransactions(tx);

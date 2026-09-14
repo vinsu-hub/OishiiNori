@@ -1853,3 +1853,11 @@ export function placeReservation(id: string, tableId: string): Promise<ApiReserv
 export function arriveReservation(id: string): Promise<ApiReservation> {
   return request(`/reservations/${id}/arrive`, { method: 'POST' });
 }
+
+/** Converts any placed reservation's staged advance order into a real
+ * transaction once within the kitchen lead window of its start_time. No
+ * server-side cron on this plan -- polled from the Floor Plan on the same
+ * interval it already polls tables/transactions/reservations on. */
+export function fireAdvanceOrders(): Promise<{ fired: string[]; skipped: string[]; checked: number }> {
+  return request('/reservations/fire-advance-orders');
+}

@@ -1,9 +1,3 @@
 {
-  "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }],
-  "crons": [
-    {
-      "path": "/internal/reservations/fire-advance-orders",
-      "schedule": "*/5 * * * *"
-    }
-  ]
+  "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }]
 }

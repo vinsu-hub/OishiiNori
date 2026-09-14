@@ -12,11 +12,10 @@ _first_available below. This means a second overlapping request is rejected
 decline/cancel are pure business decisions, never conflict re-checks.
 """
 
-import os
 from datetime import date, datetime, time, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from postgrest.exceptions import APIError
 
 from app.auth import CurrentUser, get_current_user, require_role, verify_employee_pin
@@ -845,21 +844,22 @@ def cancel_reservation(reservation_id: str, user: CurrentUser = Depends(get_curr
 
 
 # ---------------------------------------------------------------------------
-# Advance-order firing -- a Vercel Cron target, not a staff/customer action
+# Advance-order firing
 # ---------------------------------------------------------------------------
+# Originally a Vercel Cron target, but the project's Hobby plan only allows
+# daily cron schedules -- far too coarse for "fire ~20 minutes before this
+# specific reservation's start_time" -- and a cron job at that frequency
+# fails the whole deploy outright ("Hobby accounts are limited to daily cron
+# jobs"). So this follows the system's existing locked decision (polling
+# throughout, no websockets/scheduled-job infra) instead: it's a normal
+# authenticated staff endpoint, polled by the Floor Plan on the same
+# interval it already polls tables/transactions/reservations on. Any signed-
+# in staff role may call it -- it only converts a reservation's own
+# already-staged advance order, nothing sensitive.
 
 
-def _verify_cron_secret(authorization: Optional[str] = Header(default=None)) -> None:
-    """Vercel Cron sends `Authorization: Bearer $CRON_SECRET` automatically
-    once CRON_SECRET is set as a project env var -- see vercel.json's
-    `crons` entry. Not a staff/customer endpoint, so no get_current_user."""
-    secret = os.environ.get("CRON_SECRET")
-    if not secret or authorization != f"Bearer {secret}":
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-
-@router.get("/internal/reservations/fire-advance-orders")
-def fire_advance_orders(_: None = Depends(_verify_cron_secret)):
+@router.get("/reservations/fire-advance-orders")
+def fire_advance_orders(user: CurrentUser = Depends(get_current_user)):
     """Converts today's placed reservations' staged advance orders into real
     transactions once within ADVANCE_ORDER_LEAD_MINUTES of start_time, so
     the kitchen has time to prep before the guest actually arrives (the
