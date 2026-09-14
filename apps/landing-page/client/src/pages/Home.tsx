@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, Clock3, Instagram, MapPin, Menu as MenuIcon, Phone, Send, X } from "lucide-react";
 import { MapView } from "@/components/Map";
 import { ApiProduct, BusinessHours, fetchBusinessHours, fetchMenu } from "@/lib/api";
+import { formatTime12h } from "@/lib/utils";
 
 const logo = "/logo.jpg";
 const heroImage = "/products/oishii-baked-sushi.jpg";
@@ -26,13 +27,6 @@ function priceLabel(product: ApiProduct): string {
   if (product.sizes.length === 0) return "";
   const cheapest = [...product.sizes].sort((a, b) => a.price - b.price)[0];
   return peso(cheapest.price);
-}
-
-function formatTime12h(hhmm: string): string {
-  const [h, m] = hhmm.split(":").map(Number);
-  const period = h >= 12 ? "PM" : "AM";
-  const hour12 = h % 12 === 0 ? 12 : h % 12;
-  return `${hour12}:${String(m).padStart(2, "0")} ${period}`;
 }
 
 function toast(message: string, type: "success" | "error" | "info" = "info") {

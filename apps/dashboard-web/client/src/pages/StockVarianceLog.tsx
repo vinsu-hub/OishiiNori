@@ -20,7 +20,7 @@ import {
   fetchStockItems,
 } from '@/lib/api';
 import { LOSS_REASONS } from '@/lib/types';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, formatDateTime12h } from '@/lib/utils';
 import { StockStatusBadge } from '@/components/stock/StockStatusBadge';
 import { STOCK_TABLE_CELL_CLASS, STOCK_TABLE_HEAD_CLASS, STOCK_TABLE_ROW_CLASS } from '@/components/stock/stockTableStyle';
 
@@ -246,7 +246,7 @@ export default function StockVarianceLog() {
                   {filteredRows.map((row) => (
                     <TableRow key={row.key} className={STOCK_TABLE_ROW_CLASS}>
                       <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-muted-foreground`}>
-                        {new Date(row.createdAt).toLocaleString()}
+                        {formatDateTime12h(row.createdAt)}
                       </TableCell>
                       <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-medium`}>{row.targetName}</TableCell>
                       <TableCell className={STOCK_TABLE_CELL_CLASS}>

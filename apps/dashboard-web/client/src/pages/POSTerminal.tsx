@@ -63,7 +63,7 @@ import {
   overrideTableBlock,
   posTableStatus,
 } from '@/lib/api';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, formatTime12h, formatTimestamp12h } from '@/lib/utils';
 
 interface CartLineAddon {
   addon_id: string;
@@ -1209,7 +1209,7 @@ export default function POSTerminal() {
                           {held.lines.length} item{held.lines.length === 1 ? '' : 's'}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          held {new Date(held.heldAt).toLocaleTimeString()}
+                          held {formatTimestamp12h(held.heldAt)}
                         </p>
                       </button>
                     ))}
@@ -1286,7 +1286,7 @@ export default function POSTerminal() {
                 <div className="flex items-center justify-between gap-2">
                   <span>
                     Table {tableStatus.pos_table_number} is reserved for {tableStatus.reservation.customer_name} (party
-                    of {tableStatus.reservation.party_size}) until {tableStatus.reservation.end_time.slice(0, 5)}.
+                    of {tableStatus.reservation.party_size}) until {formatTime12h(tableStatus.reservation.end_time)}.
                   </span>
                   <Button size="sm" variant="outline" className="h-7 shrink-0" onClick={() => setOverrideOpen(true)}>
                     Override
@@ -1843,7 +1843,7 @@ export default function POSTerminal() {
             <DialogTitle>Override reservation block</DialogTitle>
             <DialogDescription>
               {tableStatus?.reservation
-                ? `Table ${tableStatus.pos_table_number} is reserved for ${tableStatus.reservation.customer_name} until ${tableStatus.reservation.end_time.slice(0, 5)}. A manager must re-enter their own kiosk credentials to seat here anyway.`
+                ? `Table ${tableStatus.pos_table_number} is reserved for ${tableStatus.reservation.customer_name} until ${formatTime12h(tableStatus.reservation.end_time)}. A manager must re-enter their own kiosk credentials to seat here anyway.`
                 : 'A manager must re-enter their own kiosk credentials to seat here anyway.'}
             </DialogDescription>
           </DialogHeader>

@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Loader2 } from 'lucide-react';
 import { ApiRefund, approveRefund, fetchRefunds, rejectRefund } from '@/lib/api';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, formatDateTime12h } from '@/lib/utils';
 
 // WS-12: void is queued-only now -- a preparing/ready order's cashier
 // files a refund request (Order Queue's Refund button) that lands here for
@@ -100,7 +100,7 @@ export default function RefundApproval() {
                       </p>
                       <p className="text-xs text-muted-foreground">{r.reason}</p>
                       <p className="text-xs text-muted-foreground">
-                        requested {new Date(r.requested_at).toLocaleString()}
+                        requested {formatDateTime12h(r.requested_at)}
                       </p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">

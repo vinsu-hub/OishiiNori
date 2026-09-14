@@ -20,6 +20,7 @@ from postgrest.exceptions import APIError
 
 from app.auth import CurrentUser, get_current_user, require_role, verify_employee_pin
 from app.deps import get_supabase
+from app.idempotency import check_idempotency_key, record_idempotency_key
 from app.ph_time import PH_UTC_OFFSET
 from app.schemas import (
     _LAYOUT_FIELDS,
@@ -344,6 +345,10 @@ def public_availability(reservation_date: date = Query(..., alias="date"), party
 @router.post("/public/reservations", response_model=ReservationStatusResponse)
 def submit_reservation(body: CreateReservationRequest):
     supabase = get_supabase()
+    existing_id = check_idempotency_key(supabase, body.idempotency_key, "POST /public/reservations")
+    if existing_id:
+        return _fetch_reservation_or_404(supabase, existing_id)
+
     open_time, close_time, closed_weekdays = _get_business_hours(supabase)
 
     if body.reservation_date.weekday() in closed_weekdays:
@@ -386,6 +391,7 @@ def submit_reservation(body: CreateReservationRequest):
     reservation = inserted.data[0]
     if has_advance_order:
         _insert_reservation_items(supabase, reservation["id"], body.advance_order_items)
+    record_idempotency_key(supabase, body.idempotency_key, "POST /public/reservations", reservation["id"])
     return reservation
 
 

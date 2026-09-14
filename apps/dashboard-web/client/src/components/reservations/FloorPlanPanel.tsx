@@ -35,7 +35,7 @@ import {
   updateTable,
   voidTransaction,
 } from '@/lib/api';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, formatTime12h, formatTimestamp12h } from '@/lib/utils';
 import { POLL_INTERVAL_MS, todayIsoPH } from '@/lib/constants';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 
@@ -99,7 +99,7 @@ function hhmmToMinutes(t: string): number {
   return Number(h) * 60 + Number(m);
 }
 function hhmm(t: string): string {
-  return t.slice(0, 5);
+  return formatTime12h(t);
 }
 
 // Where a reservation ticket sits in its lifecycle. Explicit cashier actions
@@ -855,7 +855,7 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
                     {elapsedLabel(elapsedSeconds(detailDerived.openTxn.opened_at, now))} elapsed
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    opened {new Date(detailDerived.openTxn.opened_at).toLocaleTimeString()}
+                    opened {formatTimestamp12h(detailDerived.openTxn.opened_at)}
                     {detailDerived.openTxn.guest_count ? ` · ${detailDerived.openTxn.guest_count} guests` : ''}
                   </p>
                   <ul className="space-y-1 rounded-md border bg-muted/30 p-2">

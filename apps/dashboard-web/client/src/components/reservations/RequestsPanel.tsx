@@ -23,6 +23,7 @@ import {
   fetchReservations,
 } from '@/lib/api';
 import { POLL_INTERVAL_MS } from '@/lib/constants';
+import { formatDateTime12h, formatTime12h } from '@/lib/utils';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 
 const STATUS_LABELS: Record<ReservationStatus, string> = {
@@ -162,7 +163,7 @@ export function RequestsPanel({ selectedDay }: { selectedDay: string }) {
                 <Badge variant="gold">Party of {r.party_size}</Badge>
               </div>
               <span className="font-semibold">
-                {r.reservation_date} · {r.start_time.slice(0, 5)}
+                {r.reservation_date} · {formatTime12h(r.start_time)}
               </span>
             </div>
 
@@ -173,7 +174,7 @@ export function RequestsPanel({ selectedDay }: { selectedDay: string }) {
             {r.declined_reason && <p className="text-sm text-destructive">Reason: {r.declined_reason}</p>}
             {r.overrides?.map((o, i) => (
               <p key={i} className="text-sm text-amber-600">
-                Overridden at the POS: {o.reason} ({new Date(o.created_at).toLocaleString()})
+                Overridden at the POS: {o.reason} ({formatDateTime12h(o.created_at)})
               </p>
             ))}
 
@@ -204,7 +205,7 @@ export function RequestsPanel({ selectedDay }: { selectedDay: string }) {
             <DialogTitle>Confirm reservation #{confirmTarget?.reservation_number}</DialogTitle>
             <DialogDescription>
               Confirm {confirmTarget?.table_label} for a party of {confirmTarget?.party_size} on{' '}
-              {confirmTarget?.reservation_date} at {confirmTarget?.start_time.slice(0, 5)}.
+              {confirmTarget?.reservation_date} at {confirmTarget && formatTime12h(confirmTarget.start_time)}.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

@@ -25,6 +25,7 @@ import {
   fetchAttendance,
   fetchEmployees,
 } from '@/lib/api';
+import { formatTimestamp12h } from '@/lib/utils';
 
 const OVERRIDE_FIELDS: { value: PayrollOverrideField; label: string }[] = [
   { value: 'regular_hours', label: 'Regular hours' },
@@ -158,8 +159,8 @@ export default function HRAttendance() {
                 <TableRow key={log.id}>
                   <TableCell className="font-medium">{employeesById.get(log.employee_id)?.full_name || log.employee_id.slice(0, 8)}</TableCell>
                   <TableCell>{log.date}</TableCell>
-                  <TableCell>{new Date(log.clock_in).toLocaleTimeString()}</TableCell>
-                  <TableCell>{log.clock_out ? new Date(log.clock_out).toLocaleTimeString() : '--'}</TableCell>
+                  <TableCell>{formatTimestamp12h(log.clock_in)}</TableCell>
+                  <TableCell>{log.clock_out ? formatTimestamp12h(log.clock_out) : '--'}</TableCell>
                   <TableCell>{log.hours_worked != null ? log.hours_worked.toFixed(2) : '--'}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">{log.day_scenario?.replace(/_/g, ' ') || '--'}</TableCell>
                   <TableCell>

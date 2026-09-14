@@ -40,10 +40,13 @@ import {
   fetchPaymentMethods,
   fetchRecipe,
   submitOrder,
+  QueuedOfflineError,
   uploadProofOfPayment,
 } from '@/lib/api';
 import ReservationView from '@/components/ReservationView';
+import QueuedSubmissionView from '@/components/QueuedSubmissionView';
 import { isValidPhilippinePhone, PH_PHONE_HINT } from '@/lib/validators';
+import { useQueuedCompletion } from '@/hooks/useQueuedCompletion';
 
 declare global {
   interface Window {
@@ -206,6 +209,22 @@ export default function App() {
   const [submitting, setSubmitting] = useState(false);
   const [justPlaced, setJustPlaced] = useState(false);
   const [order, setOrder] = useState<DigitalOrderStatus | null>(null);
+
+  // Set instead of a hard-fail toast when submitFinalOrder's connection
+  // drops mid-request -- the order is queued locally (see lib/offlineQueue)
+  // and this id lets us watch for it actually going through.
+  const [queuedOrderId, setQueuedOrderId] = useState<string | null>(null);
+  const queuedOrder = useQueuedCompletion<DigitalOrderStatus>(queuedOrderId);
+  useEffect(() => {
+    if (!queuedOrderId) return;
+    if (queuedOrder.status === 'done') {
+      setOrder(queuedOrder.result);
+      setQueuedOrderId(null);
+    } else if (queuedOrder.status === 'error') {
+      toast(queuedOrder.message, 'error');
+      setQueuedOrderId(null);
+    }
+  }, [queuedOrderId, queuedOrder]);
 
   useEffect(() => {
     Promise.all([fetchMenu(), fetchAddons()])
@@ -408,6 +427,14 @@ export default function App() {
       await new Promise((resolve) => setTimeout(resolve, 1100));
       setOrder(result);
     } catch (e) {
+      if (e instanceof QueuedOfflineError) {
+        setCartOpen(false);
+        setCart([]);
+        setAddons([]);
+        setQueuedOrderId(e.queueId);
+        toast(e.message, 'info');
+        return;
+      }
       toast(e instanceof Error ? e.message : 'Failed to place order', 'error');
     } finally {
       setSubmitting(false);
@@ -599,7 +626,11 @@ export default function App() {
         </div>
       )}
 
-      {order ? (
+      {queuedOrderId ? (
+        <main id="top" className="order-status-main">
+          <QueuedSubmissionView label="order" />
+        </main>
+      ) : order ? (
         <main id="top" className="order-status-main">
           <OrderStatusView order={order} onNewOrder={startNewOrder} resolveItem={(sizeId) => sizeIndex.get(sizeId)} />
         </main>

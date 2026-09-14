@@ -14,7 +14,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '
 import {
   Wallet, Loader2, Printer, Download, AlertTriangle, CheckCircle, CalendarDays, Settings2,
 } from 'lucide-react';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, formatDateTime12h } from '@/lib/utils';
 import {
   ApiPayrollAuditLogEntry,
   ApiPayrollRecord,
@@ -399,7 +399,7 @@ export default function HRPayroll() {
                       <TableCell>{r.employee_count}</TableCell>
                       <TableCell>{r.total_hours.toFixed(2)}</TableCell>
                       <TableCell className="font-semibold">{r.total_pay.toFixed(2)}</TableCell>
-                      <TableCell className="text-muted-foreground">{new Date(r.created_at).toLocaleString()}</TableCell>
+                      <TableCell className="text-muted-foreground">{formatDateTime12h(r.created_at)}</TableCell>
                       <TableCell>
                         <Button size="sm" variant="outline" onClick={() => handleViewRecord(r.id)}>
                           View
@@ -432,7 +432,7 @@ export default function HRPayroll() {
                   <TableBody>
                     {pendingOverrides.map((o) => (
                       <TableRow key={o.id}>
-                        <TableCell className="text-muted-foreground">{new Date(o.createdAt).toLocaleString()}</TableCell>
+                        <TableCell className="text-muted-foreground">{formatDateTime12h(o.createdAt)}</TableCell>
                         <TableCell className="font-mono text-xs">{JSON.stringify(o.newValue)}</TableCell>
                         <TableCell>{o.reason || '--'}</TableCell>
                         <TableCell>
@@ -464,7 +464,7 @@ export default function HRPayroll() {
                     <TableRow key={a.id}>
                       <TableCell className="capitalize">{a.action}</TableCell>
                       <TableCell>{a.reason || '--'}</TableCell>
-                      <TableCell className="text-muted-foreground">{new Date(a.created_at).toLocaleString()}</TableCell>
+                      <TableCell className="text-muted-foreground">{formatDateTime12h(a.created_at)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

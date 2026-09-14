@@ -6,6 +6,7 @@ from postgrest.exceptions import APIError
 
 from app.auth import CurrentUser, get_current_user, require_role, verify_employee_pin
 from app.deps import get_supabase
+from app.idempotency import check_idempotency_key, record_idempotency_key
 from app.ph_time import ph_day_bounds_utc, today_ph
 from app.routers.reservations import _blocking_reservation, _now_ph, _table_by_pos_number
 from app.routers.stock_items import adjust_stock_items_for_product_unit, adjust_stock_items_for_transaction
@@ -550,6 +551,11 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
     re-verification happen here; the actual insert/deduction/discount logic
     lives in _create_transaction_row, shared with digital-menu order
     approval."""
+    supabase = get_supabase()
+    existing_id = check_idempotency_key(supabase, body.idempotency_key, "POST /transactions")
+    if existing_id:
+        return get_transaction(existing_id, user)
+
     if body.employee_id != user.id:
         raise HTTPException(status_code=403, detail="Cannot record a sale under another employee's id")
     if body.order_type == "dine_in" and not body.table_number:
@@ -560,8 +566,6 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
         raise HTTPException(status_code=400, detail="Payment method is required")
     if body.payment_method == "card" and not body.card_type:
         raise HTTPException(status_code=400, detail="Select debit or credit")
-
-    supabase = get_supabase()
 
     # WS-13: Business Day lock -- backend defense to match the frontend
     # overlay (POSTerminal.tsx), same belt-and-braces posture as the
@@ -680,6 +684,7 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
                 patch["seated_at"] = datetime.now(timezone.utc).isoformat()
             supabase.table("reservations").update(patch).eq("id", r["id"]).execute()
 
+    record_idempotency_key(supabase, body.idempotency_key, "POST /transactions", result.id)
     return result
 
 

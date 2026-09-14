@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
 from app.auth import CurrentUser, get_current_user
 from app.deps import get_supabase
+from app.idempotency import check_idempotency_key, record_idempotency_key
 from app.routers.business_days import is_open_today
 from app.routers.products import _list_products_data
 from app.routers.recipes import _get_recipe_data
@@ -114,9 +115,13 @@ def public_delivery_fees():
 
 @router.post("/public/orders", response_model=DigitalOrderStatusResponse)
 def submit_digital_order(body: CreateDigitalOrderRequest):
+    supabase = get_supabase()
+    existing_id = check_idempotency_key(supabase, body.idempotency_key, "POST /public/orders")
+    if existing_id:
+        return _fetch_digital_order(supabase, existing_id)
+
     if not body.items:
         raise HTTPException(status_code=400, detail="Order must have at least one item")
-    supabase = get_supabase()
 
     # Backstop for a stale customer-menu page/cart built before the cashier
     # closed (or before they've opened) today's business day -- the
@@ -247,6 +252,7 @@ def submit_digital_order(body: CreateDigitalOrderRequest):
         ]
         supabase.table("digital_order_addons").insert(addon_rows).execute()
 
+    record_idempotency_key(supabase, body.idempotency_key, "POST /public/orders", order["id"])
     return _fetch_digital_order(supabase, order["id"])
 
 

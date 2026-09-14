@@ -1,5 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { toast } from 'sonner';
+import { formatTimestamp12h } from '@/lib/utils';
+
+const format12h = (d: Date) => formatTimestamp12h(d.toISOString());
 
 const DRAFT_MAX_AGE_MS = 12 * 60 * 60 * 1000; // 12h -- past this, stock has likely moved enough that a restored draft is more likely wrong than helpful.
 const DEBOUNCE_MS = 600;
@@ -46,7 +49,7 @@ export function useDraftPersistence<T extends Record<string, unknown>>(
       if (isEmptyDraft(parsed.data)) return;
       const savedAt = new Date(parsed.savedAt);
       toast('Unsaved count found', {
-        description: `Restored entries you were entering at ${savedAt.toLocaleTimeString()}. Numbers may be stale if stock has changed since -- double-check before saving.`,
+        description: `Restored entries you were entering at ${format12h(savedAt)}. Numbers may be stale if stock has changed since -- double-check before saving.`,
         action: {
           label: 'Discard',
           onClick: () => {

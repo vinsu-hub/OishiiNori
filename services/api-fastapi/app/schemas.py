@@ -219,6 +219,10 @@ class CreateTransactionRequest(BaseModel):
     # completed transaction, rung up as its own charge/kitchen ticket rather
     # than mutating the closed original. See related_transaction_id below.
     related_transaction_id: str | None = None
+    # Set by a client that might retry/replay this exact submission (the POS
+    # offline queue, or a retried request whose response was lost) -- see
+    # app/idempotency.py. Omitting it keeps today's exact behavior.
+    idempotency_key: str | None = None
 
 
 class TransactionItemAddonResponse(BaseModel):
@@ -353,6 +357,10 @@ class CreateDigitalOrderRequest(BaseModel):
     address: str | None = None
     landmark: str | None = None
     barangay: str | None = None
+    # Set by a client that might retry/replay this exact submission (a flaky
+    # connection losing the response, or an offline-queue replay) -- see
+    # app/idempotency.py. Omitting it keeps today's exact behavior.
+    idempotency_key: str | None = None
 
     @field_validator("customer_phone")
     @classmethod
@@ -1488,6 +1496,10 @@ class CreateReservationRequest(BaseModel):
     # fire-advance-orders job a fixed lead time before start_time. See
     # reservation_items/reservation_item_addons (migration 0045).
     advance_order_items: list[ReservationItemCreate] = Field(default_factory=list)
+    # Set by a client that might retry/replay this exact submission (a
+    # dropped-connection retry, or an offline-queue replay) -- see
+    # app/idempotency.py. Omitting it keeps today's exact behavior.
+    idempotency_key: str | None = None
 
     @field_validator("customer_phone")
     @classmethod

@@ -7,6 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { LossRecordForm } from '@/components/shared/LossRecordForm';
 import { ApiIngredient, ApiLossRecord, ApiStockItem, fetchInventory, fetchLossRecords, fetchStockItems } from '@/lib/api';
 import { LOSS_REASONS } from '@/lib/types';
+import { formatDateTime12h } from '@/lib/utils';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 
 const POLL_INTERVAL_MS = 20_000;
@@ -95,7 +96,7 @@ export default function LossLog() {
                   <TableCell className="capitalize">{r.reason.replace('_', ' ')}</TableCell>
                   <TableCell>{r.quantity}</TableCell>
                   <TableCell>{r.cost_impact.toFixed(2)}</TableCell>
-                  <TableCell className="text-muted-foreground">{new Date(r.created_at).toLocaleString()}</TableCell>
+                  <TableCell className="text-muted-foreground">{formatDateTime12h(r.created_at)}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

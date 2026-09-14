@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ArrowRight, ChevronLeft, Loader2, Minus, Plus } from 'lucide-react';
 import {
   ApiProduct,
+  QueuedOfflineError,
   ReservationSlot,
   ReservationStatus,
   fetchMenu,
@@ -10,6 +11,9 @@ import {
   submitReservation,
 } from '@/lib/api';
 import { isValidPhilippinePhone, PH_PHONE_HINT } from '@/lib/validators';
+import { formatTime12h } from '@/lib/utils';
+import { useQueuedCompletion } from '@/hooks/useQueuedCompletion';
+import QueuedSubmissionView from '@/components/QueuedSubmissionView';
 
 declare global {
   interface Window {
@@ -45,6 +49,23 @@ export default function ReservationView({ onBack }: { onBack: () => void }) {
   // carries advance-order items back -- remembered locally just to keep the
   // confirmation screen's messaging accurate after a successful submit.
   const [submittedHasAdvanceOrder, setSubmittedHasAdvanceOrder] = useState(false);
+
+  // Set instead of a hard-fail toast when the submit request's connection
+  // drops mid-flight -- the reservation is queued locally (see
+  // lib/offlineQueue) and this id lets us watch for it actually going
+  // through.
+  const [queuedReservationId, setQueuedReservationId] = useState<string | null>(null);
+  const queuedReservation = useQueuedCompletion<ReservationStatus>(queuedReservationId);
+  useEffect(() => {
+    if (!queuedReservationId) return;
+    if (queuedReservation.status === 'done') {
+      setReservation(queuedReservation.result);
+      setQueuedReservationId(null);
+    } else if (queuedReservation.status === 'error') {
+      toast(queuedReservation.message, 'error');
+      setQueuedReservationId(null);
+    }
+  }, [queuedReservationId, queuedReservation]);
 
   // Advance order (optional): asked once the guest has picked a slot and
   // filled their details. 'ask' shows the yes/no prompt; 'yes' reveals a
@@ -93,13 +114,13 @@ export default function ReservationView({ onBack }: { onBack: () => void }) {
       return;
     }
     setSubmitting(true);
+    const advanceOrderItems =
+      advanceOrderChoice === 'yes'
+        ? Object.entries(advanceQuantities)
+            .filter(([, qty]) => qty > 0)
+            .map(([product_size_id, quantity]) => ({ product_size_id, quantity }))
+        : [];
     try {
-      const advanceOrderItems =
-        advanceOrderChoice === 'yes'
-          ? Object.entries(advanceQuantities)
-              .filter(([, qty]) => qty > 0)
-              .map(([product_size_id, quantity]) => ({ product_size_id, quantity }))
-          : [];
       const result = await submitReservation({
         party_size: partySize,
         reservation_date: date,
@@ -112,6 +133,12 @@ export default function ReservationView({ onBack }: { onBack: () => void }) {
       setSubmittedHasAdvanceOrder(advanceOrderItems.length > 0);
       setReservation(result);
     } catch (e) {
+      if (e instanceof QueuedOfflineError) {
+        setSubmittedHasAdvanceOrder(advanceOrderItems.length > 0);
+        setQueuedReservationId(e.queueId);
+        toast(e.message, 'info');
+        return;
+      }
       toast(e instanceof Error ? e.message : 'Failed to submit reservation', 'error');
       // The slot may have just been taken by someone else -- refresh so the
       // grid reflects reality instead of showing a slot that's actually gone.
@@ -143,6 +170,10 @@ export default function ReservationView({ onBack }: { onBack: () => void }) {
 
   const advanceOrderCount = Object.values(advanceQuantities).reduce((sum, q) => sum + q, 0);
 
+  if (queuedReservationId) {
+    return <QueuedSubmissionView label="reservation" />;
+  }
+
   if (reservation) {
     const statusLabel =
       reservation.status === 'pending'
@@ -164,7 +195,7 @@ export default function ReservationView({ onBack }: { onBack: () => void }) {
               <div className="receipt-top">
                 <div>
                   <p className="eyebrow">
-                    PARTY OF {reservation.party_size} · {reservation.reservation_date} · {reservation.start_time.slice(0, 5)}
+                    PARTY OF {reservation.party_size} · {reservation.reservation_date} · {formatTime12h(reservation.start_time)}
                   </p>
                   <h3>
                     {reservation.status === 'pending' && 'Waiting for staff to confirm'}
@@ -260,7 +291,7 @@ export default function ReservationView({ onBack }: { onBack: () => void }) {
                   style={{ alignItems: 'center', padding: '9px 6px', opacity: slot.available ? 1 : 0.4 }}
                   onClick={() => setSelectedTime(slot.time)}
                 >
-                  <span style={{ fontSize: 13 }}>{slot.time}</span>
+                  <span style={{ fontSize: 13 }}>{formatTime12h(slot.time)}</span>
                   {!slot.available && <small>Full</small>}
                 </button>
               ))}

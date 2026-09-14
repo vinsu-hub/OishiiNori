@@ -27,7 +27,7 @@ import {
   fetchTransactions,
   voidTransaction,
 } from '@/lib/api';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, formatTimestamp12h } from '@/lib/utils';
 import { POLL_INTERVAL_MS, todayIsoPH } from '@/lib/constants';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 import { buildDigitalOrderLookup } from '@/lib/digitalOrderLookup';
@@ -316,7 +316,7 @@ export default function OrderQueue() {
                 </div>
                 <p className="text-sm text-muted-foreground">
                   {t.items.length} item{t.items.length === 1 ? '' : 's'} -- opened{' '}
-                  {new Date(t.opened_at).toLocaleTimeString()}
+                  {formatTimestamp12h(t.opened_at)}
                 </p>
                 {(t.discount_amount > 0 || t.tax_amount > 0) && (
                   <p className="text-xs text-muted-foreground">

@@ -32,8 +32,13 @@ const HERO_IMAGE = `${SITE_URL}/products/oishii-baked-sushi.jpg`;
 
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-// Matches Home.tsx's own formatTime12h -- the FAQ schema's hours answer
-// should read the same way the visible FAQ section on the page does.
+// Matches src/lib/utils.ts's own formatTime12h (which Home.tsx now imports)
+// -- the FAQ schema's hours answer should read the same way the visible FAQ
+// section on the page does. Kept as its own copy rather than loaded via
+// vite.ssrLoadModule: this function is called before `main()` creates the
+// Vite server, in code shared with a hypothetical non-SSR caller, so
+// duplicating this one small pure function is simpler than restructuring
+// the module for an import that would only save a few lines.
 function formatTime12h(hhmm) {
   const [h, m] = hhmm.split(':').map(Number);
   const period = h >= 12 ? 'PM' : 'AM';

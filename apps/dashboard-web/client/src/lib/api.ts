@@ -360,6 +360,10 @@ export interface CreateTransactionRequest {
   // Add Order: this sale is additional items for an already-completed
   // transaction, rung up as its own charge/kitchen ticket.
   related_transaction_id?: string;
+  // Set once per submission attempt and resent on every retry/replay of
+  // that attempt -- lets the backend recognize and no-op a duplicate if a
+  // request actually succeeded but its response was lost. See createTransaction().
+  idempotency_key?: string;
 }
 
 export interface ApiTransactionItemAddon {
@@ -418,11 +422,18 @@ function _createTransactionRequest(body: CreateTransactionRequest): Promise<ApiT
 registerExecutor((payload) => _createTransactionRequest(payload as unknown as CreateTransactionRequest));
 
 export async function createTransaction(body: CreateTransactionRequest): Promise<ApiTransaction> {
+  // Generated once per submission attempt and reused for every retry of
+  // that same attempt -- fetchWithRetry's in-request retries and, if it
+  // still fails, the offline-queue replay of this same `body` all resend
+  // the same key, so a request that actually succeeded server-role but lost
+  // its response never creates a second transaction (see app/idempotency.py
+  // on the backend).
+  const withKey: CreateTransactionRequest = { ...body, idempotency_key: body.idempotency_key ?? crypto.randomUUID() };
   try {
-    return await _createTransactionRequest(body);
+    return await _createTransactionRequest(withKey);
   } catch (err) {
     if (isNetworkError(err)) {
-      enqueue(body as unknown as Record<string, unknown>);
+      enqueue(withKey as unknown as Record<string, unknown>);
       throw new QueuedOfflineError();
     }
     throw err;

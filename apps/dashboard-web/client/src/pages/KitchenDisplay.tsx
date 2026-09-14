@@ -24,6 +24,7 @@ import {
   updateKitchenStatus,
 } from '@/lib/api';
 import { POLL_INTERVAL_MS, toIsoDatePH, todayIsoPH } from '@/lib/constants';
+import { formatTimestamp12h } from '@/lib/utils';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 import { buildDigitalOrderLookup } from '@/lib/digitalOrderLookup';
 import { DigitalOrderInfo } from '@/components/shared/DigitalOrderInfo';
@@ -405,7 +406,7 @@ export default function KitchenDisplay() {
                           {tier === 'warning' && <Badge variant="gold">Warning</Badge>}
                         </CardTitle>
                         <p className="text-xs text-muted-foreground">
-                          opened {new Date(order.opened_at).toLocaleTimeString()} &middot;{' '}
+                          opened {formatTimestamp12h(order.opened_at)} &middot;{' '}
                           <span
                             className={
                               DELAYED_THRESHOLD_SECONDS[order.kitchen_status] != null &&

@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ApiDigitalOrder, fetchDeliveries } from '@/lib/api';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, formatDateTime12h } from '@/lib/utils';
 import { POLL_INTERVAL_MS } from '@/lib/constants';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 
@@ -55,7 +55,7 @@ export function DeliveryMonitor() {
           {showCompletion && order.delivery?.delivered_at && (
             <p className="text-sm text-muted-foreground">
               Delivered by {order.delivery.rider_name || 'a rider'} at{' '}
-              {new Date(order.delivery.delivered_at).toLocaleString()}
+              {formatDateTime12h(order.delivery.delivered_at)}
             </p>
           )}
         </CardContent>

@@ -22,6 +22,7 @@ import {
   fetchInventoryMovements,
   fetchStockItems,
 } from '@/lib/api';
+import { formatDateTime12h } from '@/lib/utils';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 
 const POLL_INTERVAL_MS = 20_000;
@@ -452,7 +453,7 @@ export default function InventoryMovements() {
                       <TableCell className="text-muted-foreground">{m.department || '--'}</TableCell>
                       <TableCell>{m.unit_cost_snapshot != null ? m.unit_cost_snapshot.toFixed(2) : '--'}</TableCell>
                       <TableCell className="text-muted-foreground">{m.expiry_date || '--'}</TableCell>
-                      <TableCell className="text-muted-foreground">{new Date(m.created_at).toLocaleString()}</TableCell>
+                      <TableCell className="text-muted-foreground">{formatDateTime12h(m.created_at)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

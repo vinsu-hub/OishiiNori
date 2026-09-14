@@ -18,6 +18,7 @@ import {
   fetchInventoryMovements,
   fetchStockItems,
 } from '@/lib/api';
+import { formatDateTime12h } from '@/lib/utils';
 import { StockStatTile } from '@/components/stock/StockStatTile';
 import { STOCK_TABLE_CELL_CLASS, STOCK_TABLE_HEAD_CLASS, STOCK_TABLE_ROW_CLASS } from '@/components/stock/stockTableStyle';
 
@@ -219,7 +220,7 @@ export default function StockOverview() {
                       {movements.map((m) => (
                         <TableRow key={m.id} className={STOCK_TABLE_ROW_CLASS}>
                           <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-muted-foreground`}>
-                            {new Date(m.created_at).toLocaleString()}
+                            {formatDateTime12h(m.created_at)}
                           </TableCell>
                           <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-medium`}>
                             {movementTargetName(m)}

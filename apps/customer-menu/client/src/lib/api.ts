@@ -3,7 +3,31 @@
 // fetch() straight to the backend, no Authorization header at all. Safety
 // is enforced server-side (see services/api-fastapi/app/routers/digital_menu.py).
 
+import { enqueue, isNetworkError, registerExecutor } from './offlineQueue';
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string;
+
+// A customer's own cellular connection is the least reliable device in this
+// whole system -- a merely *slow* (not dead) request used to just hang
+// forever with no feedback and no way to ever queue/retry it. This turns
+// "slow" into "detected": a request that hasn't resolved within this window
+// aborts, which the offline-queue wiring below treats as a network failure
+// (queue it) the same as an outright connection drop.
+const REQUEST_TIMEOUT_MS = 10_000;
+
+// Thrown by submitOrder()/submitReservation() in place of the raw network
+// error when the submission is queued locally instead of failing outright.
+// Callers catch this specifically to show a "we'll send this once you're
+// back online" screen instead of a hard-fail toast, and use `queueId` to
+// poll offlineQueue.getCompletion() for the eventual real result.
+export class QueuedOfflineError extends Error {
+  queueId: string;
+  constructor(queueId: string) {
+    super("You're offline -- this will be sent automatically once your connection is back");
+    this.name = 'QueuedOfflineError';
+    this.queueId = queueId;
+  }
+}
 
 export interface ApiProductSize {
   id: string;
@@ -97,6 +121,7 @@ export interface SubmitOrderPayload {
   address?: string;
   landmark?: string;
   barangay?: string;
+  idempotency_key?: string;
 }
 
 export interface DeliveryFee {
@@ -160,10 +185,28 @@ export interface DigitalOrderStatus {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      ...init,
+    });
+  } catch (err) {
+    // An aborted (timed-out) request throws a DOMException named
+    // "AbortError" -- normalize it to the same bare TypeError shape a real
+    // connection failure throws, so isNetworkError() (and everything built
+    // on it: retry, offline-queue) treats "hung too long" the same as
+    // "never reached the server" -- both mean "this connection is bad."
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new TypeError('Request timed out');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
   if (!response.ok) {
     const errBody = await response.json().catch(() => null);
     throw new Error(errBody?.detail || `Request failed (${response.status})`);
@@ -183,8 +226,26 @@ export function fetchRecipe(productSizeId: string): Promise<ApiRecipeItem[]> {
   return request(`/public/product-sizes/${productSizeId}/recipe`);
 }
 
-export function submitOrder(payload: SubmitOrderPayload): Promise<DigitalOrderStatus> {
+function _submitOrderRequest(payload: SubmitOrderPayload): Promise<DigitalOrderStatus> {
   return request('/public/orders', { method: 'POST', body: JSON.stringify(payload) });
+}
+registerExecutor('order', (payload) => _submitOrderRequest(payload as unknown as SubmitOrderPayload));
+
+export async function submitOrder(payload: SubmitOrderPayload): Promise<DigitalOrderStatus> {
+  // Generated once per submission attempt and reused for the offline-queue
+  // replay of this same attempt, so a request that actually succeeded but
+  // lost its response never creates a duplicate order (see
+  // app/idempotency.py on the backend).
+  const withKey: SubmitOrderPayload = { ...payload, idempotency_key: payload.idempotency_key ?? crypto.randomUUID() };
+  try {
+    return await _submitOrderRequest(withKey);
+  } catch (err) {
+    if (isNetworkError(err)) {
+      const queueId = enqueue('order', withKey as unknown as Record<string, unknown>);
+      throw new QueuedOfflineError(queueId);
+    }
+    throw err;
+  }
 }
 
 export function fetchOrderStatus(orderId: string): Promise<DigitalOrderStatus> {
@@ -242,6 +303,7 @@ export interface SubmitReservationPayload {
   customer_phone: string;
   customer_note?: string;
   advance_order_items?: ReservationAdvanceOrderItem[];
+  idempotency_key?: string;
 }
 
 export interface ReservationStatus {
@@ -255,8 +317,25 @@ export interface ReservationStatus {
   declined_reason: string | null;
 }
 
-export function submitReservation(payload: SubmitReservationPayload): Promise<ReservationStatus> {
+function _submitReservationRequest(payload: SubmitReservationPayload): Promise<ReservationStatus> {
   return request('/public/reservations', { method: 'POST', body: JSON.stringify(payload) });
+}
+registerExecutor('reservation', (payload) => _submitReservationRequest(payload as unknown as SubmitReservationPayload));
+
+export async function submitReservation(payload: SubmitReservationPayload): Promise<ReservationStatus> {
+  const withKey: SubmitReservationPayload = {
+    ...payload,
+    idempotency_key: payload.idempotency_key ?? crypto.randomUUID(),
+  };
+  try {
+    return await _submitReservationRequest(withKey);
+  } catch (err) {
+    if (isNetworkError(err)) {
+      const queueId = enqueue('reservation', withKey as unknown as Record<string, unknown>);
+      throw new QueuedOfflineError(queueId);
+    }
+    throw err;
+  }
 }
 
 export function fetchReservationStatus(id: string): Promise<ReservationStatus> {
