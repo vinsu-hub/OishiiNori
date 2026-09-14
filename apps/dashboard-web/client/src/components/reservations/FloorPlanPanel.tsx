@@ -563,12 +563,16 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
   const ticketPhase = ticket ? reservationPhase(ticket, isToday, nowMinutes, txnById) : null;
   const ticketTable = ticket?.table_id ? tableById.get(ticket.table_id) : undefined;
   // Tables big enough for this party that aren't already placed under a
-  // *different* reservation whose window overlaps this ticket's own.
+  // *different* reservation whose window overlaps this ticket's own, and
+  // (for today) not currently sat by a live walk-in order -- placement is a
+  // same-day decision the cashier makes with the room in front of them, so a
+  // table someone is actively eating at right now shouldn't be offered.
   const availableTablesForTicket = ticket
     ? tables.filter(
         (t) =>
           t.active &&
           (t.capacity_max ?? t.capacity) >= ticket.party_size &&
+          !(isToday && t.pos_table_number != null && openTxnByPosNumber.has(t.pos_table_number)) &&
           !reservations.some(
             (other) =>
               other.id !== ticket.id &&
@@ -1077,7 +1081,9 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
                     <p className="mt-1 text-xs text-muted-foreground">
                       {ticket.advance_order_fired_at
                         ? 'Already sent to the kitchen.'
-                        : `Will be sent to the kitchen automatically ahead of ${hhmm(ticket.start_time)}.`}
+                        : ticketPhase === 'unplaced'
+                          ? 'Will be sent to the kitchen automatically once this reservation is placed on a table.'
+                          : `Will be sent to the kitchen automatically ahead of ${hhmm(ticket.start_time)}.`}
                     </p>
                   </div>
                 )}
