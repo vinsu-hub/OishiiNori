@@ -12,10 +12,11 @@ _first_available below. This means a second overlapping request is rejected
 decline/cancel are pure business decisions, never conflict re-checks.
 """
 
+import os
 from datetime import date, datetime, time, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from postgrest.exceptions import APIError
 
 from app.auth import CurrentUser, get_current_user, require_role, verify_employee_pin
@@ -25,6 +26,7 @@ from app.schemas import (
     _LAYOUT_FIELDS,
     CreateReservationRequest,
     DeclineReservationRequest,
+    PlaceReservationRequest,
     PosTableOverrideRequest,
     PosTableOverrideResponse,
     PosTableOverview,
@@ -53,6 +55,12 @@ SLOT_GRANULARITY_MINUTES = 30
 # before the stated start_time, so staff keep it clear for the guest's
 # arrival. The block still ends exactly at end_time (no post-grace).
 RESERVATION_PREP_BUFFER_MINUTES = 15
+
+# How far ahead of a placed reservation's start_time the fire-advance-orders
+# job (Vercel Cron, see vercel.json) converts its staged advance order into
+# a real transaction and sends it to Kitchen Display -- long enough that
+# prep is done by the time the guest actually arrives.
+ADVANCE_ORDER_LEAD_MINUTES = 20
 
 _HOLDING_STATUSES = ["pending", "confirmed"]
 
@@ -85,64 +93,173 @@ def _get_business_hours(supabase) -> tuple[time, time, list[int]]:
     return open_time, close_time, row["closed_weekdays"] or []
 
 
-def _fetch_capacity_candidates(supabase, party_size: int) -> list[dict]:
-    """Active tables that fit, smallest-capacity-first (best-fit -- a party
-    of 2 shouldn't consume an 8-top if a 2-4 top is free)."""
+def _fetch_all_active_tables(supabase) -> list[dict]:
+    """Every active table, smallest-capacity-first -- the full pool a slot's
+    bin-packing feasibility check draws from. A reservation no longer
+    commits to one of these at booking time (0045); it only needs to know
+    packing is possible."""
     return (
         supabase.table("tables")
         .select("id, label, capacity")
         .eq("active", True)
-        .gte("capacity", party_size)
         .order("capacity")
         .execute()
         .data
     )
 
 
-def _fetch_occupied_map(supabase, table_ids: list[str], reservation_date: date) -> dict[str, list[tuple[time, time]]]:
-    """One query for the whole date, reused across every slot in the
-    availability listing. Pending AND confirmed both count as occupying
-    (the locked slot-holding decision); only declined/cancelled are
-    excluded via the .in_() filter."""
-    if not table_ids:
-        return {}
-    rows = (
+def _fetch_reservations_for_date(supabase, reservation_date: date) -> list[dict]:
+    """Every holding (pending/confirmed) reservation on this date, placed or
+    not -- one query, reused across every slot in the availability listing
+    and the booking-acceptance check. Only declined/cancelled are excluded."""
+    return (
         supabase.table("reservations")
-        .select("table_id, start_time, end_time")
-        .in_("table_id", table_ids)
+        .select("table_id, party_size, start_time, end_time")
         .eq("reservation_date", reservation_date.isoformat())
         .in_("status", _HOLDING_STATUSES)
         .execute()
         .data
     )
-    occupied: dict[str, list[tuple[time, time]]] = {}
-    for r in rows:
-        occupied.setdefault(r["table_id"], []).append(
-            (time.fromisoformat(r["start_time"]), time.fromisoformat(r["end_time"]))
-        )
-    return occupied
 
 
-def _first_available(candidates: list[dict], occupied: dict, start: time, end: time) -> Optional[dict]:
-    """Pure-Python overlap check -- Supabase's REST query builder can't
-    express 'start < :end AND end > :start' as a single filter chain
-    against two columns, so equality/date pruning happens in SQL
-    (_fetch_occupied_map) and the actual overlap arithmetic happens here,
-    same 'narrow in SQL, finish in Python' idiom stock_items.py's
-    get_low_stock_stock_items uses for its own threshold comparison."""
-    for table in candidates:
-        conflicts = occupied.get(table["id"], [])
-        if not any(_overlaps(start, end, s, e) for s, e in conflicts):
-            return table
-    return None
+def _bin_pack_feasible(tables: list[dict], party_sizes: list[int]) -> bool:
+    """Best-fit-decreasing bin packing: can every party in `party_sizes`
+    (already includes the new candidate) be seated at its own table from
+    `tables`, each big enough for that party? A single-location restaurant
+    with ~12 tables and a handful of reservations per slot makes greedy
+    packing exact enough in practice -- no need for a real ILP solver."""
+    remaining = sorted(tables, key=lambda t: t["capacity"])
+    for size in sorted(party_sizes, reverse=True):
+        fit_idx = next((i for i, t in enumerate(remaining) if t["capacity"] >= size), None)
+        if fit_idx is None:
+            return False
+        remaining.pop(fit_idx)
+    return True
 
 
-def _to_reservation_out(row: dict) -> dict:
+def _slot_feasible(
+    all_tables: list[dict],
+    reservations_for_date: list[dict],
+    new_party_size: int,
+    start: time,
+    end: time,
+) -> bool:
+    """Feasibility for one [start, end) slot window, replacing the old "find
+    one free table and commit it" model: a *placed* reservation overlapping
+    the window removes its specific table from the pool; an *unplaced*
+    holding reservation overlapping the window consumes capacity (not a
+    specific table) alongside the new candidate party -- this is what makes
+    booking no longer lock a table (0045)."""
+    placed_table_ids = {
+        r["table_id"]
+        for r in reservations_for_date
+        if r["table_id"] and _overlaps(start, end, time.fromisoformat(r["start_time"]), time.fromisoformat(r["end_time"]))
+    }
+    pool = [t for t in all_tables if t["id"] not in placed_table_ids]
+    unplaced_sizes = [
+        r["party_size"]
+        for r in reservations_for_date
+        if not r["table_id"] and _overlaps(start, end, time.fromisoformat(r["start_time"]), time.fromisoformat(r["end_time"]))
+    ]
+    return _bin_pack_feasible(pool, unplaced_sizes + [new_party_size])
+
+
+def _to_reservation_out(row: dict, advance_order_items: Optional[list[dict]] = None) -> dict:
     table = row.pop("tables", None) or {}
     row["table_label"] = table.get("label")
     row["pos_table_number"] = table.get("pos_table_number")
     row["overrides"] = row.pop("reservation_overrides", None) or []
+    row["advance_order_items"] = advance_order_items or []
     return row
+
+
+def _fetch_advance_order_items(supabase, reservation_ids: list[str]) -> dict[str, list[dict]]:
+    """Staged advance-order items for a batch of reservations, denormalized
+    with product/add-on names the same way digital_menu.py's list endpoint
+    does for digital_order_items/digital_order_addons."""
+    if not reservation_ids:
+        return {}
+    rows = (
+        supabase.table("reservation_items")
+        .select(
+            "*, product_sizes(products(name)), "
+            "reservation_item_addons(addon_id, quantity, menu_addons(name))"
+        )
+        .in_("reservation_id", reservation_ids)
+        .execute()
+        .data
+    )
+    by_reservation: dict[str, list[dict]] = {}
+    for row in rows:
+        reservation_id = row.pop("reservation_id")
+        product = (row.pop("product_sizes", None) or {}).get("products") or {}
+        row["product_name"] = product.get("name")
+        addons = []
+        for a in row.pop("reservation_item_addons", None) or []:
+            addon_info = a.pop("menu_addons", None) or {}
+            a["addon_name"] = addon_info.get("name")
+            addons.append(a)
+        row["addons"] = addons
+        by_reservation.setdefault(reservation_id, []).append(row)
+    return by_reservation
+
+
+def _insert_reservation_items(supabase, reservation_id: str, items) -> None:
+    """Validates and stages an advance order's items against the live
+    catalog (same posture as digital_menu.py's submit_digital_order --
+    never trust a client-sent price/availability), without charging or
+    deducting anything yet. Converted into a real transaction later by the
+    fire-advance-orders job."""
+    size_ids = [i.product_size_id for i in items]
+    sizes_result = (
+        supabase.table("product_sizes").select("id, products(active)").in_("id", size_ids).execute()
+    )
+    sizes_by_id = {s["id"]: s for s in sizes_result.data}
+    missing = [sid for sid in size_ids if sid not in sizes_by_id]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Product sizes not found: {missing}")
+    inactive = [sid for sid in size_ids if not (sizes_by_id[sid].get("products") or {}).get("active", True)]
+    if inactive:
+        raise HTTPException(status_code=400, detail=f"Items no longer available: {inactive}")
+
+    addon_ids = [a.addon_id for i in items for a in i.addons]
+    addons_by_id: dict[str, dict] = {}
+    if addon_ids:
+        addons_result = supabase.table("menu_addons").select("id, active").in_("id", addon_ids).execute()
+        addons_by_id = {a["id"]: a for a in addons_result.data}
+        missing_addons = [aid for aid in addon_ids if aid not in addons_by_id]
+        if missing_addons:
+            raise HTTPException(status_code=404, detail=f"Add-ons not found: {missing_addons}")
+        inactive_addons = [aid for aid in addon_ids if not addons_by_id[aid]["active"]]
+        if inactive_addons:
+            raise HTTPException(status_code=400, detail=f"Add-ons no longer available: {inactive_addons}")
+
+    for item in items:
+        inserted_item = (
+            supabase.table("reservation_items")
+            .insert(
+                {
+                    "reservation_id": reservation_id,
+                    "product_size_id": item.product_size_id,
+                    "quantity": item.quantity,
+                    "held_ingredients": item.held_ingredients,
+                    "notes": item.notes,
+                }
+            )
+            .execute()
+            .data[0]
+        )
+        if item.addons:
+            supabase.table("reservation_item_addons").insert(
+                [
+                    {
+                        "reservation_item_id": inserted_item["id"],
+                        "addon_id": addon.addon_id,
+                        "quantity": addon.quantity,
+                    }
+                    for addon in item.addons
+                ]
+            ).execute()
 
 
 def _now_ph() -> datetime:
@@ -211,14 +328,14 @@ def public_availability(reservation_date: date = Query(..., alias="date"), party
     if reservation_date.weekday() in closed_weekdays:
         return {"date": reservation_date, "party_size": party_size, "closed": True, "slots": []}
 
-    candidates = _fetch_capacity_candidates(supabase, party_size)
-    occupied = _fetch_occupied_map(supabase, [c["id"] for c in candidates], reservation_date)
+    all_tables = _fetch_all_active_tables(supabase)
+    reservations_for_date = _fetch_reservations_for_date(supabase, reservation_date)
 
     slots: list[dict] = []
     t = open_time
     while _time_add_minutes(t, RESERVATION_DURATION_MINUTES) <= close_time:
         end = _time_add_minutes(t, RESERVATION_DURATION_MINUTES)
-        available = bool(candidates) and _first_available(candidates, occupied, t, end) is not None
+        available = bool(all_tables) and _slot_feasible(all_tables, reservations_for_date, party_size, t, end)
         slots.append({"time": t.strftime("%H:%M"), "available": available})
         t = _time_add_minutes(t, SLOT_GRANULARITY_MINUTES)
 
@@ -237,20 +354,23 @@ def submit_reservation(body: CreateReservationRequest):
     if body.start_time < open_time or end_time > close_time:
         raise HTTPException(status_code=400, detail="Outside business hours for this reservation length")
 
-    candidates = _fetch_capacity_candidates(supabase, body.party_size)
-    if not candidates:
+    all_tables = _fetch_all_active_tables(supabase)
+    if not all_tables or body.party_size > max(t["capacity"] for t in all_tables):
         raise HTTPException(status_code=400, detail="No table can seat this party size")
 
-    occupied = _fetch_occupied_map(supabase, [c["id"] for c in candidates], body.reservation_date)
-    table = _first_available(candidates, occupied, body.start_time, end_time)
-    if not table:
+    reservations_for_date = _fetch_reservations_for_date(supabase, body.reservation_date)
+    if not _slot_feasible(all_tables, reservations_for_date, body.party_size, body.start_time, end_time):
         raise HTTPException(status_code=409, detail="No tables available for this time -- please choose another slot")
 
+    has_advance_order = bool(body.advance_order_items)
     inserted = (
         supabase.table("reservations")
         .insert(
             {
-                "table_id": table["id"],
+                # table_id stays NULL until a cashier places the ticket
+                # (POST /reservations/{id}/place) -- booking only reserves
+                # capacity, not a specific table (0045).
+                "table_id": None,
                 "party_size": body.party_size,
                 "reservation_date": body.reservation_date.isoformat(),
                 "start_time": body.start_time.isoformat(),
@@ -259,11 +379,15 @@ def submit_reservation(body: CreateReservationRequest):
                 "customer_name": body.customer_name.strip(),
                 "customer_phone": body.customer_phone.strip(),
                 "customer_note": body.customer_note,
+                "has_advance_order": has_advance_order,
             }
         )
         .execute()
     )
-    return inserted.data[0]
+    reservation = inserted.data[0]
+    if has_advance_order:
+        _insert_reservation_items(supabase, reservation["id"], body.advance_order_items)
+    return reservation
 
 
 def _fetch_reservation_or_404(supabase, reservation_id: str) -> dict:
@@ -354,7 +478,9 @@ def list_reservations(
     if reservation_date:
         query = query.eq("reservation_date", reservation_date.isoformat())
     result = query.order("reservation_date", desc=True).order("start_time", desc=True).limit(limit).execute()
-    return [_to_reservation_out(row) for row in result.data]
+    rows = result.data
+    items_by_reservation = _fetch_advance_order_items(get_supabase(), [r["id"] for r in rows if r.get("has_advance_order")])
+    return [_to_reservation_out(row, items_by_reservation.get(row["id"])) for row in rows]
 
 
 def _fetch_reservation_with_table(supabase, reservation_id: str) -> dict:
@@ -461,6 +587,114 @@ def unseat_reservation(reservation_id: str, user: CurrentUser = Depends(get_curr
     updated = (
         supabase.table("reservations")
         .update({"seated_at": None, "transaction_id": None})
+        .eq("id", reservation_id)
+        .execute()
+    )
+    return _to_reservation_out({**updated.data[0], "tables": reservation.get("tables")})
+
+
+@router.post("/reservations/{reservation_id}/place", response_model=ReservationOut)
+def place_reservation(
+    reservation_id: str,
+    body: PlaceReservationRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """The cashier's explicit "Place Reservation" action -- pins a confirmed,
+    still-unplaced ticket onto a real table. This is the decision point that
+    replaced auto-seating: it does not open a POS order, it just marks the
+    table "waiting for customer" on the Floor Plan. table_id/placed_at/
+    placed_by are what _blocking_reservation and the availability engine key
+    off from this point on."""
+    supabase = get_supabase()
+    reservation = _fetch_reservation_with_table(supabase, reservation_id)
+    if reservation["status"] != "confirmed":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only a confirmed reservation can be placed (currently {reservation['status']})",
+        )
+    if reservation.get("table_id"):
+        raise HTTPException(status_code=400, detail="Reservation is already placed on a table")
+
+    table_result = (
+        supabase.table("tables")
+        .select("id, label, capacity, capacity_min, capacity_max, active, pos_table_number")
+        .eq("id", body.table_id)
+        .maybe_single()
+        .execute()
+    )
+    table = table_result.data if table_result and table_result.data else None
+    if not table or not table["active"]:
+        raise HTTPException(status_code=404, detail="Table not found")
+
+    cap_max = table.get("capacity_max") or table["capacity"]
+    if reservation["party_size"] > cap_max:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Party of {reservation['party_size']} exceeds table {table['label']}'s capacity of {cap_max}",
+        )
+
+    # _blocking_reservation only answers "right now" -- placement can happen
+    # well ahead of the reservation's own window, so check directly against
+    # any other holding reservation already placed on this table whose
+    # window overlaps this one's.
+    r_start = time.fromisoformat(reservation["start_time"])
+    r_end = time.fromisoformat(reservation["end_time"])
+    others = (
+        supabase.table("reservations")
+        .select("id, start_time, end_time")
+        .eq("table_id", body.table_id)
+        .eq("reservation_date", reservation["reservation_date"])
+        .in_("status", _HOLDING_STATUSES)
+        .neq("id", reservation_id)
+        .execute()
+        .data
+    )
+    for o in others:
+        if _overlaps(r_start, r_end, time.fromisoformat(o["start_time"]), time.fromisoformat(o["end_time"])):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Table {table['label']} is already placed for another reservation in this window",
+            )
+
+    updated = (
+        supabase.table("reservations")
+        .update(
+            {
+                "table_id": body.table_id,
+                "placed_at": datetime.now(timezone.utc).isoformat(),
+                "placed_by": user.id,
+            }
+        )
+        .eq("id", reservation_id)
+        .execute()
+    )
+    return _to_reservation_out({**updated.data[0], "tables": table})
+
+
+@router.post("/reservations/{reservation_id}/arrive", response_model=ReservationOut)
+def arrive_reservation(reservation_id: str, user: CurrentUser = Depends(get_current_user)):
+    """The cashier's "Guest has arrived" action -- a pure status stamp,
+    deliberately separate from creating or touching any transaction. If an
+    advance order already fired to the kitchen (fire-advance-orders ran
+    ahead of this), that transaction was created earlier; if not, the
+    Floor Plan falls back to the normal "Place Order Now" POS deep-link.
+    Idempotent."""
+    supabase = get_supabase()
+    reservation = _fetch_reservation_with_table(supabase, reservation_id)
+    if reservation["status"] != "confirmed":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only a confirmed reservation can be marked arrived (currently {reservation['status']})",
+        )
+    if not reservation.get("table_id"):
+        raise HTTPException(status_code=400, detail="Reservation must be placed on a table first")
+
+    if reservation.get("arrived_at"):
+        return _to_reservation_out(reservation)
+
+    updated = (
+        supabase.table("reservations")
+        .update({"arrived_at": datetime.now(timezone.utc).isoformat()})
         .eq("id", reservation_id)
         .execute()
     )
@@ -584,10 +818,16 @@ def pos_table_override(body: PosTableOverrideRequest, user: CurrentUser = Depend
 
 @router.post("/reservations/{reservation_id}/cancel", response_model=ReservationOut)
 def cancel_reservation(reservation_id: str, user: CurrentUser = Depends(get_current_user)):
+    """Void/cancel a ticket -- callable from the Floor Plan popup at any
+    stage before the guest arrives (unplaced, or placed and waiting), not
+    just from the Requests tab. Once arrived_at is stamped there may already
+    be a real order in flight; cancel the order itself instead."""
     supabase = get_supabase()
     reservation = _fetch_reservation_with_table(supabase, reservation_id)
-    if reservation["status"] != "confirmed":
-        raise HTTPException(status_code=400, detail=f"Only a confirmed reservation can be cancelled (currently {reservation['status']})")
+    if reservation["status"] not in ("pending", "confirmed"):
+        raise HTTPException(status_code=400, detail=f"Reservation is already {reservation['status']}")
+    if reservation.get("arrived_at"):
+        raise HTTPException(status_code=400, detail="Guest has already arrived -- cancel the order instead")
 
     updated = (
         supabase.table("reservations")
@@ -602,3 +842,105 @@ def cancel_reservation(reservation_id: str, user: CurrentUser = Depends(get_curr
         .execute()
     )
     return _to_reservation_out({**updated.data[0], "tables": reservation.get("tables")})
+
+
+# ---------------------------------------------------------------------------
+# Advance-order firing -- a Vercel Cron target, not a staff/customer action
+# ---------------------------------------------------------------------------
+
+
+def _verify_cron_secret(authorization: Optional[str] = Header(default=None)) -> None:
+    """Vercel Cron sends `Authorization: Bearer $CRON_SECRET` automatically
+    once CRON_SECRET is set as a project env var -- see vercel.json's
+    `crons` entry. Not a staff/customer endpoint, so no get_current_user."""
+    secret = os.environ.get("CRON_SECRET")
+    if not secret or authorization != f"Bearer {secret}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+@router.get("/internal/reservations/fire-advance-orders")
+def fire_advance_orders(_: None = Depends(_verify_cron_secret)):
+    """Converts today's placed reservations' staged advance orders into real
+    transactions once within ADVANCE_ORDER_LEAD_MINUTES of start_time, so
+    the kitchen has time to prep before the guest actually arrives (the
+    Floor Plan's "Guest has arrived" action never creates an order itself --
+    see arrive_reservation above). Goes through the exact same
+    _create_transaction_row path every other sale uses. Deferred import
+    avoids a circular import: transactions.py imports from this module."""
+    from app.routers.transactions import _create_transaction_row
+    from app.schemas import TransactionItemAddonCreate, TransactionItemCreate
+
+    supabase = get_supabase()
+    now = _now_ph()
+    threshold = _time_add_minutes(now.time(), ADVANCE_ORDER_LEAD_MINUTES)
+
+    candidates = (
+        supabase.table("reservations")
+        .select("id, party_size, start_time, table_id, placed_by, tables(pos_table_number, label)")
+        .eq("reservation_date", now.date().isoformat())
+        .eq("status", "confirmed")
+        .eq("has_advance_order", True)
+        .is_("advance_order_fired_at", "null")
+        .is_("arrived_at", "null")
+        .not_.is_("table_id", "null")
+        .execute()
+        .data
+    )
+
+    fired: list[str] = []
+    skipped: list[str] = []
+    for r in candidates:
+        if threshold < time.fromisoformat(r["start_time"]):
+            continue  # not within the lead window yet
+
+        table = r.get("tables") or {}
+        pos_table_number = table.get("pos_table_number")
+        if not pos_table_number or not r.get("placed_by"):
+            # Table since unmapped, or placed_by missing (shouldn't happen --
+            # placement always stamps both together) -- skip this one rather
+            # than fail the whole batch; it'll be retried next tick.
+            skipped.append(r["id"])
+            continue
+
+        item_rows = (
+            supabase.table("reservation_items")
+            .select("*, reservation_item_addons(addon_id, quantity)")
+            .eq("reservation_id", r["id"])
+            .execute()
+            .data
+        )
+        if not item_rows:
+            skipped.append(r["id"])
+            continue
+
+        items = [
+            TransactionItemCreate(
+                product_size_id=i["product_size_id"],
+                quantity=i["quantity"],
+                held_ingredients=i.get("held_ingredients") or [],
+                addons=[
+                    TransactionItemAddonCreate(addon_id=a["addon_id"], quantity=a["quantity"])
+                    for a in (i.get("reservation_item_addons") or [])
+                ],
+            )
+            for i in item_rows
+        ]
+
+        transaction = _create_transaction_row(
+            supabase,
+            employee_id=r["placed_by"],
+            items=items,
+            order_type="dine_in",
+            table_number=pos_table_number,
+            guest_count=r["party_size"],
+        )
+
+        supabase.table("reservations").update(
+            {
+                "advance_order_fired_at": datetime.now(timezone.utc).isoformat(),
+                "transaction_id": transaction.id,
+            }
+        ).eq("id", r["id"]).execute()
+        fired.append(r["id"])
+
+    return {"fired": fired, "skipped": skipped, "checked": len(candidates)}

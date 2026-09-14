@@ -348,6 +348,7 @@ def _create_transaction_row(
     payment_method: str | None = None,
     card_type: str | None = None,
     force_vat_exempt: bool = False,
+    related_transaction_id: str | None = None,
 ) -> TransactionResponse:
     """Insert a transaction + items, deduct non-bundle recipe ingredients,
     and compute discount/tax. Shared by POS sale creation (create_transaction
@@ -440,6 +441,8 @@ def _create_transaction_row(
     if _transaction_card_vat_supported_check(supabase):
         insert_payload["card_type"] = card_type
         insert_payload["force_vat_exempt"] = force_vat_exempt
+    if related_transaction_id:
+        insert_payload["related_transaction_id"] = related_transaction_id
 
     transaction_insert = supabase.table("transactions").insert(insert_payload).execute()
     transaction = transaction_insert.data[0]
@@ -593,11 +596,33 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
             raise HTTPException(status_code=403, detail="Employee ID/PIN did not match your logged-in account")
         owner_request_by = profile["id"]
 
+    # Add Order (WS-14): additional items for an already-completed
+    # transaction get rung up as their own charge/kitchen ticket, linked
+    # back to the original rather than mutating a closed one.
+    if body.related_transaction_id:
+        parent = (
+            supabase.table("transactions")
+            .select("id, status")
+            .eq("id", body.related_transaction_id)
+            .maybe_single()
+            .execute()
+        )
+        if not parent or not parent.data:
+            raise HTTPException(status_code=404, detail="Original order not found")
+        if parent.data["status"] != "closed":
+            raise HTTPException(status_code=400, detail="Can only add an order to a completed (closed) transaction")
+
     # Reservation block: a confirmed reservation holds its table in the POS
     # for [start - prep buffer, end). A manager can override, which mints a
     # single-use reservation_overrides row (see /pos/tables/override).
+    # Skipped entirely for an Add Order sale (related_transaction_id set) --
+    # the parent transaction already legitimately occupied this table for
+    # this party; re-running the walk-in block/capacity check here would
+    # wrongly 409 the common case of adding items to a reservation's own
+    # still-active table.
     consumed_override_id = None
-    if body.order_type == "dine_in":
+    blocked_table = None
+    if body.order_type == "dine_in" and not body.related_transaction_id:
         blocked_table = _table_by_pos_number(supabase, body.table_number)
         if blocked_table and body.guest_count is not None:
             # Flexible-capacity floor-plan tables (0032): a party larger than
@@ -629,6 +654,7 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
         payment_method=body.payment_method,
         card_type=body.card_type,
         force_vat_exempt=body.force_vat_exempt,
+        related_transaction_id=body.related_transaction_id,
     )
 
     if consumed_override_id is not None:
@@ -709,7 +735,7 @@ def list_transactions(
         "id, employee_id, status, opened_at, closed_at, total_amount, discount_type_id, "
         "discount_amount, tax_amount, is_owner_request, owner_request_by, owner_request_note, "
         "voided_by, voided_at, void_reason, kitchen_status, kitchen_status_updated_at, "
-        "order_type, table_number, guest_count, payment_method"
+        "order_type, table_number, guest_count, payment_method, related_transaction_id"
     )
     if _transaction_order_number_supported_check(supabase):
         columns += ", order_number"

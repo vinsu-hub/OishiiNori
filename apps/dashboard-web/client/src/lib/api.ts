@@ -357,6 +357,9 @@ export interface CreateTransactionRequest {
   force_vat_exempt?: boolean;
   reservation_override_id?: string;
   reservation_id?: string;
+  // Add Order: this sale is additional items for an already-completed
+  // transaction, rung up as its own charge/kitchen ticket.
+  related_transaction_id?: string;
 }
 
 export interface ApiTransactionItemAddon {
@@ -404,6 +407,7 @@ export interface ApiTransaction {
   payment_method: TransactionPaymentMethod | null;
   card_type: TransactionCardType | null;
   force_vat_exempt: boolean;
+  related_transaction_id: string | null;
   items: ApiTransactionItem[];
 }
 
@@ -1764,10 +1768,29 @@ export function uploadPaymentMethodQrCode(id: string, file: File): Promise<ApiOn
 
 export type ReservationStatus = 'pending' | 'confirmed' | 'declined' | 'cancelled';
 
+export interface ApiReservationItemAddon {
+  addon_id: string;
+  addon_name: string | null;
+  quantity: number;
+}
+
+export interface ApiReservationItem {
+  id: string;
+  product_size_id: string;
+  product_name: string | null;
+  quantity: number;
+  held_ingredients: string[];
+  notes: string | null;
+  addons: ApiReservationItemAddon[];
+}
+
 export interface ApiReservation {
   id: string;
   reservation_number: number;
-  table_id: string;
+  // Nullable as of the reservation-ticket-workflow feature: a reservation no
+  // longer locks a table at booking time -- table_id stays null until a
+  // cashier places the ticket (see placeReservation below).
+  table_id: string | null;
   table_label: string | null;
   pos_table_number: number | null;
   party_size: number;
@@ -1779,10 +1802,16 @@ export interface ApiReservation {
   customer_phone: string;
   customer_note: string | null;
   declined_reason: string | null;
+  placed_at: string | null;
+  placed_by: string | null;
+  arrived_at: string | null;
+  has_advance_order: boolean;
+  advance_order_fired_at: string | null;
   seated_at: string | null;
   transaction_id: string | null;
   created_at: string;
   overrides: { reason: string; created_at: string; overridden_by: string | null }[];
+  advance_order_items: ApiReservationItem[];
 }
 
 export function fetchReservations(status?: ReservationStatus, date?: string): Promise<ApiReservation[]> {
@@ -1811,4 +1840,16 @@ export function seatReservation(id: string): Promise<ApiReservation> {
 
 export function unseatReservation(id: string): Promise<ApiReservation> {
   return request(`/reservations/${id}/unseat`, { method: 'POST' });
+}
+
+/** Cashier's "Place Reservation" action -- pins a confirmed, still-unplaced
+ * ticket onto a real table. Does not open a POS order. */
+export function placeReservation(id: string, tableId: string): Promise<ApiReservation> {
+  return request(`/reservations/${id}/place`, { method: 'POST', body: JSON.stringify({ table_id: tableId }) });
+}
+
+/** Cashier's "Guest has arrived" action -- a pure status stamp, separate
+ * from creating/touching any transaction. */
+export function arriveReservation(id: string): Promise<ApiReservation> {
+  return request(`/reservations/${id}/arrive`, { method: 'POST' });
 }

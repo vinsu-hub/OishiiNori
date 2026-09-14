@@ -229,6 +229,11 @@ export function fetchReservationAvailability(date: string, partySize: number): P
   return request(`/public/tables/availability?date=${date}&party_size=${partySize}`);
 }
 
+export interface ReservationAdvanceOrderItem {
+  product_size_id: string;
+  quantity: number;
+}
+
 export interface SubmitReservationPayload {
   party_size: number;
   reservation_date: string;
@@ -236,6 +241,7 @@ export interface SubmitReservationPayload {
   customer_name: string;
   customer_phone: string;
   customer_note?: string;
+  advance_order_items?: ReservationAdvanceOrderItem[];
 }
 
 export interface ReservationStatus {

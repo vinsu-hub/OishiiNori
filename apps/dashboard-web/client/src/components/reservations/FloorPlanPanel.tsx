@@ -21,13 +21,15 @@ import {
   ApiTable,
   ApiTransaction,
   TableShape,
+  arriveReservation,
+  cancelReservation,
   closeTransaction,
   describeError,
   fetchProducts,
   fetchReservations,
   fetchTables,
   fetchTransactions,
-  seatReservation,
+  placeReservation,
   switchTable,
   updateTable,
   voidTransaction,
@@ -99,9 +101,13 @@ function hhmm(t: string): string {
   return t.slice(0, 5);
 }
 
-// Where a reservation sits in its lifecycle, for the seating panel + detail
-// list. Derived (nothing but `seated`/`completed` is persisted) -- see plan.
-type ReservationPhase = 'completed' | 'seated' | 'overdue' | 'due' | 'no_show' | 'upcoming';
+// Where a reservation ticket sits in its lifecycle. Explicit cashier actions
+// now drive this (place -> arrive), not a time-window guess: 'unplaced'
+// means the cashier hasn't picked a table yet (table_id is null); 'placed'/
+// 'overdue' mean it's pinned to a table and waiting; 'arrived' means the
+// guest showed up (arrived_at set, or an order is already open); 'completed'
+// means the linked order was closed.
+type ReservationPhase = 'unplaced' | 'placed' | 'overdue' | 'arrived' | 'completed';
 
 function reservationPhase(
   r: ApiReservation,
@@ -111,27 +117,22 @@ function reservationPhase(
 ): ReservationPhase {
   const linked = r.transaction_id ? txnById.get(r.transaction_id) ?? null : null;
   if (linked && linked.status === 'closed') return 'completed';
-  if (r.seated_at || (linked && linked.status === 'open')) return 'seated';
-  if (!isToday) return 'upcoming';
-  const start = hhmmToMinutes(r.start_time);
-  const end = hhmmToMinutes(r.end_time);
-  if (nowMinutes >= end) return 'no_show';
-  if (nowMinutes >= start + RESERVATION_PREP_BUFFER_MIN) return 'overdue';
-  if (nowMinutes >= start - RESERVATION_PREP_BUFFER_MIN) return 'due';
-  return 'upcoming';
+  if (r.arrived_at || (linked && linked.status === 'open')) return 'arrived';
+  if (!r.table_id) return 'unplaced';
+  if (isToday && nowMinutes >= hhmmToMinutes(r.start_time) + RESERVATION_PREP_BUFFER_MIN) return 'overdue';
+  return 'placed';
 }
 
 const PHASE_META: Record<ReservationPhase, { label: string; className: string }> = {
-  completed: { label: 'Done', className: 'bg-muted text-muted-foreground' },
-  seated: { label: 'Seated', className: 'bg-green-100 text-green-800 border border-green-300' },
+  unplaced: { label: 'Needs table', className: 'bg-card text-muted-foreground border border-border' },
+  placed: { label: 'Waiting for guest', className: 'bg-orange-100 text-orange-900 border border-orange-300' },
   overdue: { label: 'Overdue', className: 'bg-red-100 text-red-800 border border-red-400' },
-  due: { label: 'Due now', className: 'bg-orange-100 text-orange-900 border border-orange-300' },
-  no_show: { label: 'No-show', className: 'bg-red-50 text-red-700 border border-red-200' },
-  upcoming: { label: 'Upcoming', className: 'bg-card text-muted-foreground border border-border' },
+  arrived: { label: 'Arrived', className: 'bg-green-100 text-green-800 border border-green-300' },
+  completed: { label: 'Done', className: 'bg-muted text-muted-foreground' },
 };
 
-// Phases that still need a table found for them.
-const NEEDS_SEATING: ReservationPhase[] = ['overdue', 'due', 'upcoming'];
+// Phases that still need cashier action (place a table, or confirm arrival).
+const NEEDS_ACTION: ReservationPhase[] = ['unplaced', 'placed', 'overdue'];
 
 // 'orange' means exactly one thing: a confirmed reservation is holding
 // this table and the guest hasn't been seated yet -- occupied (a real
@@ -195,10 +196,10 @@ function LegendBar() {
         <span className={`${swatch} bg-blue-100 border-blue-400`} /> Occupied
       </span>
       <span className="flex items-center gap-1.5">
-        <span className={`${swatch} bg-orange-100 border-orange-400 animate-pulse`} /> Reserved &mdash; waiting for guest
+        <span className={`${swatch} bg-orange-100 border-orange-400 animate-pulse`} /> Placed &mdash; waiting for guest
       </span>
       <span className="flex items-center gap-1.5">
-        <span className={`${swatch} bg-red-100 border-red-500`} /> Needs Attention
+        <span className={`${swatch} bg-red-100 border-red-500`} /> Overdue &mdash; guest hasn't arrived
       </span>
       <span className="flex items-center gap-1.5">
         <span className="inline-block h-3 w-3 shrink-0 rounded-full bg-amber-400" /> Unverified
@@ -236,7 +237,14 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [seatGuests, setSeatGuests] = useState(2);
-  const [seatBusyId, setSeatBusyId] = useState<string | null>(null);
+
+  // Ticket popup (Place Reservation / Void, or Guest Arrived / Cancel) --
+  // the cashier-driven flow that replaced auto-seating. Keyed by
+  // reservation id, separate from the table detail dialog (`detailId`),
+  // which now only ever handles an open order or a genuinely free table.
+  const [ticketId, setTicketId] = useState<string | null>(null);
+  const [placeTableChoice, setPlaceTableChoice] = useState('');
+  const [ticketBusy, setTicketBusy] = useState(false);
 
   // Phase 5: Switch table / transfer -- moves an occupied table's open order
   // (and its linked seated reservation, if any) to a different table.
@@ -330,42 +338,35 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
 
   const derive = useCallback(
     (t: ApiTable): Derived => {
-      const { iso, minutes } = phNow();
+      const { minutes } = phNow();
+      // A table only ever shows a *placed* reservation (table_id set by the
+      // cashier's "Place Reservation" action) -- an unplaced confirmed
+      // ticket lives only in the sidebar list. Once arrived_at is stamped,
+      // the ticket stops pinning the table here (control passes to the
+      // live order via openTxn once one is charged).
       const tableReservations = reservations.filter(
-        (r) => r.table_id === t.id && r.reservation_date === selectedDay
+        (r) =>
+          r.table_id === t.id &&
+          r.reservation_date === selectedDay &&
+          r.status === 'confirmed' &&
+          !r.arrived_at
       );
-
-      // For a day other than today there's no live "now" and transactions
-      // aren't meaningful -- just show which tables carry a booking.
-      if (!isToday) {
-        const reservation = tableReservations[0] ?? null;
-        return { state: reservation ? 'orange' : 'white', openTxn: null, reservation, breach: false };
-      }
+      const reservation =
+        [...tableReservations].sort((a, b) => a.start_time.localeCompare(b.start_time))[0] ?? null;
 
       const openTxn = t.pos_table_number != null ? openTxnByPosNumber.get(t.pos_table_number) ?? null : null;
 
-      let reservation: ApiReservation | null = null;
-      let breach = false;
-      for (const r of tableReservations) {
-        if (r.reservation_date !== iso) continue;
-        const start = hhmmToMinutes(r.start_time) - RESERVATION_PREP_BUFFER_MIN;
-        const end = hhmmToMinutes(r.end_time);
-        // Window can wrap past midnight (late close + a near-close start).
-        const inWindow = start <= end ? minutes >= start && minutes < end : minutes >= start || minutes < end;
-        if (inWindow) {
-          reservation = r;
-          const seated =
-            !!r.seated_at || (!!r.transaction_id && txnById.get(r.transaction_id)?.status === 'open');
-          breach =
-            !openTxn && !seated && minutes >= hhmmToMinutes(r.start_time) + RESERVATION_PREP_BUFFER_MIN;
-          break;
-        }
+      // For a day other than today there's no live "now" -- just show
+      // which tables carry a placed booking, never a breach.
+      if (!isToday) {
+        return { state: openTxn ? 'blue' : reservation ? 'orange' : 'white', openTxn, reservation, breach: false };
       }
 
+      const breach = !!reservation && !openTxn && minutes >= hhmmToMinutes(reservation.start_time) + RESERVATION_PREP_BUFFER_MIN;
       const state: TableState = breach ? 'red' : openTxn ? 'blue' : reservation ? 'orange' : 'white';
       return { state, openTxn, reservation, breach };
     },
-    [openTxnByPosNumber, reservations, selectedDay, isToday, txnById]
+    [openTxnByPosNumber, reservations, selectedDay, isToday]
   );
 
   const shownTables = useMemo(
@@ -477,16 +478,58 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
     navigate(`/pos?table=${t.pos_table_number}&guests=${guests}${q}`);
   }
 
-  async function markSeated(reservationId: string) {
-    setSeatBusyId(reservationId);
+  async function placeTicket(reservationId: string, tableId: string) {
+    setTicketBusy(true);
     try {
-      await seatReservation(reservationId);
-      toast.success('Marked as seated');
+      await placeReservation(reservationId, tableId);
+      toast.success('Reservation placed on table');
+      setTicketId(null);
+      setPlaceTableChoice('');
       load();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not mark seated');
+      toast.error(describeError(e, 'Could not place the reservation'));
     } finally {
-      setSeatBusyId(null);
+      setTicketBusy(false);
+    }
+  }
+
+  async function voidTicket(reservationId: string) {
+    if (!window.confirm('Void this reservation? This cannot be undone.')) return;
+    setTicketBusy(true);
+    try {
+      await cancelReservation(reservationId);
+      toast.success('Reservation voided');
+      setTicketId(null);
+      load();
+    } catch (e) {
+      toast.error(describeError(e, 'Could not void the reservation'));
+    } finally {
+      setTicketBusy(false);
+    }
+  }
+
+  // "Guest has arrived": stamps arrived_at, then either deep-links into the
+  // POS pre-seated (no advance order, or one that hasn't fired yet -- same
+  // reservation_id linking createTransaction already does) or, if the
+  // advance order already fired to the kitchen, just confirms arrival with
+  // no cart needed.
+  async function arriveTicket(r: ApiReservation, table: ApiTable | undefined) {
+    setTicketBusy(true);
+    try {
+      await arriveReservation(r.id);
+      setTicketId(null);
+      if (r.has_advance_order && r.advance_order_fired_at) {
+        toast.success('Guest marked arrived -- order already sent to the kitchen');
+        load();
+      } else if (table) {
+        seatWalkIn(table, r.party_size, r.id);
+      } else {
+        load();
+      }
+    } catch (e) {
+      toast.error(describeError(e, 'Could not mark the guest arrived'));
+    } finally {
+      setTicketBusy(false);
     }
   }
 
@@ -496,17 +539,36 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
   const seatingQueue = [...reservations]
     .sort((a, b) => a.start_time.localeCompare(b.start_time))
     .map((r) => ({ r, phase: reservationPhase(r, isToday, nowMinutes, txnById) }));
-  const toSeat = seatingQueue.filter((q) => (isToday ? NEEDS_SEATING.includes(q.phase) : true));
+  const toSeat = seatingQueue.filter((q) => (isToday ? NEEDS_ACTION.includes(q.phase) : true));
   const coversToSeat = toSeat.reduce((sum, q) => sum + q.r.party_size, 0);
   const activeTables = tables.filter((t) => t.active);
   const freeTableCount = activeTables.filter((t) => derive(t).state === 'white').length;
   const tableById = new Map(tables.map((t) => [t.id, t]));
 
-  const detailReservations = detailId ? seatingQueue.filter((q) => q.r.table_id === detailId) : [];
-  const detailActionable =
-    detailReservations.find((q) => q.phase === 'overdue' || q.phase === 'due') ??
-    detailReservations.find((q) => q.phase === 'upcoming') ??
-    null;
+  function timeOverlaps(aStart: string, aEnd: string, bStart: string, bEnd: string): boolean {
+    return hhmmToMinutes(aStart) < hhmmToMinutes(bEnd) && hhmmToMinutes(bStart) < hhmmToMinutes(aEnd);
+  }
+
+  const ticket = ticketId ? reservations.find((r) => r.id === ticketId) ?? null : null;
+  const ticketPhase = ticket ? reservationPhase(ticket, isToday, nowMinutes, txnById) : null;
+  const ticketTable = ticket?.table_id ? tableById.get(ticket.table_id) : undefined;
+  // Tables big enough for this party that aren't already placed under a
+  // *different* reservation whose window overlaps this ticket's own.
+  const availableTablesForTicket = ticket
+    ? tables.filter(
+        (t) =>
+          t.active &&
+          (t.capacity_max ?? t.capacity) >= ticket.party_size &&
+          !reservations.some(
+            (other) =>
+              other.id !== ticket.id &&
+              other.table_id === t.id &&
+              other.reservation_date === ticket.reservation_date &&
+              other.status === 'confirmed' &&
+              timeOverlaps(ticket.start_time, ticket.end_time, other.start_time, other.end_time)
+          )
+      )
+    : [];
 
   function renderTable(t: ApiTable) {
     const d = derive(t);
@@ -520,7 +582,10 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
         onPointerDown={(e) => onTablePointerDown(e, t)}
         onClick={() => {
           if (editing) setSelectedId(t.id);
-          else {
+          else if (d.reservation) {
+            // Placed (orange/red): tapping the table is tapping its ticket.
+            setTicketId(d.reservation.id);
+          } else {
             setDetailId(t.id);
             setSeatGuests(Math.min(2, t.capacity_max ?? t.capacity));
           }
@@ -712,14 +777,14 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
               ) : (
                 <ul className="max-h-[55vh] divide-y overflow-auto">
                   {seatingQueue.map(({ r, phase }) => {
-                    const table = tableById.get(r.table_id);
+                    const table = r.table_id ? tableById.get(r.table_id) : undefined;
                     return (
                       <li key={r.id} className="px-3 py-2 text-sm">
                         <button
                           type="button"
                           className="flex w-full items-center justify-between gap-2 text-left hover:opacity-80"
                           onClick={() => {
-                            setDetailId(r.table_id);
+                            setTicketId(r.id);
                             if (table) jumpToZone(table.floor_group || 'Main Dining');
                           }}
                         >
@@ -733,20 +798,9 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
                             {PHASE_META[phase].label}
                           </span>
                         </button>
-                        <div className="mt-0.5 flex items-center justify-between text-xs text-muted-foreground">
-                          <span>
-                            {r.party_size}p · {table?.label ?? r.table_label ?? 'Unassigned'}
-                          </span>
-                          {isToday && NEEDS_SEATING.includes(phase) && (
-                            <button
-                              type="button"
-                              className="rounded border px-1.5 py-0.5 font-medium text-foreground hover:bg-muted disabled:opacity-50"
-                              disabled={seatBusyId === r.id}
-                              onClick={() => markSeated(r.id)}
-                            >
-                              {seatBusyId === r.id ? '…' : 'Mark seated'}
-                            </button>
-                          )}
+                        <div className="mt-0.5 text-xs text-muted-foreground">
+                          {r.party_size}p · {table?.label ?? 'Not yet placed'}
+                          {r.has_advance_order && ' · Advance order'}
                         </div>
                       </li>
                     );
@@ -874,92 +928,6 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
                     )}
                   </div>
                 </div>
-              ) : detailDerived.state === 'orange' &&
-                detailReservations.filter((q) => isToday && q.phase !== 'seated' && q.phase !== 'completed')
-                  .length === 1 ? (
-                (() => {
-                  const { r } = detailReservations.find(
-                    (q) => isToday && q.phase !== 'seated' && q.phase !== 'completed'
-                  )!;
-                  return (
-                    <div className="space-y-3 text-sm">
-                      <p>
-                        <span className="font-semibold">{r.customer_name}</span> · party of {r.party_size} ·{' '}
-                        {hhmm(r.start_time)}
-                      </p>
-                      <p className="text-muted-foreground">{r.customer_phone}</p>
-                      <Button
-                        className="w-full"
-                        onClick={() => {
-                          seatWalkIn(detail, r.party_size, r.id);
-                          setDetailId(null);
-                        }}
-                      >
-                        Take the reserved table order
-                      </Button>
-                      <Button
-                        variant="outline"
-                        className="w-full"
-                        disabled={seatBusyId === r.id}
-                        onClick={() => markSeated(r.id)}
-                      >
-                        Mark seated (no order yet)
-                      </Button>
-                    </div>
-                  );
-                })()
-              ) : detailReservations.length > 0 ? (
-                <div className="space-y-3 text-sm">
-                  <p className="text-xs text-muted-foreground">
-                    {detailReservations.length} reservation{detailReservations.length === 1 ? '' : 's'} on{' '}
-                    {selectedDay}
-                  </p>
-                  <ul className="divide-y rounded-md border">
-                    {detailReservations.map(({ r, phase }) => (
-                      <li key={r.id} className="space-y-1 p-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-corp-mono font-semibold">
-                            {hhmm(r.start_time)}–{hhmm(r.end_time)}
-                          </span>
-                          <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${PHASE_META[phase].className}`}>
-                            {PHASE_META[phase].label}
-                          </span>
-                        </div>
-                        <p>
-                          {r.customer_name} · party of {r.party_size}
-                        </p>
-                        <p className="text-muted-foreground">{r.customer_phone}</p>
-                        {isToday && phase !== 'seated' && phase !== 'completed' && (
-                          <div className="flex flex-wrap gap-2 pt-1">
-                            <Button
-                              size="sm"
-                              onClick={() => {
-                                seatWalkIn(detail, r.party_size, r.id);
-                                setDetailId(null);
-                              }}
-                            >
-                              Seat via POS
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={seatBusyId === r.id}
-                              onClick={() => markSeated(r.id)}
-                            >
-                              Mark seated
-                            </Button>
-                          </div>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                  {detailActionable && (
-                    <p className="text-xs text-muted-foreground">
-                      "Seat via POS" opens the terminal pre-set to this table; the reservation is marked
-                      seated when the order is charged.
-                    </p>
-                  )}
-                </div>
               ) : (
                 <div className="space-y-3 text-sm">
                   <p className="text-muted-foreground">Table is free.</p>
@@ -1051,6 +1019,142 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
               {switchingTable ? 'Switching...' : 'Confirm switch'}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reservation ticket popup -- the cashier-driven Place/Void or
+          Arrived/Cancel flow that replaced auto-seating. */}
+      <Dialog
+        open={!!ticket}
+        onOpenChange={(o) => {
+          if (!o) {
+            setTicketId(null);
+            setPlaceTableChoice('');
+          }
+        }}
+      >
+        <DialogContent>
+          {ticket && ticketPhase && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Reservation #{ticket.reservation_number}</DialogTitle>
+                <DialogDescription>
+                  {ticket.customer_name} · party of {ticket.party_size} · {hhmm(ticket.start_time)}–
+                  {hhmm(ticket.end_time)}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-3 text-sm">
+                <p className="text-muted-foreground">{ticket.customer_phone}</p>
+                {ticket.customer_note && <p className="text-muted-foreground">Note: {ticket.customer_note}</p>}
+                {ticket.has_advance_order && (
+                  <div className="rounded-md border bg-muted/30 p-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Advance order
+                    </p>
+                    <ul className="mt-1 space-y-0.5">
+                      {ticket.advance_order_items.map((item) => (
+                        <li key={item.id}>
+                          {item.quantity}× {item.product_name ?? 'Item'}
+                          {item.held_ingredients.length > 0 && (
+                            <span className="block text-xs text-destructive">
+                              hold: {item.held_ingredients.join(', ')}
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {ticket.advance_order_fired_at
+                        ? 'Already sent to the kitchen.'
+                        : `Will be sent to the kitchen automatically ahead of ${hhmm(ticket.start_time)}.`}
+                    </p>
+                  </div>
+                )}
+
+                {ticketPhase === 'unplaced' && (
+                  <>
+                    <div className="space-y-1">
+                      <Label>Place at table</Label>
+                      <Select value={placeTableChoice} onValueChange={setPlaceTableChoice}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Pick an available table" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {availableTablesForTicket.map((t) => (
+                            <SelectItem key={t.id} value={t.id}>
+                              {t.label} · seats {t.capacity_max ?? t.capacity}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {availableTablesForTicket.length === 0 && (
+                        <p className="text-xs text-destructive">No table currently fits this party for this window.</p>
+                      )}
+                    </div>
+                    <Button
+                      className="w-full"
+                      disabled={!placeTableChoice || ticketBusy}
+                      onClick={() => placeTicket(ticket.id, placeTableChoice)}
+                    >
+                      {ticketBusy
+                        ? 'Placing…'
+                        : `Confirm placement${
+                            placeTableChoice
+                              ? ` into ${tableById.get(placeTableChoice)?.label ?? 'table'}`
+                              : ''
+                          }`}
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      className="w-full"
+                      disabled={ticketBusy}
+                      onClick={() => voidTicket(ticket.id)}
+                    >
+                      Void reservation
+                    </Button>
+                  </>
+                )}
+
+                {(ticketPhase === 'placed' || ticketPhase === 'overdue') && (
+                  <>
+                    <p className="text-muted-foreground">
+                      Placed at <span className="font-semibold text-foreground">{ticketTable?.label ?? 'table'}</span>
+                      {ticketPhase === 'overdue' && ' · guest has not arrived yet'}
+                    </p>
+                    <Button
+                      className="w-full"
+                      disabled={ticketBusy}
+                      onClick={() => arriveTicket(ticket, ticketTable)}
+                    >
+                      {ticketBusy
+                        ? 'Working…'
+                        : ticket.has_advance_order && ticket.advance_order_fired_at
+                          ? 'Guest has arrived'
+                          : 'Guest has arrived — place order now'}
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      className="w-full"
+                      disabled={ticketBusy}
+                      onClick={() => voidTicket(ticket.id)}
+                    >
+                      Cancel reservation
+                    </Button>
+                  </>
+                )}
+
+                {ticketPhase === 'arrived' && (
+                  <p className="text-muted-foreground">
+                    Guest has arrived — order in progress at {ticketTable?.label ?? 'table'}.
+                  </p>
+                )}
+                {ticketPhase === 'completed' && (
+                  <p className="text-muted-foreground">This reservation's order is complete.</p>
+                )}
+              </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>

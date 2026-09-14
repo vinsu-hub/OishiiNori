@@ -293,6 +293,12 @@ export default function POSTerminal() {
   // (/pos?...&reservation=<id>). Linked to the sale at charge time so the
   // reservation is marked seated; cleared after a successful charge.
   const [reservationId, setReservationId] = useState<string | null>(null);
+  // Add Order (WS-14): set when Order Queue sent us here to add items to an
+  // already-completed transaction (/pos?addon_to=<id>&table=...&guests=...).
+  // Locks the table/order-type picker (the parent already validated
+  // occupancy) and skips the reservation-block check -- charge-time sends
+  // related_transaction_id instead of reservation_id.
+  const [addonTo, setAddonTo] = useState<string | null>(null);
   const [overrideId, setOverrideId] = useState<string | null>(null);
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [overrideForm, setOverrideForm] = useState({ employeeNumber: '', pin: '', reason: '' });
@@ -308,13 +314,15 @@ export default function POSTerminal() {
     const t = params.get('table');
     const g = params.get('guests');
     const r = params.get('reservation');
-    if (!t && !g && !r) return;
+    const addon = params.get('addon_to');
+    if (!t && !g && !r && !addon) return;
     if (t && /^\d+$/.test(t)) {
       setOrderType('dine_in');
       setTableNumber(t);
     }
     if (g && /^\d+$/.test(g)) setGuestCount(Math.max(1, Number(g)));
     if (r) setReservationId(r);
+    if (addon) setAddonTo(addon);
     navigate('/pos', { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -401,7 +409,10 @@ export default function POSTerminal() {
     setOverrideId(null);
     const raw = tableNumber.trim();
     const n = Number(raw);
-    if (orderType !== 'dine_in' || raw === '' || !Number.isInteger(n) || n <= 0) {
+    // Add Order: the parent transaction already validated this table is
+    // occupied by the party asking for more items -- never re-run the
+    // reservation-block check for it.
+    if (addonTo || orderType !== 'dine_in' || raw === '' || !Number.isInteger(n) || n <= 0) {
       setTableStatus(null);
       return;
     }
@@ -419,7 +430,7 @@ export default function POSTerminal() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [tableNumber, orderType]);
+  }, [tableNumber, orderType, addonTo]);
 
   // F3 scroll-to-discounts, F4 hold order, Esc clear order -- matches the
   // SMFC reference's shortcuts for these actions. F5 (free-text per-item
@@ -810,6 +821,7 @@ export default function POSTerminal() {
         force_vat_exempt: vatOverride === 'non_vat',
         reservation_override_id: overrideId ?? undefined,
         reservation_id: orderType === 'dine_in' ? reservationId ?? undefined : undefined,
+        related_transaction_id: addonTo ?? undefined,
       });
       toast.success(
         `${transaction.order_number != null ? `Order #${transaction.order_number} -- ` : ''}Sale complete -- total ${formatCurrency(
@@ -821,6 +833,7 @@ export default function POSTerminal() {
       setTableStatus(null);
       setOverrideId(null);
       setReservationId(null);
+      setAddonTo(null);
       setPaymentMethod(null);
       setCardType(null);
       loadTableOptions();
@@ -881,8 +894,9 @@ export default function POSTerminal() {
             <div className="flex rounded-md overflow-hidden border shrink-0">
               <button
                 type="button"
+                disabled={!!addonTo}
                 onClick={() => setOrderType('dine_in')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm ${
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm disabled:opacity-60 ${
                   orderType === 'dine_in' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground'
                 }`}
               >
@@ -890,8 +904,9 @@ export default function POSTerminal() {
               </button>
               <button
                 type="button"
+                disabled={!!addonTo}
                 onClick={() => setOrderType('takeout')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm ${
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm disabled:opacity-60 ${
                   orderType === 'takeout' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground'
                 }`}
               >
@@ -899,6 +914,12 @@ export default function POSTerminal() {
               </button>
             </div>
           </div>
+          {addonTo && (
+            <p className="mb-3 rounded-md border border-primary/30 bg-primary/5 px-3 py-1.5 text-sm text-primary">
+              Adding to an already-completed order at {selectedTableLabel ?? `table ${tableNumber}`} -- this rings up
+              as its own charge and kitchen ticket.
+            </p>
+          )}
           <div className="mb-3">
             {/* Hidden measuring clone -- full pill list, real classes, clipped
                 to zero height so flex-wrap still lays it out at the visible
@@ -1201,7 +1222,7 @@ export default function POSTerminal() {
             </div>
           </div>
           {orderType === 'dine_in' && (
-            <Select value={tableNumber} onValueChange={setTableNumber}>
+            <Select value={tableNumber} onValueChange={setTableNumber} disabled={!!addonTo}>
               <SelectTrigger className="w-full h-8 text-sm font-bold bg-red-600 text-white border-red-600 hover:bg-red-700 focus:ring-red-600">
                 <SelectValue placeholder="Pick a table" />
               </SelectTrigger>

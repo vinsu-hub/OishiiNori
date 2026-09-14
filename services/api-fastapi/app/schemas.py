@@ -215,6 +215,10 @@ class CreateTransactionRequest(BaseModel):
     # reservation (Floor Plan "Seat this reservation"). Links the reservation
     # to this transaction and stamps seated_at. Ignored if it doesn't match.
     reservation_id: str | None = None
+    # Add Order (WS-14): this sale is additional items for an already-
+    # completed transaction, rung up as its own charge/kitchen ticket rather
+    # than mutating the closed original. See related_transaction_id below.
+    related_transaction_id: str | None = None
 
 
 class TransactionItemAddonResponse(BaseModel):
@@ -262,6 +266,7 @@ class TransactionResponse(BaseModel):
     payment_method: TransactionPaymentMethod | None = None
     card_type: TransactionCardType | None = None
     force_vat_exempt: bool = False
+    related_transaction_id: str | None = None
     items: list[TransactionItemResponse] = Field(default_factory=list)
 
 
@@ -1458,6 +1463,19 @@ class ReservationOverrideOut(BaseModel):
     overridden_by: str | None = None
 
 
+class ReservationItemAddonCreate(BaseModel):
+    addon_id: str
+    quantity: int = Field(gt=0)
+
+
+class ReservationItemCreate(BaseModel):
+    product_size_id: str
+    quantity: float = Field(gt=0)
+    held_ingredients: list[str] = Field(default_factory=list)
+    notes: str | None = None
+    addons: list[ReservationItemAddonCreate] = Field(default_factory=list)
+
+
 class CreateReservationRequest(BaseModel):
     party_size: int = Field(gt=0)
     reservation_date: date
@@ -1465,6 +1483,11 @@ class CreateReservationRequest(BaseModel):
     customer_name: str = Field(min_length=1)
     customer_phone: str = Field(min_length=1)
     customer_note: str | None = None
+    # Optional advance order taken at booking time -- staged here, converted
+    # into a real transaction (and sent to Kitchen Display) by the
+    # fire-advance-orders job a fixed lead time before start_time. See
+    # reservation_items/reservation_item_addons (migration 0045).
+    advance_order_items: list[ReservationItemCreate] = Field(default_factory=list)
 
     @field_validator("customer_phone")
     @classmethod
@@ -1474,10 +1497,33 @@ class CreateReservationRequest(BaseModel):
         return v
 
 
+class ReservationItemAddonOut(BaseModel):
+    addon_id: str
+    addon_name: str | None = None
+    quantity: int
+
+
+class ReservationItemOut(BaseModel):
+    id: str
+    product_size_id: str
+    product_name: str | None = None
+    quantity: float
+    held_ingredients: list[str] = Field(default_factory=list)
+    notes: str | None = None
+    addons: list[ReservationItemAddonOut] = Field(default_factory=list)
+
+
+class PlaceReservationRequest(BaseModel):
+    table_id: str = Field(min_length=1)
+
+
 class ReservationOut(BaseModel):
     id: str
     reservation_number: int
-    table_id: str
+    # Nullable as of 0045: a reservation no longer locks a specific table at
+    # booking time -- table_id (and table_label/pos_table_number) stay null
+    # until a cashier places the ticket via POST /reservations/{id}/place.
+    table_id: str | None = None
     table_label: str | None = None
     pos_table_number: int | None = None
     party_size: int
@@ -1489,10 +1535,16 @@ class ReservationOut(BaseModel):
     customer_phone: str
     customer_note: str | None = None
     declined_reason: str | None = None
+    placed_at: datetime | None = None
+    placed_by: str | None = None
+    arrived_at: datetime | None = None
+    has_advance_order: bool = False
+    advance_order_fired_at: datetime | None = None
     seated_at: datetime | None = None
     transaction_id: str | None = None
     created_at: datetime
     overrides: list[ReservationOverrideOut] = Field(default_factory=list)
+    advance_order_items: list[ReservationItemOut] = Field(default_factory=list)
 
 
 class ReservationStatusResponse(BaseModel):

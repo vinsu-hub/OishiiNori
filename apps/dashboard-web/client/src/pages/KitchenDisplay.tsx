@@ -199,6 +199,12 @@ export default function KitchenDisplay() {
     return map;
   }, [products]);
 
+  const transactionById = useMemo(() => {
+    const map = new Map<string, ApiTransaction>();
+    for (const t of transactions) map.set(t.id, t);
+    return map;
+  }, [transactions]);
+
   const eligibleRolls = useMemo(
     () => products.filter((p) => p.category === ROLL_CATEGORY && !p.is_bundle),
     [products]
@@ -387,6 +393,14 @@ export default function KitchenDisplay() {
                             </Badge>
                           )}
                           {order.is_owner_request && <Badge variant="secondary">Owner's Request</Badge>}
+                          {order.related_transaction_id && (
+                            <Badge variant="outline">
+                              Add-on to Order{' '}
+                              {transactionById.get(order.related_transaction_id)?.order_number != null
+                                ? `#${transactionById.get(order.related_transaction_id)!.order_number}`
+                                : `#${order.related_transaction_id.slice(0, 8)}`}
+                            </Badge>
+                          )}
                           {tier === 'overdue' && <Badge variant="destructive">Overdue</Badge>}
                           {tier === 'warning' && <Badge variant="gold">Warning</Badge>}
                         </CardTitle>

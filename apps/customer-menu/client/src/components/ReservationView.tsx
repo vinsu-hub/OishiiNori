@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowRight, ChevronLeft, Loader2, Minus, Plus } from 'lucide-react';
 import {
+  ApiProduct,
   ReservationSlot,
   ReservationStatus,
+  fetchMenu,
   fetchReservationAvailability,
   fetchReservationStatus,
   submitReservation,
@@ -39,6 +41,28 @@ export default function ReservationView({ onBack }: { onBack: () => void }) {
   const [submitting, setSubmitting] = useState(false);
 
   const [reservation, setReservation] = useState<ReservationStatus | null>(null);
+  // ReservationStatusResponse (the minimal customer-facing poll shape) never
+  // carries advance-order items back -- remembered locally just to keep the
+  // confirmation screen's messaging accurate after a successful submit.
+  const [submittedHasAdvanceOrder, setSubmittedHasAdvanceOrder] = useState(false);
+
+  // Advance order (optional): asked once the guest has picked a slot and
+  // filled their details. 'ask' shows the yes/no prompt; 'yes' reveals a
+  // simple product picker whose quantities become advance_order_items on
+  // submit; 'no' skips straight to Request this table, same as before this
+  // feature existed.
+  const [advanceOrderChoice, setAdvanceOrderChoice] = useState<'ask' | 'yes' | 'no'>('ask');
+  const [products, setProducts] = useState<ApiProduct[]>([]);
+  const [advanceQuantities, setAdvanceQuantities] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    fetchMenu()
+      .then(setProducts)
+      .catch(() => {
+        // Advance ordering just won't be offered if the menu fails to load --
+        // never block the core reservation request over it.
+      });
+  }, []);
 
   useEffect(() => {
     setSelectedTime(null);
@@ -70,6 +94,12 @@ export default function ReservationView({ onBack }: { onBack: () => void }) {
     }
     setSubmitting(true);
     try {
+      const advanceOrderItems =
+        advanceOrderChoice === 'yes'
+          ? Object.entries(advanceQuantities)
+              .filter(([, qty]) => qty > 0)
+              .map(([product_size_id, quantity]) => ({ product_size_id, quantity }))
+          : [];
       const result = await submitReservation({
         party_size: partySize,
         reservation_date: date,
@@ -77,7 +107,9 @@ export default function ReservationView({ onBack }: { onBack: () => void }) {
         customer_name: customerName.trim(),
         customer_phone: customerPhone.trim(),
         customer_note: customerNote.trim() || undefined,
+        advance_order_items: advanceOrderItems.length > 0 ? advanceOrderItems : undefined,
       });
+      setSubmittedHasAdvanceOrder(advanceOrderItems.length > 0);
       setReservation(result);
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Failed to submit reservation', 'error');
@@ -101,7 +133,15 @@ export default function ReservationView({ onBack }: { onBack: () => void }) {
     setCustomerName('');
     setCustomerPhone('');
     setCustomerNote('');
+    setAdvanceOrderChoice('ask');
+    setAdvanceQuantities({});
   }
+
+  function setAdvanceQty(sizeId: string, qty: number) {
+    setAdvanceQuantities((prev) => ({ ...prev, [sizeId]: Math.max(0, qty) }));
+  }
+
+  const advanceOrderCount = Object.values(advanceQuantities).reduce((sum, q) => sum + q, 0);
 
   if (reservation) {
     const statusLabel =
@@ -140,7 +180,11 @@ export default function ReservationView({ onBack }: { onBack: () => void }) {
                 <p className="review-confirmation">Sit tight -- staff are reviewing your request. This updates automatically.</p>
               )}
               {reservation.status === 'confirmed' && (
-                <p className="review-confirmation">We'll see you then! Please arrive on time to hold your table.</p>
+                <p className="review-confirmation">
+                  We'll see you then! Please arrive on time to hold your table.
+                  {submittedHasAdvanceOrder &&
+                    ' Your advance order will be prepared ahead of your arrival.'}
+                </p>
               )}
               {(reservation.status === 'declined' || reservation.status === 'cancelled') && (
                 <>
@@ -248,6 +292,109 @@ export default function ReservationView({ onBack }: { onBack: () => void }) {
                 onChange={(e) => setCustomerNote(e.target.value)}
               />
 
+              <p style={{ margin: '0 0 8px', fontSize: 12, color: '#918378', fontWeight: 700, letterSpacing: '.04em' }}>
+                ADVANCE ORDER
+              </p>
+              {advanceOrderChoice === 'ask' ? (
+                <div style={{ marginBottom: 16 }}>
+                  <p style={{ fontSize: 13, color: '#5a5049', margin: '0 0 10px' }}>
+                    Would you like to place an advance order for your reservation? We'll have it ready soon after
+                    you arrive.
+                  </p>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      type="button"
+                      className="payment-option"
+                      style={{ flex: 1 }}
+                      onClick={() => setAdvanceOrderChoice('yes')}
+                    >
+                      Yes, add items
+                    </button>
+                    <button
+                      type="button"
+                      className="payment-option"
+                      style={{ flex: 1 }}
+                      onClick={() => setAdvanceOrderChoice('no')}
+                    >
+                      No, skip
+                    </button>
+                  </div>
+                </div>
+              ) : advanceOrderChoice === 'yes' ? (
+                <div style={{ marginBottom: 16 }}>
+                  {products.length === 0 ? (
+                    <p style={{ fontSize: 13, color: '#918378' }}>Loading the menu…</p>
+                  ) : (
+                    <div style={{ maxHeight: 260, overflowY: 'auto', display: 'grid', gap: 8 }}>
+                      {products
+                        .filter((p) => p.active && !p.is_bundle)
+                        .map((p) =>
+                          p.sizes.map((s) => (
+                            <div
+                              key={s.id}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: 8,
+                                border: '1px solid #e7e0d8',
+                                borderRadius: 8,
+                                padding: '8px 10px',
+                              }}
+                            >
+                              <div style={{ minWidth: 0 }}>
+                                <p style={{ fontSize: 13, margin: 0 }}>
+                                  {p.name}
+                                  {p.sizes.length > 1 ? ` (${s.size_label})` : ''}
+                                </p>
+                                <p style={{ fontSize: 12, color: '#918378', margin: 0 }}>
+                                  ₱{s.price.toFixed(2)}
+                                </p>
+                              </div>
+                              <div className="quantity">
+                                <button
+                                  type="button"
+                                  onClick={() => setAdvanceQty(s.id, (advanceQuantities[s.id] || 0) - 1)}
+                                  aria-label={`Decrease ${p.name}`}
+                                >
+                                  <Minus size={14} />
+                                </button>
+                                <span>{advanceQuantities[s.id] || 0}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setAdvanceQty(s.id, (advanceQuantities[s.id] || 0) + 1)}
+                                  aria-label={`Increase ${p.name}`}
+                                >
+                                  <Plus size={14} />
+                                </button>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    className="payment-option"
+                    style={{ width: '100%', marginTop: 10 }}
+                    onClick={() => setAdvanceOrderChoice('no')}
+                  >
+                    Skip advance order instead
+                  </button>
+                </div>
+              ) : (
+                <p style={{ fontSize: 13, color: '#918378', margin: '0 0 16px' }}>
+                  No advance order.{' '}
+                  <button
+                    type="button"
+                    style={{ background: 'none', border: 0, padding: 0, color: '#a51f26', fontSize: 13 }}
+                    onClick={() => setAdvanceOrderChoice('ask')}
+                  >
+                    Add items instead
+                  </button>
+                </p>
+              )}
+
               <button
                 className="primary-button"
                 type="button"
@@ -255,7 +402,12 @@ export default function ReservationView({ onBack }: { onBack: () => void }) {
                 disabled={!customerName.trim() || !isValidPhilippinePhone(customerPhone) || submitting}
                 onClick={handleSubmit}
               >
-                {submitting ? 'Requesting...' : 'Request this table'} <ArrowRight size={16} />
+                {submitting
+                  ? 'Requesting...'
+                  : advanceOrderChoice === 'yes' && advanceOrderCount > 0
+                    ? `Request this table + ${advanceOrderCount} item${advanceOrderCount === 1 ? '' : 's'}`
+                    : 'Request this table'}{' '}
+                <ArrowRight size={16} />
               </button>
             </>
           )}

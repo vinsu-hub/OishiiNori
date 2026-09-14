@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'wouter';
 import { toast } from 'sonner';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { Card, CardContent } from '@/components/ui/card';
@@ -62,6 +63,7 @@ const KITCHEN_STATUS_VALUES: KitchenStatus[] = ['queued', 'preparing', 'ready', 
 const PAGE_SIZE = 10;
 
 export default function OrderQueue() {
+  const [, navigate] = useLocation();
   const [transactions, setTransactions] = useState<ApiTransaction[]>([]);
   const [products, setProducts] = useState<ApiProduct[]>([]);
   const [digitalOrderLookup, setDigitalOrderLookup] = useState<Map<string, ApiDigitalOrder>>(new Map());
@@ -124,6 +126,12 @@ export default function OrderQueue() {
   useEffect(() => {
     setPage(1);
   }, [searchQuery, statusFilter, dateFilter, sortOrder]);
+
+  const transactionById = useMemo(() => {
+    const map = new Map<string, ApiTransaction>();
+    for (const t of transactions) map.set(t.id, t);
+    return map;
+  }, [transactions]);
 
   const productNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -297,6 +305,14 @@ export default function OrderQueue() {
                     </Badge>
                   )}
                   {t.is_owner_request && <Badge variant="secondary">Owner's Request</Badge>}
+                  {t.related_transaction_id && (
+                    <Badge variant="outline">
+                      Add-on to Order{' '}
+                      {transactionById.get(t.related_transaction_id)?.order_number != null
+                        ? `#${transactionById.get(t.related_transaction_id)!.order_number}`
+                        : `#${t.related_transaction_id.slice(0, 8)}`}
+                    </Badge>
+                  )}
                 </div>
                 <p className="text-sm text-muted-foreground">
                   {t.items.length} item{t.items.length === 1 ? '' : 's'} -- opened{' '}
@@ -326,6 +342,19 @@ export default function OrderQueue() {
                 {t.status === 'open' && (t.kitchen_status === 'preparing' || t.kitchen_status === 'ready') && (
                   <Button variant="outline" size="sm" onClick={() => setRefundTarget(t)}>
                     Refund
+                  </Button>
+                )}
+                {t.status === 'closed' && t.order_type === 'dine_in' && t.table_number != null && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      navigate(
+                        `/pos?addon_to=${t.id}&table=${t.table_number}${t.guest_count ? `&guests=${t.guest_count}` : ''}`
+                      )
+                    }
+                  >
+                    Add Order
                   </Button>
                 )}
               </div>
