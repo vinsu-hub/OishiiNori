@@ -15,13 +15,14 @@ decline/cancel are pure business decisions, never conflict re-checks.
 from datetime import date, datetime, time, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from postgrest.exceptions import APIError
 
 from app.auth import CurrentUser, get_current_user, require_role, verify_employee_pin
 from app.deps import get_supabase
 from app.idempotency import check_idempotency_key, record_idempotency_key
 from app.ph_time import PH_UTC_OFFSET
+from app.rate_limit import client_ip, enforce_rate_limit
 from app.schemas import (
     _LAYOUT_FIELDS,
     CreateReservationRequest,
@@ -321,8 +322,15 @@ def public_business_hours():
 
 
 @router.get("/public/tables/availability", response_model=ReservationAvailabilityResponse)
-def public_availability(reservation_date: date = Query(..., alias="date"), party_size: int = Query(..., gt=0)):
+def public_availability(
+    request: Request,
+    reservation_date: date = Query(..., alias="date"),
+    party_size: int = Query(..., gt=0),
+):
     supabase = get_supabase()
+    # Looser than submission -- the reservation form calls this on every
+    # date/party-size change, which is legitimate normal use, not abuse.
+    enforce_rate_limit(supabase, f"reservation-availability:{client_ip(request)}", window_seconds=60, limit=60)
     open_time, close_time, closed_weekdays = _get_business_hours(supabase)
 
     if reservation_date.weekday() in closed_weekdays:
@@ -343,8 +351,9 @@ def public_availability(reservation_date: date = Query(..., alias="date"), party
 
 
 @router.post("/public/reservations", response_model=ReservationStatusResponse)
-def submit_reservation(body: CreateReservationRequest):
+def submit_reservation(body: CreateReservationRequest, request: Request):
     supabase = get_supabase()
+    enforce_rate_limit(supabase, f"reservation-submit:{client_ip(request)}", window_seconds=60, limit=20)
     existing_id = check_idempotency_key(supabase, body.idempotency_key, "POST /public/reservations")
     if existing_id:
         return _fetch_reservation_or_404(supabase, existing_id)
@@ -362,33 +371,36 @@ def submit_reservation(body: CreateReservationRequest):
     if not all_tables or body.party_size > max(t["capacity"] for t in all_tables):
         raise HTTPException(status_code=400, detail="No table can seat this party size")
 
-    reservations_for_date = _fetch_reservations_for_date(supabase, body.reservation_date)
-    if not _slot_feasible(all_tables, reservations_for_date, body.party_size, body.start_time, end_time):
-        raise HTTPException(status_code=409, detail="No tables available for this time -- please choose another slot")
-
+    # The capacity-pool feasibility check + insert happen together in one
+    # atomic Postgres function (migration 0050) under an advisory lock
+    # scoped to this date -- a plain read-then-insert here would leave the
+    # same TOCTOU window place_reservation used to have before its own
+    # DB-level fix (migration 0047): two near-simultaneous bookings for the
+    # last remaining slot could otherwise both pass a Python-side check
+    # before either commits.
     has_advance_order = bool(body.advance_order_items)
-    inserted = (
-        supabase.table("reservations")
-        .insert(
+    try:
+        result = supabase.rpc(
+            "submit_reservation_atomic",
             {
-                # table_id stays NULL until a cashier places the ticket
-                # (POST /reservations/{id}/place) -- booking only reserves
-                # capacity, not a specific table (0045).
-                "table_id": None,
-                "party_size": body.party_size,
-                "reservation_date": body.reservation_date.isoformat(),
-                "start_time": body.start_time.isoformat(),
-                "end_time": end_time.isoformat(),
-                "status": "pending",
-                "customer_name": body.customer_name.strip(),
-                "customer_phone": body.customer_phone.strip(),
-                "customer_note": body.customer_note,
-                "has_advance_order": has_advance_order,
-            }
-        )
-        .execute()
-    )
-    reservation = inserted.data[0]
+                "p_party_size": body.party_size,
+                "p_reservation_date": body.reservation_date.isoformat(),
+                "p_start_time": body.start_time.isoformat(),
+                "p_end_time": end_time.isoformat(),
+                "p_customer_name": body.customer_name.strip(),
+                "p_customer_phone": body.customer_phone.strip(),
+                "p_customer_note": body.customer_note,
+                "p_has_advance_order": has_advance_order,
+            },
+        ).execute()
+    except APIError as e:
+        if "NO_CAPACITY" in (e.message or ""):
+            raise HTTPException(
+                status_code=409, detail="No tables available for this time -- please choose another slot"
+            )
+        raise HTTPException(status_code=502, detail=f"Could not submit the reservation: {e.message}")
+
+    reservation = result.data
     if has_advance_order:
         _insert_reservation_items(supabase, reservation["id"], body.advance_order_items)
     record_idempotency_key(supabase, body.idempotency_key, "POST /public/reservations", reservation["id"])
@@ -895,7 +907,7 @@ def fire_advance_orders(user: CurrentUser = Depends(get_current_user)):
 
     candidates = (
         supabase.table("reservations")
-        .select("id, party_size, start_time, table_id, placed_by, tables(pos_table_number, label)")
+        .select("id, party_size, start_time, table_id, placed_by, tables(pos_table_number, label, active)")
         .eq("reservation_date", now.date().isoformat())
         .eq("status", "confirmed")
         .eq("has_advance_order", True)
@@ -920,6 +932,14 @@ def fire_advance_orders(user: CurrentUser = Depends(get_current_user)):
             # than fail the whole batch; it'll be retried next tick.
             skipped.append({"id": r["id"], "reason": "table unmapped or placed_by missing"})
             continue
+        if table.get("active") is False:
+            # A manager deactivated this table after it was placed --
+            # _create_transaction_row has no reason to reject a bare
+            # table_number, so without this check it would silently fire a
+            # dine-in order against a table that no longer exists on the
+            # floor plan.
+            skipped.append({"id": r["id"], "reason": "table deactivated since booking"})
+            continue
 
         # Everything past this point can genuinely fail for one reservation
         # (a product deactivated since booking, the placing employee's
@@ -939,6 +959,25 @@ def fire_advance_orders(user: CurrentUser = Depends(get_current_user)):
             )
             if not item_rows:
                 skipped.append({"id": r["id"], "reason": "no staged items"})
+                continue
+
+            # _create_transaction_row never checks products.active (unlike
+            # menu_addons, which it does check) -- without re-validating
+            # here, a product deactivated between booking and firing would
+            # silently still get charged instead of failing cleanly.
+            size_ids = [i["product_size_id"] for i in item_rows]
+            sizes_result = (
+                supabase.table("product_sizes")
+                .select("id, products(active)")
+                .in_("id", size_ids)
+                .execute()
+                .data
+            )
+            inactive = [
+                s["id"] for s in sizes_result if not (s.get("products") or {}).get("active", True)
+            ]
+            if inactive:
+                skipped.append({"id": r["id"], "reason": f"item no longer available: {inactive}"})
                 continue
 
             items = [

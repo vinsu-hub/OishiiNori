@@ -21,11 +21,12 @@ concepts, not wired into recipe/ingredient deduction -- see migration
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 
 from app.auth import CurrentUser, get_current_user
 from app.deps import get_supabase
 from app.idempotency import check_idempotency_key, record_idempotency_key
+from app.rate_limit import client_ip, enforce_rate_limit
 from app.routers.business_days import is_open_today
 from app.routers.products import _list_products_data
 from app.routers.recipes import _get_recipe_data
@@ -114,8 +115,9 @@ def public_delivery_fees():
 
 
 @router.post("/public/orders", response_model=DigitalOrderStatusResponse)
-def submit_digital_order(body: CreateDigitalOrderRequest):
+def submit_digital_order(body: CreateDigitalOrderRequest, request: Request):
     supabase = get_supabase()
+    enforce_rate_limit(supabase, f"order-submit:{client_ip(request)}", window_seconds=60, limit=20)
     existing_id = check_idempotency_key(supabase, body.idempotency_key, "POST /public/orders")
     if existing_id:
         return _fetch_digital_order(supabase, existing_id)

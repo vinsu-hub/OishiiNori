@@ -12,12 +12,13 @@ concept exists in this build (locked scope), unlike the SMFC reference.
 import bcrypt
 from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from postgrest.exceptions import APIError
 
 from app.attendance_utils import auto_close_stale_attendance, compute_attendance_breakdown, hr_table
 from app.auth import _profile_active_supported_check
 from app.deps import get_supabase
+from app.rate_limit import client_ip, enforce_rate_limit
 from app.schemas import (
     AttendanceLogResponse,
     KioskClockInRequest,
@@ -58,8 +59,16 @@ def _get_completed_today(employee_id: str) -> dict | None:
 
 
 @router.post("/kiosk/verify", response_model=KioskVerifyResponse)
-def kiosk_verify(body: KioskVerifyRequest):
+def kiosk_verify(body: KioskVerifyRequest, request: Request):
     supabase = get_supabase()
+    # A scripted client could otherwise guess PINs against a known employee
+    # number with no throttling at all -- the concrete "swarm of queries"
+    # risk actually found in this codebase. Keyed by employee_number+ip (not
+    # ip alone) so slowing down an attack on one account doesn't also lock
+    # out everyone else legitimately using the same shared kiosk device.
+    enforce_rate_limit(
+        supabase, f"kiosk-verify:{body.employee_number}:{client_ip(request)}", window_seconds=60, limit=10
+    )
     active_supported = _profile_active_supported_check(supabase)
     columns = "id, full_name, position, department, photo_url, kiosk_pin_hash" + (
         ", active" if active_supported else ""

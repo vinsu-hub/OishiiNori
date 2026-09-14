@@ -1280,6 +1280,20 @@ export default function App() {
                           : 'Choose payment first'}{' '}
                       <ArrowRight size={16} />
                     </button>
+                    {effectiveChannel !== 'dine_in_qr' && (
+                      <p style={{ fontSize: 11, color: '#918378', margin: '8px 0 0', textAlign: 'center' }}>
+                        By submitting, you agree to be contacted about this order. See our{' '}
+                        <a
+                          href="https://oishii-nori-landing.vercel.app/privacy"
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ color: '#a51f26' }}
+                        >
+                          Privacy Policy
+                        </a>
+                        .
+                      </p>
+                    )}
                   </>
                 )}
               </>

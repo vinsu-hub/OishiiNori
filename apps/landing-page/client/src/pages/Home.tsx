@@ -263,7 +263,13 @@ export default function Home({ initialData }: { initialData?: HomeInitialData } 
         <div className="footer-brand"><img src={logo} alt="Oishii Nori logo" width={78} height={78} loading="lazy" /><p>Good food, good mood.<br />See you at the table.</p></div>
         <div className="footer-links"><a href="https://instagram.com" target="_blank" rel="noreferrer"><Instagram size={14} /> Instagram</a><a href="tel:+630000000000"><Phone size={14} /> Call the kitchen</a></div>
         <div className="newsletter"><p>SUBSCRIBE TO OISHII NEWS</p><form onSubmit={(e) => { e.preventDefault(); setEmail(""); }}><input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="your email" aria-label="Email for newsletter" /><button aria-label="Subscribe"><ArrowRight size={15} /></button></form><small>Fresh dispatches from the kitchen.</small></div>
-        <div className="footer-bottom"><span>© 2024 Oishii Nori</span><span>寿司の専門家</span><span>Made with appetite.</span></div>
+        <div className="footer-bottom">
+          <span>© 2024 Oishii Nori</span>
+          <span>寿司の専門家</span>
+          <span>Made with appetite.</span>
+          <a href="/privacy" style={{ color: "inherit" }}>Privacy Policy</a>
+          <a href="/terms" style={{ color: "inherit" }}>Terms &amp; Conditions</a>
+        </div>
       </footer>
     </main>
   );

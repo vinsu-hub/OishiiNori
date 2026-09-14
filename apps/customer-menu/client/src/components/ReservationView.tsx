@@ -440,6 +440,13 @@ export default function ReservationView({ onBack }: { onBack: () => void }) {
                     : 'Request this table'}{' '}
                 <ArrowRight size={16} />
               </button>
+              <p style={{ fontSize: 11, color: '#918378', margin: '8px 0 0', textAlign: 'center' }}>
+                By submitting, you agree to be contacted about this reservation. See our{' '}
+                <a href="https://oishii-nori-landing.vercel.app/privacy" target="_blank" rel="noreferrer" style={{ color: '#a51f26' }}>
+                  Privacy Policy
+                </a>
+                .
+              </p>
             </>
           )}
         </div>

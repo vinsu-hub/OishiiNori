@@ -1,4 +1,5 @@
 import logging
+import os
 import traceback
 
 from fastapi import FastAPI, Request
@@ -31,11 +32,34 @@ from app.routers import (
     utility_logs,
 )
 
-app = FastAPI(title="Oishii Nori Command Suite API")
+# Security-hardening pass: this used to be allow_origins=["*"]. Auth here is
+# a Bearer token (never a cookie), so a wildcard never exposed session
+# hijacking -- this tightening is hygiene, not closing an active exploit.
+# Real frontend origins + local Vite dev ports (see SYSTEM_GUIDE.md's local
+# dev port list: dashboard-web 3000, staff-clock 5174, customer-menu 5175,
+# landing-page 5176).
+ALLOWED_ORIGINS = [
+    "https://oishii-nori-dashboard.vercel.app",
+    "https://oishii-nori-menu.vercel.app",
+    "https://oishii-nori-staff-clock.vercel.app",
+    "https://oishii-nori-landing.vercel.app",
+    "http://localhost:3000",
+    "http://localhost:5174",
+    "http://localhost:5175",
+    "http://localhost:5176",
+]
+
+docs_enabled = os.environ.get("ENABLE_API_DOCS") == "true"
+app = FastAPI(
+    title="Oishii Nori Command Suite API",
+    docs_url="/docs" if docs_enabled else None,
+    redoc_url="/redoc" if docs_enabled else None,
+    openapi_url="/openapi.json" if docs_enabled else None,
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -55,10 +79,12 @@ def unhandled_exception_handler(request: Request, exc: Exception):
     """
     logger.error("Unhandled error on %s %s\n%s", request.method, request.url.path,
                  "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+    origin = request.headers.get("origin")
+    headers = {"Access-Control-Allow-Origin": origin} if origin in ALLOWED_ORIGINS else {}
     return JSONResponse(
         status_code=500,
         content={"detail": f"Internal server error: {type(exc).__name__}: {exc}"},
-        headers={"Access-Control-Allow-Origin": "*"},
+        headers=headers,
     )
 
 
