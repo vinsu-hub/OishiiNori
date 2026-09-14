@@ -1858,6 +1858,10 @@ export function arriveReservation(id: string): Promise<ApiReservation> {
  * transaction once within the kitchen lead window of its start_time. No
  * server-side cron on this plan -- polled from the Floor Plan on the same
  * interval it already polls tables/transactions/reservations on. */
-export function fireAdvanceOrders(): Promise<{ fired: string[]; skipped: string[]; checked: number }> {
+export function fireAdvanceOrders(): Promise<{
+  fired: string[];
+  skipped: { id: string; reason: string }[];
+  checked: number;
+}> {
   return request('/reservations/fire-advance-orders');
 }

@@ -37,30 +37,33 @@ def apply_inventory_movement(
     table = "ingredients" if ingredient_id else "stock_items"
     target_id = ingredient_id or stock_item_id
 
-    target_result = (
-        supabase.table(table).select("current_stock").eq("id", target_id).maybe_single().execute()
-    )
+    target_result = supabase.table(table).select("id").eq("id", target_id).maybe_single().execute()
     if not target_result or not target_result.data:
         raise HTTPException(status_code=404, detail=f"{'Ingredient' if ingredient_id else 'Stock item'} not found")
 
-    current_stock = float(target_result.data["current_stock"])
-
     if type in ("trans_out", "transfer_out", "sale_consumption"):
-        new_stock = current_stock - quantity
+        delta = -quantity
     elif type in ("trans_in", "delivery", "transfer_in", "count_adjustment", "sale_consumption_reversal"):
-        new_stock = current_stock + quantity
+        delta = quantity
     else:
         raise HTTPException(status_code=400, detail=f"Unknown movement type: {type}")
 
-    target_update = {"current_stock": new_stock}
+    # A single atomic `current_stock = current_stock + delta` UPDATE
+    # (migration 0046's adjust_ingredient_stock/adjust_stock_item_level RPCs)
+    # rather than a select-then-absolute-write -- two concurrent movements
+    # against the same row (e.g. a POS sale and a manual count adjustment
+    # landing at nearly the same instant) used to race here, with the second
+    # write silently discarding the first's delta.
+    rpc_name = "adjust_ingredient_stock" if ingredient_id else "adjust_stock_item_level"
+    supabase.rpc(rpc_name, {"p_id": target_id, "p_delta": delta}).execute()
+
     # Most-recent-cost costing: a receiving movement with a supplied cost
     # becomes the ingredient's new unit_cost. No weighted-average, no
     # validation against a "real" cost -- just the latest known price.
     # stock_items has no unit_cost column, so this only ever applies to
     # ingredients (unit_cost_snapshot is simply ignored for a stock item).
     if ingredient_id and type in ("delivery", "trans_in") and unit_cost_snapshot is not None:
-        target_update["unit_cost"] = unit_cost_snapshot
-    supabase.table(table).update(target_update).eq("id", target_id).execute()
+        supabase.table("ingredients").update({"unit_cost": unit_cost_snapshot}).eq("id", target_id).execute()
 
     insert_result = (
         supabase.table("inventory_movements")

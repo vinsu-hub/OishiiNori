@@ -655,18 +655,31 @@ def place_reservation(
                 detail=f"Table {table['label']} is already placed for another reservation in this window",
             )
 
-    updated = (
-        supabase.table("reservations")
-        .update(
-            {
-                "table_id": body.table_id,
-                "placed_at": datetime.now(timezone.utc).isoformat(),
-                "placed_by": user.id,
-            }
+    try:
+        updated = (
+            supabase.table("reservations")
+            .update(
+                {
+                    "table_id": body.table_id,
+                    "placed_at": datetime.now(timezone.utc).isoformat(),
+                    "placed_by": user.id,
+                }
+            )
+            .eq("id", reservation_id)
+            .execute()
         )
-        .eq("id", reservation_id)
-        .execute()
-    )
+    except APIError as e:
+        # reservations_no_table_overlap (migration 0047) -- the hard DB-level
+        # backstop for the exact TOCTOU window the check above closes for the
+        # common case: two concurrent placements can both pass the Python
+        # overlap check before either commits. Surface the same 409 either
+        # way so the API contract doesn't change.
+        if e.code == "23P01":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Table {table['label']} is already placed for another reservation in this window",
+            )
+        raise HTTPException(status_code=502, detail=f"Could not place the reservation: {e.message}")
     return _to_reservation_out({**updated.data[0], "tables": table})
 
 
@@ -888,7 +901,7 @@ def fire_advance_orders(user: CurrentUser = Depends(get_current_user)):
     )
 
     fired: list[str] = []
-    skipped: list[str] = []
+    skipped: list[dict] = []
     for r in candidates:
         if threshold < time.fromisoformat(r["start_time"]):
             continue  # not within the lead window yet
@@ -899,48 +912,59 @@ def fire_advance_orders(user: CurrentUser = Depends(get_current_user)):
             # Table since unmapped, or placed_by missing (shouldn't happen --
             # placement always stamps both together) -- skip this one rather
             # than fail the whole batch; it'll be retried next tick.
-            skipped.append(r["id"])
+            skipped.append({"id": r["id"], "reason": "table unmapped or placed_by missing"})
             continue
 
-        item_rows = (
-            supabase.table("reservation_items")
-            .select("*, reservation_item_addons(addon_id, quantity)")
-            .eq("reservation_id", r["id"])
-            .execute()
-            .data
-        )
-        if not item_rows:
-            skipped.append(r["id"])
-            continue
-
-        items = [
-            TransactionItemCreate(
-                product_size_id=i["product_size_id"],
-                quantity=i["quantity"],
-                held_ingredients=i.get("held_ingredients") or [],
-                addons=[
-                    TransactionItemAddonCreate(addon_id=a["addon_id"], quantity=a["quantity"])
-                    for a in (i.get("reservation_item_addons") or [])
-                ],
+        # Everything past this point can genuinely fail for one reservation
+        # (a product deactivated since booking, the placing employee's
+        # account since removed, a transient DB error, ...) without that
+        # being anyone else's problem. This poll-driven endpoint has no
+        # per-reservation isolation otherwise -- an uncaught exception here
+        # would abort the whole call and silently block every *other* due
+        # reservation's advance order from firing too, for as long as staff
+        # keep the Floor Plan open. Isolate it: log and skip, don't propagate.
+        try:
+            item_rows = (
+                supabase.table("reservation_items")
+                .select("*, reservation_item_addons(addon_id, quantity)")
+                .eq("reservation_id", r["id"])
+                .execute()
+                .data
             )
-            for i in item_rows
-        ]
+            if not item_rows:
+                skipped.append({"id": r["id"], "reason": "no staged items"})
+                continue
 
-        transaction = _create_transaction_row(
-            supabase,
-            employee_id=r["placed_by"],
-            items=items,
-            order_type="dine_in",
-            table_number=pos_table_number,
-            guest_count=r["party_size"],
-        )
+            items = [
+                TransactionItemCreate(
+                    product_size_id=i["product_size_id"],
+                    quantity=i["quantity"],
+                    held_ingredients=i.get("held_ingredients") or [],
+                    addons=[
+                        TransactionItemAddonCreate(addon_id=a["addon_id"], quantity=a["quantity"])
+                        for a in (i.get("reservation_item_addons") or [])
+                    ],
+                )
+                for i in item_rows
+            ]
 
-        supabase.table("reservations").update(
-            {
-                "advance_order_fired_at": datetime.now(timezone.utc).isoformat(),
-                "transaction_id": transaction.id,
-            }
-        ).eq("id", r["id"]).execute()
-        fired.append(r["id"])
+            transaction = _create_transaction_row(
+                supabase,
+                employee_id=r["placed_by"],
+                items=items,
+                order_type="dine_in",
+                table_number=pos_table_number,
+                guest_count=r["party_size"],
+            )
+
+            supabase.table("reservations").update(
+                {
+                    "advance_order_fired_at": datetime.now(timezone.utc).isoformat(),
+                    "transaction_id": transaction.id,
+                }
+            ).eq("id", r["id"]).execute()
+            fired.append(r["id"])
+        except Exception as e:  # noqa: BLE001 -- isolate one bad reservation, never the whole batch
+            skipped.append({"id": r["id"], "reason": str(e)[:200]})
 
     return {"fired": fired, "skipped": skipped, "checked": len(candidates)}
