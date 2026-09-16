@@ -37,6 +37,7 @@ import {
   ChevronDown,
   X,
   Undo2,
+  Star,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -155,6 +156,9 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
       : []),
     ...(isManagerOrExecutive || hasGrant('refund-approval')
       ? [{ icon: Undo2, label: 'Refund Approval', href: '/refund-approval' }]
+      : []),
+    ...(isManagerOrExecutive || hasGrant('reviews')
+      ? [{ icon: Star, label: 'Customer Reviews', href: '/reviews' }]
       : []),
     ...(isManagerOrExecutive || hasGrant('loss-log')
       ? [{ icon: AlertCircle, label: 'Loss Log', href: '/loss-log' }]

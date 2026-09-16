@@ -106,3 +106,41 @@ export function submitReservation(payload: SubmitReservationPayload): Promise<Re
 export function fetchReservationStatus(id: string): Promise<ReservationStatus> {
   return request(`/public/reservations/${id}`);
 }
+
+// --- Customer Reviews ---------------------------------------------------
+
+export interface SubmitReviewPayload {
+  is_anonymous: boolean;
+  customer_name?: string | null;
+  rating: number;
+  body: string;
+  idempotency_key: string;
+}
+
+export interface ReviewSubmitResult {
+  id: string;
+  status: 'pending' | 'approved' | 'rejected';
+}
+
+export function submitReview(payload: SubmitReviewPayload): Promise<ReviewSubmitResult> {
+  return request('/public/reviews', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+// No session on this device -- same posture as apps/customer-menu's
+// uploadProofOfPayment: just POSTs the file with no Authorization header,
+// the review's own unguessable id is the access control (see the matching
+// backend endpoint's docstring). Optional second step after submitReview()
+// -- a failed/skipped photo upload never invalidates the review itself.
+export async function uploadReviewPhoto(reviewId: string, file: File): Promise<ReviewSubmitResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await fetch(`${API_BASE_URL}/public/reviews/${reviewId}/photo`, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => null);
+    throw new Error(errBody?.detail || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<ReviewSubmitResult>;
+}

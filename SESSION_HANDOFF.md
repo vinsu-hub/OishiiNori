@@ -1,7 +1,7 @@
 # Oishii Nori Command Suite — Session Handoff
 
-**Date:** 2026-08-20 (build session) · **Updated:** 2026-09-07 (this update: Reservations Floor Plan gains a seating side panel + a page-level day selector shared with the Requests tab, and reservations are now linked to the transaction that seated them (`seated_at` + `transaction_id`). **Deployed and production-verified.**)
-**Repo:** `D:\ioshinori\oishii-nori-command-suite` — pushed to GitHub: `https://github.com/vinsu-hub/OishiiNori` (private, `main` branch), commit `35bc279`. Everything described in this document is committed and pushed as of this write-up — nothing is sitting as local-only changes.
+**Date:** 2026-08-20 (build session) · **Updated:** 2026-09-16 (this update, three rounds: (1) a standalone kitchen print-bridge service, a new POS "Delivery" order type feeding the existing rider dispatch queue, and a Total Items Sold drill-down on Business Day Report; (2) a public Customer Reviews feature — a Landing Page submission form feeding a new admin moderation tab; (3) a smoke test of that feature plus an optional photo-upload add-on. **All code is built and locally verified against the live shared Supabase DB but NOT yet committed, pushed, or deployed to Vercel. Migrations `0051`, `0052`, and `0053` themselves ARE applied to the live database already**, and the `review-photos` Storage bucket is created (all end-to-end tested against production, all test data/storage objects cleaned up) — the DB is ahead of the deployed code, which is safe/backward-compatible (old deployed code simply doesn't reference the new columns/tables/bucket yet) but means this needs a commit+push+deploy pass before the new features are actually reachable. `TODO.md` is currently empty of pending items.)
+**Repo:** `D:\ioshinori\oishii-nori-command-suite` — GitHub: `https://github.com/vinsu-hub/OishiiNori` (private, `main` branch). Last pushed commit: `c4991bd` (2026-09-15's round). **This update's work is sitting as local, uncommitted changes** — new backend files (`supabase/migrations/0051_pos_delivery_orders.sql`, `0052_customer_reviews.sql`, `0053_review_photos.sql`, their `apply_00NN.py` scripts, `app/routers/reviews.py`, `scripts/create_review_photos_bucket.py`), new frontend pages (`Reviews.tsx`, `Review.tsx`), the new `kitchen-print-bridge/` directory, plus modifications across both dashboard-web and landing-page. Nothing in this section has been deployed to Vercel yet.
 **Live deployments (Vercel, team `vince-tamis`, Git-integration auto-deploy on push to `main`):**
 - Dashboard: `https://oishii-nori-dashboard.vercel.app`
 - Staff Clock kiosk: `https://oishii-nori-staff-clock.vercel.app`
@@ -11,6 +11,266 @@
 **Reference spec:** `D:\ioshinori\Oishii_Nori_Menu_Ingredients.xlsx`; real physical stock transcription (2026-08-24): `D:\ioshinori\Oishii_Nori_Physical_Stock_Transcription.xlsx`
 **Structural reference (read-only, different client, never push/pull):** `D:\SMFC_POS\saint_michael_pos\saint_michael_pos` — used throughout this project as a structural cross-compare/port source (executive-tier pages, POS Terminal richness, Inventory Count, HR Payroll, Malaya AI → Oishii AI).
 **Build status: functionally complete, everything verified live.** All 5 apps deployed to production — each re-verified against the live API/dashboard after deploy (not just local dev). The two long-standing blockers from this project's earlier history — the Supabase `hr` schema not being exposed to PostgREST, and Oishii AI's LLM provider having no working billing — were both resolved on 2026-08-22 and remain resolved. **The system is feature-complete but not yet ready for real customers** — see `LAUNCH_CHECKLIST.md` for the real-business-data gaps (menu photos, ingredient costs, table setup, placeholder contact info, leftover QA accounts) that need addressing first.
+
+---
+
+## 📸 Customer Reviews smoke test + optional photo upload (built 2026-09-16, migrations applied, NOT yet deployed)
+
+Two follow-ups to the Customer Reviews feature built earlier the same day: a real smoke test of
+the already-built (but never visually confirmed) submit → moderate flow, and a new optional
+photo attach, planned via `/plan`.
+
+**Smoke test**: submitted a real review through `POST /public/reviews`, confirmed it appeared in
+the dashboard's `GET /reviews?status=pending`, approved it, confirmed it moved to the approved
+list. Clean end to end; test row deleted afterward.
+
+**Photo upload** — deliberately mirrors the exact pattern this codebase already uses twice
+(digital-menu's proof-of-payment upload, Menu Editing's product-photo upload) instead of a third
+approach, per an explicit design call during planning: the already-tested `POST /public/reviews`
+JSON endpoint stays untouched; a photo is attached in a **second, separate step** by the review's
+own id, same "create, then optionally attach a file to what you just created" shape as
+`digital_orders.payment_proof_url`. New migration `0053_review_photos.sql` (`reviews.photo_url`,
+simple column add) and a new `review-photos` Storage bucket
+(`scripts/create_review_photos_bucket.py`, public/5MB/jpeg-png-webp, same idempotent
+one-off-script pattern as `create_payment_buckets.py`) — both applied/created live. New
+unauthenticated `POST /public/reviews/{id}/photo` in `reviews.py` (copies
+`digital_menu.py`'s `upload_proof_of_payment` field-for-field: content-type allowlist, read-then-
+size-check, `{review_id}/{uuid4}.{ext}` storage path, gated on the review still being `pending`
+so a decided review's record can't be altered after the fact). `ReviewOut` gains `photo_url`.
+
+**Frontend**: `apps/landing-page`'s `/review` page gets an optional file input + object-URL
+preview (same UX as customer-menu's proof-of-payment picker); submit uploads the photo only
+after the review itself is successfully recorded, and a failed photo upload degrades gracefully
+(toast noting the photo didn't attach, but the review is never lost) — mirrors
+`handleSubmitWithProof`'s exact error-handling shape in `apps/customer-menu/client/src/App.tsx`.
+New `uploadReviewPhoto()` in landing-page's `api.ts`, plain `fetch`+`FormData`, no auth header,
+same posture as `uploadProofOfPayment`. Dashboard's `Reviews.tsx` renders a small clickable
+thumbnail (opens full-size in a new tab) in both the Pending and History sections when a photo
+is present.
+
+**Verified end-to-end against the live shared Supabase DB**: a real review submitted, a real PNG
+uploaded and confirmed publicly fetchable (200, correct content-type) at the resulting URL,
+confirmed visible in the dashboard's Pending list; a non-image content-type 400s; a 6MB file
+400s (5MB cap); attaching a photo to an already-approved review 400s; a review submitted with no
+photo at all still works completely unchanged (stays fully optional, never a new barrier to
+leaving feedback). All test rows and the one uploaded test storage object deleted afterward, zero
+residue. `tsc --noEmit` clean on both `dashboard-web` and `landing-page`; both `vite build`
+succeed, including landing-page's full prerender pass against live data.
+
+**Not done / deferred**: one photo maximum per review (not a gallery) and it's optional, both
+per explicit decisions during planning — a gallery/multi-photo version would need a related-rows
+table instead of a single column, a materially bigger change than this one call for.
+
+---
+
+## 🖨️ Kitchen print bridge, POS Delivery order type, Business Day Report items (built 2026-09-16, NOT yet deployed)
+
+Three features, planned and built in one session via `/plan`. **Blocked on one manual step**
+before any of this is live — see "What's outstanding" below. Full pending-action checklist also
+tracked in the new root `TODO.md`.
+
+**1. Kitchen print bridge** (`kitchen-print-bridge/`, new standalone directory, not part of any
+deployed app). A local Python service meant to run on a machine/tablet next to a physical
+Xprinter XP-58H (58mm, ESC/POS, Bluetooth Classic/SPP) at the kitchen station — polls
+`GET /transactions?kitchen_status=preparing` (new optional filter param added to the existing
+endpoint, same pattern as its `status` param) every 20s, matching Kitchen Display's own poll
+interval, and prints a physical prep ticket the moment a kitchen staffer accepts an order
+(`queued` → `preparing`), never on mere arrival at `queued`. SQLite-deduped
+(`printed_tickets.db`) so a restart or repeat poll never double-prints. Authenticates as a
+dedicated Supabase user account (this backend has no API-key/service-account path) via a direct
+GoTrue password-grant call, mirroring `system_health_check.py`'s proven `login()` pattern rather
+than `supabase-py`'s `create_client()` (documented elsewhere in this file as incompatible with
+the newer key format). `--test-print` renders a sample ticket through `python-escpos`'s `Dummy`
+profile to a local file/console — no paired printer or backend needed to proof formatting.
+`kitchen-print-bridge/README.md` covers Windows/Linux Bluetooth pairing, finding the rfcomm/COM
+port, and running the service.
+
+**Real bugs caught testing ticket rendering against actual production order data** (not just the
+synthetic sample): item lines routinely exceeded the 32-char paper width uncontrolled (only
+held-ingredient/add-on sub-lines were wrapped, not the main product-name line) — fixed by
+wrapping every line class the same way. A real size label ("Small (2–3 pax)") uses a Unicode en
+dash that the printer's default codepage can't represent and was silently printing as a mangled
+byte — fixed with an ASCII-normalization pass (`_ascii_safe()`) applied to every string reaching
+the printer. A long delivery customer name was being hard-truncated mid-word with no indication
+(`[:width]` slicing) instead of wrapping like the address already did — fixed to wrap
+consistently. Also fixed a cosmetic bug where every log line printed twice (`python-escpos`
+calls `logging.basicConfig()` on import, attaching a second handler to the root logger that the
+bridge's own logger was propagating into — fixed with `logger.propagate = False`).
+
+**2. POS "Delivery" order type** — a third option alongside Dine In/Takeout for walk-in
+customers who want their order delivered, behaving like Takeout (no table) but capturing the
+same customer/address/barangay info the Customer Menu's own delivery flow already collects,
+minus payment method (POS already handles that in person via its existing Cash/GCash/Card
+picker — confirmed no new payment UI was needed). Per an explicit decision during planning, a
+POS-originated delivery also feeds the **existing rider dispatch queue** (`Delivery.tsx` /
+`DeliveryRequests.tsx`) rather than being a second, disconnected system.
+
+Migration `0051_pos_delivery_orders.sql` (not yet applied — see below): widens
+`transactions.order_type`'s CHECK to include `'delivery'`; widens `deliveries` from
+QR-delivery-only (`digital_order_id not null unique`) to an exactly-one-of pair with a new
+nullable `transaction_id` — mirrors this project's existing polymorphic-FK convention (e.g.
+`inventory_movements.ingredient_id`/`stock_item_id`). Backend: `transactions.py`'s
+`create_transaction`/`_create_transaction_row` validate and look up the delivery fee from
+`delivery_fees` *before* the transaction insert (fixed during testing — it originally ran the
+lookup after, which would have left an orphaned open transaction behind on an invalid barangay);
+`deliveries.py`'s `list_deliveries`/`mark_delivery_done` generalized to adapt either a
+digital-order-sourced or a transaction-sourced delivery into the same `DigitalOrderResponse`
+shape (`fetch_transaction_delivery_ticket()`, new, in `transactions.py`), so `Delivery.tsx`/
+`DeliveryMonitor.tsx` needed zero changes. `POSTerminal.tsx` gets the third order-type button, a
+delivery-details mini-form with a live fee readout from the existing (already public)
+`GET /public/delivery-fees`. `OrderQueue.tsx` gets a small "Delivery" badge.
+
+**A real regression caught in testing, would have broken an already-live feature.** `deliveries.py`'s generalized `list_deliveries`/`mark_delivery_done` unconditionally selected the
+new `deliveries.transaction_id` column — which doesn't exist until migration `0051` is applied.
+Deployed as-is (even briefly, before the migration lands), this would have 500'd the
+**currently-live production rider Delivery panel** for every rider/manager/executive, not just
+broken the new feature. Fixed with the same `_*_supported_check()` feature-detection guard this
+backend already uses everywhere else for exactly this "migration might not be applied yet"
+scenario — verified `GET /deliveries` still returns real pending/approved deliveries correctly
+with migration `0051` unapplied.
+
+**3. Business Day Report: Total Items Sold, sortable by category** — each business day row is
+now expandable (click to reveal, lazy-fetched and cached per date) into a drill-down table of
+everything sold that day: product, category, quantity sold, revenue. Sortable by clicking any
+column header (click again to flip direction), mirroring this project's established
+sortable-column convention (the one previously on Inventory Count, since replaced by a computed
+sheet — the convention itself was reused, not that specific now-removed page). Backend: extracted
+`analytics.py`'s existing `get_top_products` item-aggregation join into a shared
+`_aggregate_items_sold()` helper (now also selecting `products.category`, previously unselected),
+reused by a new `GET /business-days/{business_date}/items` (same `business-day-report`
+manager/executive gate as the existing list endpoint) instead of building a second aggregation.
+`get_top_products`/Trend Analysis itself is unchanged (same response shape, same
+sort-by-revenue-then-limit behavior) — verified via direct endpoint calls after the refactor.
+
+**Verified locally against the live shared Supabase DB** (dev and prod share one project — see
+below for exactly what that means here): backend app imports clean; core dine-in/takeout
+charge → void cycle regression-tested with zero change in behavior; `kitchen_status` filter
+returns correct real orders; `GET /business-days/{date}/items` returns correct real
+category/quantity/revenue aggregation and 403s a role without the grant, matching the existing
+list endpoint; attempting to charge `order_type=delivery` pre-migration fails as expected (a DB
+CHECK-constraint 500, not silently succeeding) with no orphaned row left behind. Frontend:
+`tsc --noEmit` clean (0 errors), full `vite build` production build succeeds, dev server serves
+and transforms both changed pages without error. No browser-automation tool was available in
+this environment, so the POS Delivery form's actual click-through and the Business Day Report
+row-expand interaction were not visually verified — worth a manual pass.
+
+**Update, later the same day: migration `0051` applied and fully end-to-end verified.** A later
+attempt to run `apply_0051.py` succeeded (the earlier permission-gate block wasn't hit the second
+time). Verified live: charged a real Delivery order through POS Terminal, confirmed it created a
+`transactions` row with `order_type='delivery'` plus a linked `deliveries` row (fee correctly
+looked up from `delivery_fees` by barangay), confirmed it appeared in the rider's Delivery panel
+exactly like a QR-originated delivery, confirmed `mark_delivery_done` completed it, and confirmed
+pre-existing QR-originated deliveries still round-trip unchanged through the now-generalized
+`deliveries.py`. All test data cleaned up (voided transaction + its `deliveries` row deleted).
+
+**Still outstanding:**
+- None of this session's *code* is committed, pushed, or deployed yet — only the two migrations
+  (`0051`, `0052` — see the Customer Reviews section below) are live on the database. The
+  deployed Vercel apps still run yesterday's code, which doesn't reference either migration's new
+  columns/tables, so this is a safe, backward-compatible gap, not a broken state — but the new
+  features aren't reachable by anyone until a commit+push+deploy happens.
+- No browser-automation tool was available in this environment, so the POS Delivery form's actual
+  click-through and the Business Day Report row-expand interaction were verified via direct API
+  calls and `tsc`/`vite build`, not visually in a real browser — worth a manual pass.
+- The dedicated Supabase account the print bridge should authenticate as ("Kitchen Printer") has
+  not been created yet — `kitchen-print-bridge/README.md` §1a covers this as a first-time setup
+  step.
+- The XP-58H has not been physically paired/tested over Bluetooth against this code — only
+  proofed via `--test-print`'s `Dummy` profile and real order data rendered to text/bytes, never
+  a real print.
+
+---
+
+## ⭐ Customer Reviews: public submission + admin moderation tab (built 2026-09-16, migration applied, NOT yet deployed)
+
+A new public feedback channel, planned via `/plan`: a "Leave a review" entry point on the public
+Landing Page (named or anonymous, 1–5 stars, free text up to 600 chars), staged into a `pending`
+queue — nothing becomes visible anywhere publicly. Staff approve or reject it in a new dashboard
+tab. Follows the exact "public submit → staff moderation queue" shape this codebase already uses
+for digital orders and reservations, reusing that pattern's rate-limiting/idempotency-key
+helpers rather than inventing a new one.
+
+**Backend**: new standalone `reviews` table (migration `0052_customer_reviews.sql`, applied live)
+— `is_anonymous`, `customer_name` (nullable, DB-constrained to be required unless anonymous),
+`rating` (1–5), `body` (1–600 chars, both DB-constrained and Pydantic-validated), `status`
+(`pending`/`approved`/`rejected`), `rejected_reason`, `decided_by`/`decided_at` (set on either
+outcome — named neutrally, not `approved_by`, since that read oddly on a rejected row; caught and
+renamed during the build, before the migration was ever applied). New router
+`app/routers/reviews.py`: `POST /public/reviews` (unauthenticated, rate-limited at 5/min/IP —
+tighter than orders' 20/min since this is free text with no order to fulfill, idempotency-key
+replay-safe) and `GET /reviews` / `POST /reviews/{id}/approve` / `/reject` (gated
+`require_role_or_grant(user, "reviews", "manager", "executive")` — a deliberately stricter
+server-side gate than the older, ungated digital-orders queue, since a review carries a real
+customer name). New `"reviews"` grantable-page key added to both `permissions.py` and its
+mirrored `permissions.ts`.
+
+**A real bug caught in testing, not unique to this feature**: `idempotency_keys.key` is a `uuid`
+column, but every endpoint's own Pydantic schema (including three pre-existing ones —
+`CreateTransactionRequest`, `CreateDigitalOrderRequest`, the reservation equivalent) types the
+field as a plain `str`, unvalidated. A malformed key reaches the DB insert/select and 500s with a
+raw Postgres type error instead of degrading. Fixed for this new endpoint (`_valid_idempotency_key()`
+in `reviews.py`, treats a malformed key the same as no key at all rather than failing the whole
+submission) — the same latent gap in the three older endpoints was left alone as out of scope for
+this task, not touched.
+
+**Frontend — dashboard-web**: new `pages/Reviews.tsx` (Pending queue with Approve/a
+reason-required Reject dialog, plus a read-only History section), new Sidebar entry gated the
+same `isManagerOrExecutive || hasGrant('reviews')` pattern as Business Day Report/Refund
+Approval, new route registration via `lazyWithReload`.
+
+**Frontend — landing-page**: new `/review` route + page (`pages/Review.tsx` — anonymous/named
+toggle, a clickable 5-star picker, a textarea with a live 600-char counter, submits with a
+client-generated `crypto.randomUUID()` idempotency key), a new "Leave a review" entry in the nav
+and footer. **A real bug caught in testing**: the nav CTA was first built with `wouter`'s
+`useLocation()` hook for in-app navigation — this broke the landing page's build-time prerender
+step (`scripts/prerender.mjs` server-renders `Home.tsx` via Vite's SSR module loader with no
+`window`/`location` global, so the hook threw `ReferenceError: location is not defined` and
+silently killed real-content seeding for crawlers). Fixed by reverting to a plain `<a href>`
+(matching how the existing `/privacy`/`/terms` footer links already navigate) and extending one
+CSS selector so it still picks up the nav's button styling — `Home.tsx` itself needed no router
+import at all, same as before this change.
+
+**Verified end-to-end against the live shared Supabase DB** (migration `0052` applied and fully
+tested, not left pending like `0051` briefly was): a named and an anonymous submission (the
+anonymous one's `customer_name` confirmed `null` even when the client sent one anyway), a missing
+name on a non-anonymous submission correctly 400s, a malformed idempotency key now degrades
+instead of 500ing, a real UUID key replayed twice returns the same review id (no duplicate row),
+6 rapid submissions from one IP correctly 429 after 5, a 601-char body 422s from Pydantic before
+ever reaching the DB. Staff side: an ungated role gets 403, approve/reject both work once and
+409 on a repeat, reject without a reason 400s. All test rows deleted afterward, zero residue.
+`tsc --noEmit` clean on both dashboard-web and landing-page; `vite build` succeeds for both,
+including landing-page's full prerender pass against live menu/hours data.
+
+**Not done / deferred**: approved reviews are never surfaced anywhere public (no testimonials
+section) — a deliberate first-version scope cut per an explicit decision during planning, a clear
+follow-up if wanted later. No browser click-through of the actual star-picker/character-counter
+UI (verified via `tsc`/build + direct API calls only, same environment limitation as the section
+above).
+
+---
+
+## 🎫 Reservation ticket workflow, audit-driven concurrency hardening, offline resilience, security/legal round (completed 2026-09-15)
+
+Five back-to-back rounds in one session. Migrations `0045`-`0050`, applied live via the established `apply_00NN.py` psycopg2 pattern.
+
+**1. Cashier-driven reservation tickets, replacing auto-seating.** The old "Seat via POS" flow contradicted itself — it opened a POS order the instant a reservation existed, with no cashier decision point and no record the party had actually arrived. Migration `0045`: `reservations.table_id` made nullable (a reservation now starts unplaced — a hold on capacity, not a table), new `placed_at`/`placed_by`/`arrived_at`/`has_advance_order`/`advance_order_fired_at` columns, new `reservation_items`/`reservation_item_addons` tables (advance order staging), `transactions.related_transaction_id` (for Add Order). New `POST /reservations/{id}/place` (cashier assigns a table → ticket), `POST /reservations/{id}/arrive` (party physically arrives). `FloorPlanPanel.tsx` reworked around a `ReservationPhase` (`unplaced→placed→overdue→arrived→completed`) with a ticket dialog (Place/Void, Arrived/Cancel) replacing the old auto-seat branches. **Add Order**: a closed dine-in transaction gets an "Add Order" button (`OrderQueue.tsx`) that opens POS with `?addon_to=<id>`, sending `related_transaction_id` instead of a reservation link and skipping the reservation-block check entirely for that request.
+
+**2. Three audit skills installed and run** (`website-security-hardening`, `website-legal-compliance`, `website-launch-checklist`, extracted from `D:\VARIX DOCS\audit`) against the full 5-app/1-API codebase. Findings drove everything below.
+
+**3. Two real race conditions fixed, both audit-and-user-flagged, both closed with atomic Postgres RPCs** (a stateless Vercel serverless backend can't lock in-process across container instances):
+- **Inventory stock lost-update**: any select-then-write stock mutation (ingredient/stock-item deduction, inventory movements) raced under concurrent sales. Fixed with `adjust_ingredient_stock`/`adjust_stock_item_level` (`0046`) — atomic `current_stock = current_stock + delta` — now used by `_adjust_ingredients_for_size`, `apply_inventory_movement`, and every other mutation site.
+- **Reservation table double-booking**: two near-simultaneous placements could seat the same table twice. Fixed with `0047`'s `btree_gist` EXCLUDE constraint (`reservations_no_table_overlap`) — a hard, timing-independent DB guarantee, not a Python check. A second, subtler TOCTOU (capacity-pool bin-packing feasibility for *unplaced* bookings, not expressible as a simple exclusion constraint) was found and fixed later in the session — see round 5.
+- Also hardened: `fire_advance_orders` (no cron on Vercel Hobby — see below) isolates each reservation's fire attempt in its own try/except so one bad item can't block the rest, and re-checks `table.active`/`product.active` before firing rather than trusting a stale advance order.
+
+**4. Offline resilience + idempotency + 12-hour time standardization.** Idempotency keys (`0048`, client-generated UUID, replay-safe) added to `submit_reservation`, `create_transaction`, `submit_digital_order`. `customer-menu` gained a full offline queue (`lib/offlineQueue.ts`, `OfflineBanner.tsx`, `QueuedSubmissionView.tsx`) matching the pattern already in dashboard-web/staff-clock — a 10s `AbortController` timeout converts a hung/slow connection into a detectable network failure, which enqueues to localStorage and auto-flushes on reconnect using the same idempotency key so a retry can never double-submit. Every `.toLocaleTimeString()`/`.toLocaleString()` site across all 4 frontends replaced with explicit `hour12: true` helpers (`formatTime12h`/`formatTimestamp12h`/`formatDateTime12h`) — no more locale-dependent 24-hour display.
+
+**5. Rate limiting, legal pages, and the remaining audit gaps.** `0049`'s `check_rate_limit` RPC (atomic counter, same shared-DB pattern) backs `enforce_rate_limit()` (`app/rate_limit.py`), applied to `/kiosk/verify` (10/min per employee+IP — the concrete PIN-guessing risk the audit found), `/public/reservations`, `/public/orders`, `/public/tables/availability`. New `/privacy` and `/terms` pages on landing-page (PH Data Privacy Act framed, explicitly marked as template/not-legal-advice, accurately says no tracking cookies since none exist), linked from the footer; a consent line added near the submit button on both customer-menu checkout and reservation forms. CORS locked from `allow_origins=["*"]` to the 4 real frontend origins + localhost dev ports; 3 security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`) added to all 4 frontends' `vercel.json`; `/docs`/`/redoc`/`/openapi.json` gated behind `ENABLE_API_DOCS` (on locally, off in production). The booking-time capacity TOCTOU (accepted-risk from round 3) closed for real: `0050`'s `submit_reservation_atomic` RPC takes a date-scoped advisory lock (`pg_advisory_xact_lock(hashtext(reservation_date))`) and re-runs the same best-fit-decreasing bin-pack check inside the insert transaction, so nothing can change between check and write.
+
+**Vercel Hobby-plan gotcha hit mid-session**: a sub-daily `crons` entry in `vercel.json` silently fails the *entire* project's deploy (Hobby only allows daily cron). Fixed by dropping the cron block entirely and calling `fire_advance_orders` as a normal authenticated endpoint from `FloorPlanPanel.tsx`'s existing poll loop instead.
+
+**Verified end-to-end against production** (not mocked): concurrent-duplicate-request tests for idempotency, stock adjustment, and reservation placement; a real concurrent booking race for the last table capacity (exactly one of N racing requests succeeded, no 500s); rate-limit probe (10 requests pass, 11th+ gets 429); CORS allow/deny by origin; fire-advance-orders correctly skipping a reservation whose staged item went inactive, with a clear reason. All 6 commits (`4a561c4`→`c4991bd`) confirmed green across all 5 Vercel projects via GitHub deployment status checks; `oishii-nori-landing.vercel.app`'s known stale-alias quirk (documented in `LAUNCH_CHECKLIST.md`) hit again and was re-fixed with `vercel alias set`. All test data self-cleaned, zero residue confirmed.
+
+**Not done / deliberately accepted**: the narrower "same reservation placed at two different tables by two racing clicks" metadata race (0047's constraint prevents double-*holding* a table, not this); no idempotency key on customer-menu's proof-of-payment upload; no automated cleanup job for `rate_limit_counters`/`idempotency_keys` (harmless growth at this business's scale).
 
 ---
 

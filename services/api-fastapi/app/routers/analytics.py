@@ -71,6 +71,46 @@ def get_sales_trend(
     )
 
 
+def _aggregate_items_sold(supabase, date_from: date, date_to: date) -> list[dict]:
+    """Per-product quantity/revenue aggregated from actual transaction_items
+    over [date_from, date_to] (non-voided sales only) -- the same join/
+    aggregation get_top_products below already did, extracted so
+    business_days.py's per-day items breakdown (single-day range) can reuse
+    it instead of a second implementation. Also pulls `category` (not
+    previously selected here) since that breakdown needs it; get_top_products
+    itself still ignores it, so its own response shape is unchanged."""
+    start, end = _range_bounds(date_from, date_to)
+    tx_result = (
+        supabase.table("transactions")
+        .select("id")
+        .gte("opened_at", start)
+        .lte("opened_at", end)
+        .neq("status", "voided")
+        .execute()
+    )
+    transaction_ids = [t["id"] for t in tx_result.data]
+    if not transaction_ids:
+        return []
+
+    items_result = (
+        supabase.table("transaction_items")
+        .select("quantity, unit_price, product_sizes(product_id, products(name, category))")
+        .in_("transaction_id", transaction_ids)
+        .execute()
+    )
+    agg: dict[str, dict] = defaultdict(
+        lambda: {"name": "", "category": "", "quantity_sold": 0.0, "revenue": 0.0}
+    )
+    for item in items_result.data:
+        size = item["product_sizes"]
+        product_id = size["product_id"]
+        agg[product_id]["name"] = size["products"]["name"]
+        agg[product_id]["category"] = size["products"]["category"]
+        agg[product_id]["quantity_sold"] += float(item["quantity"])
+        agg[product_id]["revenue"] += float(item["quantity"]) * float(item["unit_price"])
+    return [{"product_id": pid, **v} for pid, v in agg.items()]
+
+
 @router.get("/analytics/top-products", response_model=TopProductsResponse)
 def get_top_products(
     date_from: date | None = Query(None),
@@ -85,36 +125,12 @@ def get_top_products(
     date_from, date_to = _resolve_range(date_from, date_to)
 
     supabase = get_supabase()
-    start, end = _range_bounds(date_from, date_to)
-    tx_result = (
-        supabase.table("transactions")
-        .select("id")
-        .gte("opened_at", start)
-        .lte("opened_at", end)
-        .neq("status", "voided")
-        .execute()
-    )
-    transaction_ids = [t["id"] for t in tx_result.data]
-    if not transaction_ids:
-        return TopProductsResponse(date_from=date_from, date_to=date_to, products=[])
-
-    items_result = (
-        supabase.table("transaction_items")
-        .select("quantity, unit_price, product_sizes(product_id, products(name))")
-        .in_("transaction_id", transaction_ids)
-        .execute()
-    )
-    agg: dict[str, dict] = defaultdict(lambda: {"name": "", "quantity_sold": 0.0, "revenue": 0.0})
-    for item in items_result.data:
-        size = item["product_sizes"]
-        product_id = size["product_id"]
-        agg[product_id]["name"] = size["products"]["name"]
-        agg[product_id]["quantity_sold"] += float(item["quantity"])
-        agg[product_id]["revenue"] += float(item["quantity"]) * float(item["unit_price"])
-
+    agg_rows = _aggregate_items_sold(supabase, date_from, date_to)
     rows = [
-        TopProductRow(product_id=pid, product_name=v["name"], quantity_sold=v["quantity_sold"], revenue=v["revenue"])
-        for pid, v in agg.items()
+        TopProductRow(
+            product_id=r["product_id"], product_name=r["name"], quantity_sold=r["quantity_sold"], revenue=r["revenue"]
+        )
+        for r in agg_rows
     ]
     rows.sort(key=lambda r: r.revenue, reverse=True)
 

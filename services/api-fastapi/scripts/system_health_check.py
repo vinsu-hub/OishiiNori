@@ -327,7 +327,7 @@ def check_tables_write(manager_headers: dict, base: str, label: str):
     # header. Assert it's present on the real POST, not just the preflight.
     check(
         f"{label}: POST /tables response carries Access-Control-Allow-Origin",
-        r.headers.get("access-control-allow-origin") == "*",
+        r.headers.get("access-control-allow-origin") == PROD_APPS["dashboard"],
         f"got {r.headers.get('access-control-allow-origin')!r}",
     )
     if not ok:

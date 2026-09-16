@@ -17,6 +17,7 @@ GRANTABLE_PAGES: dict[str, str] = {
     "stock": "Stock & Inventory (manage)",
     "business-day-report": "Business Day Report",
     "refund-approval": "Refund Approval",
+    "reviews": "Customer Reviews",
     "loss-log": "Loss Log",
     "utility-log": "Utility Log",
     "pos-management": "POS Management",

@@ -15,6 +15,8 @@ from app.schemas import (
     BundleFulfillmentResponse,
     CreateTransactionRequest,
     DeductedIngredient,
+    DeliveryCaptureIn,
+    KitchenStatus,
     KitchenStatusUpdateRequest,
     SwitchTableRequest,
     TransactionResponse,
@@ -56,6 +58,7 @@ _transaction_order_context_supported: bool | None = None
 _transaction_order_number_supported: bool | None = None
 _business_days_supported: bool | None = None
 _transaction_card_vat_supported: bool | None = None
+_deliveries_transaction_id_supported: bool | None = None
 
 
 def _business_days_supported_check(supabase) -> bool:
@@ -159,6 +162,44 @@ def _transaction_card_vat_supported_check(supabase) -> bool:
         except APIError:
             _transaction_card_vat_supported = False
     return _transaction_card_vat_supported
+
+
+def _deliveries_transaction_id_supported_check(supabase) -> bool:
+    """Migration 0051 feature-detection, same pattern as the checks above --
+    deliveries.transaction_id (POS-originated delivery orders)."""
+    global _deliveries_transaction_id_supported
+    if _deliveries_transaction_id_supported is None:
+        try:
+            supabase.table("deliveries").select("transaction_id").limit(1).execute()
+            _deliveries_transaction_id_supported = True
+        except APIError:
+            _deliveries_transaction_id_supported = False
+    return _deliveries_transaction_id_supported
+
+
+def _attach_deliveries(supabase, transactions: list[dict]) -> None:
+    """Batch-fetches the deliveries row for delivery-order-type transactions
+    and attaches it as t['delivery'] -- mirrors _attach_item_addons. No-ops
+    (leaves delivery: None) when migration 0051 hasn't been applied yet."""
+    for t in transactions:
+        t.setdefault("delivery", None)
+    delivery_tx_ids = [t["id"] for t in transactions if t.get("order_type") == "delivery"]
+    if not delivery_tx_ids or not _deliveries_transaction_id_supported_check(supabase):
+        return
+    deliveries_result = (
+        supabase.table("deliveries")
+        .select("*, profiles(full_name)")
+        .in_("transaction_id", delivery_tx_ids)
+        .execute()
+    )
+    deliveries_by_tx: dict[str, dict] = {}
+    for row in deliveries_result.data:
+        rider = row.pop("profiles", None) or {}
+        row["rider_name"] = rider.get("full_name")
+        deliveries_by_tx[row["transaction_id"]] = row
+    for t in transactions:
+        if t["id"] in deliveries_by_tx:
+            t["delivery"] = deliveries_by_tx[t["id"]]
 
 
 def _attach_item_addons(supabase, items: list[dict]) -> None:
@@ -326,7 +367,66 @@ def _fetch_transaction_with_items(supabase, transaction_id: str) -> dict | None:
     transaction.setdefault("payment_method", None)
     transaction.setdefault("card_type", None)
     transaction.setdefault("force_vat_exempt", False)
+    _attach_deliveries(supabase, [transaction])
     return transaction
+
+
+def fetch_transaction_delivery_ticket(supabase, transaction_id: str) -> dict | None:
+    """Adapter for the rider dispatch queue (deliveries.py): maps a POS-
+    originated delivery transaction into the same shape DigitalOrderResponse
+    already has, so the existing rider UI (Delivery.tsx/DeliveryMonitor.tsx)
+    can render it with zero changes, regardless of whether the order started
+    as a QR submission or a POS Charge. `id`/`digital_order_id` are both set
+    to the transaction id -- the frontend only ever uses `order.id` as a
+    React key and to call markDeliveryDone(order.id), never to look up a
+    real digital_orders row, so this is a safe stand-in, not a lie about
+    provenance (order_channel="delivery" + status="approved" already make
+    that explicit)."""
+    transaction = _fetch_transaction_with_items(supabase, transaction_id)
+    if not transaction or transaction.get("order_type") != "delivery" or not transaction.get("delivery"):
+        return None
+    items = [
+        {
+            "id": item["id"],
+            "digital_order_id": transaction_id,
+            "product_size_id": item["product_size_id"],
+            "quantity": item["quantity"],
+            "unit_price": item["unit_price"],
+            "held_ingredients": item.get("held_ingredients") or [],
+        }
+        for item in transaction["items"]
+    ]
+    addons = [
+        {
+            "id": addon["id"],
+            "digital_order_id": transaction_id,
+            "addon_id": addon["addon_id"],
+            "addon_name": addon.get("addon_name"),
+            "quantity": addon["quantity"],
+            "unit_price": addon["unit_price"],
+        }
+        for item in transaction["items"]
+        for addon in item.get("addons") or []
+    ]
+    return {
+        "id": transaction_id,
+        "order_number": transaction.get("order_number") or 0,
+        "table_number": None,
+        "order_channel": "delivery",
+        "status": "approved",
+        "payment_method": transaction.get("payment_method") or "cash",
+        "payment_proof_url": None,
+        "customer_note": None,
+        "subtotal": transaction["total_amount"],
+        "approved_by": None,
+        "approved_at": transaction["opened_at"],
+        "rejected_reason": None,
+        "transaction_id": transaction_id,
+        "created_at": transaction["opened_at"],
+        "items": items,
+        "addons": addons,
+        "delivery": transaction["delivery"],
+    }
 
 
 def _create_transaction_row(
@@ -344,6 +444,7 @@ def _create_transaction_row(
     card_type: str | None = None,
     force_vat_exempt: bool = False,
     related_transaction_id: str | None = None,
+    delivery: DeliveryCaptureIn | None = None,
 ) -> TransactionResponse:
     """Insert a transaction + items, deduct non-bundle recipe ingredients,
     and compute discount/tax. Shared by POS sale creation (create_transaction
@@ -395,6 +496,25 @@ def _create_transaction_row(
         if inactive_addons:
             raise HTTPException(status_code=400, detail=f"Add-ons no longer available: {inactive_addons}")
 
+    # Walk-in delivery (0051): validated and the fee looked up *before* the
+    # transaction row is inserted below -- same reasoning as the discount
+    # lookup just below, everything that can 400 happens before any write,
+    # so an invalid barangay never leaves an orphaned open transaction with
+    # no items behind. The fee is looked up server-side, exactly like
+    # digital_menu.py's submit_digital_order -- never trusted from the client.
+    delivery_fee: float | None = None
+    if order_type == "delivery" and delivery and _deliveries_transaction_id_supported_check(supabase):
+        fee_result = (
+            supabase.table("delivery_fees")
+            .select("fee")
+            .eq("barangay", delivery.barangay)
+            .maybe_single()
+            .execute()
+        )
+        if not fee_result or not fee_result.data:
+            raise HTTPException(status_code=400, detail=f"No delivery fee configured for {delivery.barangay}")
+        delivery_fee = float(fee_result.data["fee"])
+
     discount = None
     discount_amount = 0.0
     vat_exempt = False
@@ -442,6 +562,25 @@ def _create_transaction_row(
     transaction_insert = supabase.table("transactions").insert(insert_payload).execute()
     transaction = transaction_insert.data[0]
     transaction_id = transaction["id"]
+
+    # Stage the validated delivery capture in the *same* `deliveries` table
+    # used by QR-originated deliveries (transaction_id instead of
+    # digital_order_id) so it shows up in the existing rider dispatch queue
+    # (deliveries.py) unchanged -- never a second, parallel table.
+    delivery_out: dict | None = None
+    if delivery_fee is not None and delivery:
+        delivery_row = {
+            "transaction_id": transaction_id,
+            "customer_name": delivery.customer_name,
+            "customer_phone": delivery.customer_phone,
+            "address": delivery.address,
+            "landmark": delivery.landmark,
+            "barangay": delivery.barangay,
+            "delivery_fee": delivery_fee,
+        }
+        inserted_delivery = supabase.table("deliveries").insert(delivery_row).execute().data[0]
+        inserted_delivery["rider_name"] = None
+        delivery_out = inserted_delivery
 
     held_ingredients_supported = _held_ingredients_supported_check(supabase)
 
@@ -542,7 +681,7 @@ def _create_transaction_row(
     transaction.setdefault("payment_method", None)
     transaction.setdefault("card_type", None)
     transaction.setdefault("force_vat_exempt", False)
-    return TransactionResponse(**transaction, items=inserted_items)
+    return TransactionResponse(**transaction, items=inserted_items, delivery=delivery_out)
 
 
 @router.post("/transactions", response_model=TransactionResponse)
@@ -560,6 +699,8 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
         raise HTTPException(status_code=403, detail="Cannot record a sale under another employee's id")
     if body.order_type == "dine_in" and not body.table_number:
         raise HTTPException(status_code=400, detail="Table number is required for dine-in orders")
+    if body.order_type == "delivery" and not body.delivery:
+        raise HTTPException(status_code=400, detail="Customer/address details are required for delivery orders")
     # Payment method is a hard requirement at the POS (unlike a discount) so the
     # till reconciles. The digital-order approval path doesn't come through here.
     if not body.payment_method:
@@ -653,6 +794,7 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
         card_type=body.card_type,
         force_vat_exempt=body.force_vat_exempt,
         related_transaction_id=body.related_transaction_id,
+        delivery=body.delivery,
     )
 
     if consumed_override_id is not None:
@@ -727,6 +869,7 @@ def _validate_reservation_override(supabase, override_id, table_id, blocking_res
 def list_transactions(
     on_date: date | None = Query(None, alias="date"),
     status_filter: str | None = Query(None, alias="status"),
+    kitchen_status: KitchenStatus | None = Query(None),
     user: CurrentUser = Depends(get_current_user),
 ):
     supabase = get_supabase()
@@ -744,6 +887,8 @@ def list_transactions(
         query = query.gte("opened_at", start).lte("opened_at", end)
     if status_filter:
         query = query.eq("status", status_filter)
+    if kitchen_status and _kitchen_status_supported_check(supabase):
+        query = query.eq("kitchen_status", kitchen_status)
     transactions_result = query.order("opened_at", desc=True).execute()
     transactions = transactions_result.data
     if not transactions:
@@ -763,6 +908,8 @@ def list_transactions(
     for item in all_items:
         item["bundle_fulfilled"] = item["id"] in fulfilled_ids
         items_by_transaction[item["transaction_id"]].append(item)
+
+    _attach_deliveries(supabase, transactions)
 
     out = []
     for t in transactions:

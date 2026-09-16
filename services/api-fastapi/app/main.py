@@ -26,6 +26,7 @@ from app.routers import (
     recipes,
     refunds,
     reservations,
+    reviews,
     settings,
     stock_items,
     transactions,
@@ -111,6 +112,7 @@ app.include_router(business_days.router)
 app.include_router(refunds.router)
 app.include_router(deliveries.router)
 app.include_router(payment_methods.router)
+app.include_router(reviews.router)
 
 
 @app.get("/health")

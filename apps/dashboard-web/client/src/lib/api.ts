@@ -316,7 +316,7 @@ export function fetchAddons(): Promise<ApiMenuAddon[]> {
 
 export type KitchenStatus = 'queued' | 'preparing' | 'ready' | 'completed';
 export type TransactionStatus = 'open' | 'closed' | 'voided';
-export type OrderType = 'dine_in' | 'takeout';
+export type OrderType = 'dine_in' | 'takeout' | 'delivery';
 // Distinct from any digital-order payment-method type -- POS supports one
 // more value (card).
 export type TransactionPaymentMethod = 'cash' | 'gcash' | 'card';
@@ -360,6 +360,15 @@ export interface CreateTransactionRequest {
   // Add Order: this sale is additional items for an already-completed
   // transaction, rung up as its own charge/kitchen ticket.
   related_transaction_id?: string;
+  // Required when order_type === 'delivery' -- same customer/address/
+  // barangay fields the digital-menu delivery flow already captures.
+  delivery?: {
+    customer_name: string;
+    customer_phone: string;
+    address: string;
+    landmark?: string | null;
+    barangay: string;
+  } | null;
   // Set once per submission attempt and resent on every retry/replay of
   // that attempt -- lets the backend recognize and no-op a duplicate if a
   // request actually succeeded but its response was lost. See createTransaction().
@@ -413,6 +422,7 @@ export interface ApiTransaction {
   force_vat_exempt: boolean;
   related_transaction_id: string | null;
   items: ApiTransactionItem[];
+  delivery: ApiDeliveryDetail | null;
 }
 
 function _createTransactionRequest(body: CreateTransactionRequest): Promise<ApiTransaction> {
@@ -1666,6 +1676,26 @@ export function fetchBusinessDays(): Promise<ApiBusinessDay[]> {
   return request('/business-days');
 }
 
+export interface ApiBusinessDayItemRow {
+  product_id: string;
+  product_name: string;
+  category: string;
+  quantity_sold: number;
+  revenue: number;
+}
+
+export interface ApiBusinessDayItems {
+  business_date: string;
+  items: ApiBusinessDayItemRow[];
+}
+
+// Total items sold that business day (Business Day Report's expandable
+// per-day drill-down) -- same underlying aggregation as fetchTopProducts,
+// scoped to one day instead of a range.
+export function fetchBusinessDayItems(businessDate: string): Promise<ApiBusinessDayItems> {
+  return request(`/business-days/${businessDate}/items`);
+}
+
 // --- Refund approval flow (WS-12) ------------------------------------------
 // Void is queued-only (see voidTransaction's backend gate); a preparing/ready
 // order goes through this instead -- a cashier files a request, an
@@ -1721,6 +1751,20 @@ export function fetchDeliveries(status?: 'pending' | 'completed' | 'all'): Promi
 
 export function markDeliveryDone(digitalOrderId: string): Promise<ApiDigitalOrder> {
   return request(`/deliveries/${digitalOrderId}/done`, { method: 'POST' });
+}
+
+export interface ApiDeliveryFee {
+  barangay: string;
+  zone: string;
+  fee: number;
+}
+
+// Same public, unauthenticated barangay/fee lookup apps/customer-menu already
+// uses for its own delivery form -- reused here (via the authenticated
+// request() helper for consistency; the endpoint itself needs no auth) so
+// POS Terminal's Delivery order type shows the identical fee schedule.
+export function fetchDeliveryFees(): Promise<ApiDeliveryFee[]> {
+  return request('/public/delivery-fees');
 }
 
 // --- Online payment methods (GCash/Maya/Maribank/... -- admin-manageable) --
@@ -1875,4 +1919,36 @@ export function fireAdvanceOrders(): Promise<{
   checked: number;
 }> {
   return request('/reservations/fire-advance-orders');
+}
+
+// ---------------------------------------------------------------------------
+// Customer Reviews (public submission on Landing Page -> this moderation queue)
+// ---------------------------------------------------------------------------
+
+export type ReviewStatus = 'pending' | 'approved' | 'rejected';
+
+export interface ApiReview {
+  id: string;
+  is_anonymous: boolean;
+  customer_name: string | null;
+  rating: number;
+  body: string;
+  status: ReviewStatus;
+  rejected_reason: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+  photo_url: string | null;
+  created_at: string;
+}
+
+export function fetchReviews(status?: ReviewStatus): Promise<ApiReview[]> {
+  return request(`/reviews${status ? `?status=${status}` : ''}`);
+}
+
+export function approveReview(id: string): Promise<ApiReview> {
+  return request(`/reviews/${id}/approve`, { method: 'POST' });
+}
+
+export function rejectReview(id: string, reason: string): Promise<ApiReview> {
+  return request(`/reviews/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) });
 }

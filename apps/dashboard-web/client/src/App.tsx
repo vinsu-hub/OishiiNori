@@ -46,6 +46,7 @@ const PayrollSettings = lazyWithReload(() => import('./pages/PayrollSettings'), 
 const Employees = lazyWithReload(() => import('./pages/Employees'), 'Employees');
 const BusinessDayReport = lazyWithReload(() => import('./pages/BusinessDayReport'), 'BusinessDayReport');
 const RefundApproval = lazyWithReload(() => import('./pages/RefundApproval'), 'RefundApproval');
+const Reviews = lazyWithReload(() => import('./pages/Reviews'), 'Reviews');
 const Delivery = lazyWithReload(() => import('./pages/Delivery'), 'Delivery');
 const DeliveryRequests = lazyWithReload(() => import('./pages/DeliveryRequests'), 'DeliveryRequests');
 const OnlineOrders = lazyWithReload(() => import('./pages/OnlineOrders'), 'OnlineOrders');
@@ -89,6 +90,7 @@ function Router() {
         <Route path={'/inventory-movements'} component={InventoryMovements} />
         <Route path={'/business-day-report'} component={BusinessDayReport} />
         <Route path={'/refund-approval'} component={RefundApproval} />
+        <Route path={'/reviews'} component={Reviews} />
         <Route path={'/delivery'} component={Delivery} />
         <Route path={'/delivery-requests'} component={DeliveryRequests} />
         <Route path={'/online-orders'} component={OnlineOrders} />

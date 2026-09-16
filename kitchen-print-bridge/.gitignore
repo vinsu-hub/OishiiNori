@@ -1,0 +1,5 @@
+printed_tickets.db
+bridge.log
+bridge.log.*
+test_ticket.bin
+test_ticket.txt

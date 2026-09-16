@@ -46,7 +46,7 @@ TransactionStatus = Literal["open", "closed", "voided"]
 # 0013) -- see supabase/migrations/0014_phase2_order_fulfillment.sql and the
 # report for why this is added here rather than worked around.
 KitchenStatus = Literal["queued", "preparing", "ready", "completed"]
-OrderType = Literal["dine_in", "takeout"]
+OrderType = Literal["dine_in", "takeout", "delivery"]
 # Distinct from PaymentMethod below (a plain str, used by digital_orders,
 # since its value set is admin-manageable) -- POS's set is fixed (cash,
 # gcash, card), and reusing/widening that type would change the
@@ -191,6 +191,31 @@ class TransactionItemCreate(BaseModel):
     addons: list[TransactionItemAddonCreate] = Field(default_factory=list)
 
 
+class DeliveryDetailOut(BaseModel):
+    customer_name: str
+    customer_phone: str
+    address: str | None = None
+    landmark: str | None = None
+    barangay: str | None = None
+    delivery_fee: float | None = None
+    maps_pin_url: str | None = None
+    rider_id: str | None = None
+    rider_name: str | None = None
+    delivered_at: datetime | None = None
+
+
+class DeliveryCaptureIn(BaseModel):
+    """Walk-in delivery info captured on the POS when order_type='delivery'
+    -- same field set as CreateDigitalOrderRequest's delivery-only fields,
+    so a delivery order looks the same regardless of where it started."""
+
+    customer_name: str
+    customer_phone: str
+    address: str
+    landmark: str | None = None
+    barangay: str
+
+
 class CreateTransactionRequest(BaseModel):
     employee_id: str
     items: list[TransactionItemCreate]
@@ -204,6 +229,10 @@ class CreateTransactionRequest(BaseModel):
     guest_count: int | None = Field(default=None, gt=0)
     payment_method: TransactionPaymentMethod | None = None
     card_type: TransactionCardType | None = None
+    # Required when order_type == "delivery" (validated in the router,
+    # same "requirement depends on another field" posture as
+    # CreateDigitalOrderRequest's own delivery fields).
+    delivery: DeliveryCaptureIn | None = None
     # Independent of any discount's own vat_exempt -- lets the cashier book
     # an order non-VAT with no VAT-exempt discount applied (POS VAT/Non-VAT
     # toggle). A discount's own vat_exempt still applies regardless of this.
@@ -272,6 +301,7 @@ class TransactionResponse(BaseModel):
     force_vat_exempt: bool = False
     related_transaction_id: str | None = None
     items: list[TransactionItemResponse] = Field(default_factory=list)
+    delivery: DeliveryDetailOut | None = None
 
 
 class VoidTransactionRequest(BaseModel):
@@ -376,19 +406,6 @@ class DeliveryFeeOut(BaseModel):
     fee: float
 
 
-class DeliveryDetailOut(BaseModel):
-    customer_name: str
-    customer_phone: str
-    address: str | None = None
-    landmark: str | None = None
-    barangay: str | None = None
-    delivery_fee: float | None = None
-    maps_pin_url: str | None = None
-    rider_id: str | None = None
-    rider_name: str | None = None
-    delivered_at: datetime | None = None
-
-
 class DigitalOrderItemResponse(BaseModel):
     id: str
     digital_order_id: str
@@ -453,6 +470,42 @@ class DigitalOrderStatusResponse(BaseModel):
 
 class RejectDigitalOrderRequest(BaseModel):
     reason: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Customer Reviews (public submission -> staff moderation queue)
+# ---------------------------------------------------------------------------
+
+ReviewStatus = Literal["pending", "approved", "rejected"]
+
+
+class CreateReviewRequest(BaseModel):
+    is_anonymous: bool = False
+    # Required unless is_anonymous -- validated in the router (the
+    # requirement depends on another field, same posture as
+    # CreateDigitalOrderRequest's delivery-only fields).
+    customer_name: str | None = None
+    rating: int = Field(ge=1, le=5)
+    body: str = Field(min_length=1, max_length=600)
+    idempotency_key: str | None = None
+
+
+class ReviewOut(BaseModel):
+    id: str
+    is_anonymous: bool
+    customer_name: str | None = None
+    rating: int
+    body: str
+    status: ReviewStatus
+    rejected_reason: str | None = None
+    decided_by: str | None = None
+    decided_at: datetime | None = None
+    photo_url: str | None = None
+    created_at: datetime
+
+
+class RejectReviewRequest(BaseModel):
+    reason: str
 
 
 # ---------------------------------------------------------------------------
@@ -1197,6 +1250,19 @@ class TopProductsResponse(BaseModel):
     date_from: date
     date_to: date
     products: list[TopProductRow]
+
+
+class BusinessDayItemRow(BaseModel):
+    product_id: str
+    product_name: str
+    category: str
+    quantity_sold: float
+    revenue: float
+
+
+class BusinessDayItemsResponse(BaseModel):
+    business_date: date
+    items: list[BusinessDayItemRow]
 
 
 # ---------------------------------------------------------------------------

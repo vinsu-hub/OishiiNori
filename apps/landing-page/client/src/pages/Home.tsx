@@ -1,6 +1,6 @@
 /* OIshiinori style reminder: reference-faithful Japanese editorial menu, warm ivory paper, charcoal ink, OIshiinori Vermilion, asymmetric poster rhythm. */
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRight, Clock3, Instagram, MapPin, Menu as MenuIcon, Phone, Send, X } from "lucide-react";
+import { ArrowRight, Clock3, Instagram, MapPin, Menu as MenuIcon, Phone, Send, Star, X } from "lucide-react";
 import { MapView } from "@/components/Map";
 import { ApiProduct, BusinessHours, fetchBusinessHours, fetchMenu } from "@/lib/api";
 import { formatTime12h } from "@/lib/utils";
@@ -111,6 +111,7 @@ export default function Home({ initialData }: { initialData?: HomeInitialData } 
           <nav className="nav-links nav-links-right">
             <button onClick={() => scrollToId("menu")}>Menu</button>
             <button onClick={() => scrollToId("about")}>Branches</button>
+            <a href="/review" className="nav-link-anchor">Leave a review</a>
             <button className="nav-cta" onClick={() => scrollToId("reserve")}>Reserve <ArrowRight size={12} /></button>
           </nav>
         </div>
@@ -261,7 +262,7 @@ export default function Home({ initialData }: { initialData?: HomeInitialData } 
 
       <footer className="site-footer">
         <div className="footer-brand"><img src={logo} alt="Oishii Nori logo" width={78} height={78} loading="lazy" /><p>Good food, good mood.<br />See you at the table.</p></div>
-        <div className="footer-links"><a href="https://instagram.com" target="_blank" rel="noreferrer"><Instagram size={14} /> Instagram</a><a href="tel:+630000000000"><Phone size={14} /> Call the kitchen</a></div>
+        <div className="footer-links"><a href="https://instagram.com" target="_blank" rel="noreferrer"><Instagram size={14} /> Instagram</a><a href="tel:+630000000000"><Phone size={14} /> Call the kitchen</a><a href="/review"><Star size={14} /> Leave a review</a></div>
         <div className="newsletter"><p>SUBSCRIBE TO OISHII NEWS</p><form onSubmit={(e) => { e.preventDefault(); setEmail(""); }}><input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="your email" aria-label="Email for newsletter" /><button aria-label="Subscribe"><ArrowRight size={15} /></button></form><small>Fresh dispatches from the kitchen.</small></div>
         <div className="footer-bottom">
           <span>© 2024 Oishii Nori</span>

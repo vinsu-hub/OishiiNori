@@ -24,6 +24,7 @@ import {
   Search,
   Users,
   ShoppingBag,
+  Truck,
   Percent,
   PauseCircle,
   X,
@@ -38,6 +39,7 @@ import {
   Square,
 } from 'lucide-react';
 import {
+  ApiDeliveryFee,
   ApiDiscountType,
   ApiMenuAddon,
   ApiProduct,
@@ -54,6 +56,7 @@ import {
   QueuedOfflineError,
   fetchAddons,
   fetchBusinessSettings,
+  fetchDeliveryFees,
   fetchDiscountTypes,
   fetchPosTablesOverview,
   fetchProducts,
@@ -284,6 +287,25 @@ export default function POSTerminal() {
   // order non-VAT with no VAT-exempt discount applied.
   const [vatOverride, setVatOverride] = useState<'vat' | 'non_vat'>('vat');
 
+  // Delivery (0051): a walk-in who wants their order delivered instead of
+  // carried out. Behaves like Takeout (no table) everywhere else; this is
+  // just the customer/address/barangay capture the digital-menu delivery
+  // flow already has. deliveryFees loads once, same posture as tableOptions.
+  const [deliveryCustomerName, setDeliveryCustomerName] = useState('');
+  const [deliveryCustomerPhone, setDeliveryCustomerPhone] = useState('');
+  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [deliveryLandmark, setDeliveryLandmark] = useState('');
+  const [deliveryBarangay, setDeliveryBarangay] = useState('');
+  const [deliveryFees, setDeliveryFees] = useState<ApiDeliveryFee[]>([]);
+  useEffect(() => {
+    fetchDeliveryFees()
+      .then(setDeliveryFees)
+      .catch(() => {
+        /* Delivery is still selectable with no fee readout if this fails -- not worth blocking. */
+      });
+  }, []);
+  const selectedDeliveryFee = deliveryFees.find((f) => f.barangay === deliveryBarangay)?.fee ?? null;
+
   // Reservation block: when the typed table has a live confirmed reservation
   // the POS shows it as reserved and blocks the charge until a manager
   // overrides (mirrors the Owner's Request PIN re-auth). overrideId is the
@@ -481,10 +503,27 @@ export default function POSTerminal() {
     if (cart.length === 0) b.push('Add at least one item');
     if (orderType === 'dine_in' && !tableNumber.trim()) b.push('Pick a table');
     if (tableBlocked) b.push('Table is reserved — manager override required');
+    if (orderType === 'delivery') {
+      if (!deliveryCustomerName.trim()) b.push('Enter the customer name');
+      if (!deliveryCustomerPhone.trim()) b.push('Enter a phone number');
+      if (!deliveryAddress.trim()) b.push('Enter the delivery address');
+      if (!deliveryBarangay) b.push('Pick a barangay');
+    }
     if (!paymentMethod) b.push('Select a payment method');
     if (paymentMethod === 'card' && !cardType) b.push('Select debit or credit');
     return b;
-  }, [cart.length, orderType, tableNumber, tableBlocked, paymentMethod, cardType]);
+  }, [
+    cart.length,
+    orderType,
+    tableNumber,
+    tableBlocked,
+    deliveryCustomerName,
+    deliveryCustomerPhone,
+    deliveryAddress,
+    deliveryBarangay,
+    paymentMethod,
+    cardType,
+  ]);
 
   const subtotal = useMemo(
     () =>
@@ -822,6 +861,16 @@ export default function POSTerminal() {
         reservation_override_id: overrideId ?? undefined,
         reservation_id: orderType === 'dine_in' ? reservationId ?? undefined : undefined,
         related_transaction_id: addonTo ?? undefined,
+        delivery:
+          orderType === 'delivery'
+            ? {
+                customer_name: deliveryCustomerName.trim(),
+                customer_phone: deliveryCustomerPhone.trim(),
+                address: deliveryAddress.trim(),
+                landmark: deliveryLandmark.trim() || null,
+                barangay: deliveryBarangay,
+              }
+            : undefined,
       });
       toast.success(
         `${transaction.order_number != null ? `Order #${transaction.order_number} -- ` : ''}Sale complete -- total ${formatCurrency(
@@ -836,6 +885,11 @@ export default function POSTerminal() {
       setAddonTo(null);
       setPaymentMethod(null);
       setCardType(null);
+      setDeliveryCustomerName('');
+      setDeliveryCustomerPhone('');
+      setDeliveryAddress('');
+      setDeliveryLandmark('');
+      setDeliveryBarangay('');
       loadTableOptions();
     } catch (e) {
       if (e instanceof QueuedOfflineError) {
@@ -911,6 +965,16 @@ export default function POSTerminal() {
                 }`}
               >
                 <ShoppingBag className="w-4 h-4" /> Takeout
+              </button>
+              <button
+                type="button"
+                disabled={!!addonTo}
+                onClick={() => setOrderType('delivery')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm disabled:opacity-60 ${
+                  orderType === 'delivery' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground'
+                }`}
+              >
+                <Truck className="w-4 h-4" /> Delivery
               </button>
             </div>
           </div>
@@ -1295,6 +1359,55 @@ export default function POSTerminal() {
               )}
             </div>
           )}
+          {orderType === 'delivery' && (
+            <div className="space-y-2 rounded-md border p-2">
+              <div className="grid grid-cols-2 gap-2">
+                <Input
+                  placeholder="Customer name"
+                  value={deliveryCustomerName}
+                  onChange={(e) => setDeliveryCustomerName(e.target.value)}
+                  className="h-8 text-sm"
+                />
+                <Input
+                  placeholder="Phone number"
+                  value={deliveryCustomerPhone}
+                  onChange={(e) => setDeliveryCustomerPhone(e.target.value)}
+                  className="h-8 text-sm"
+                />
+              </div>
+              <Input
+                placeholder="Address"
+                value={deliveryAddress}
+                onChange={(e) => setDeliveryAddress(e.target.value)}
+                className="h-8 text-sm"
+              />
+              <Input
+                placeholder="Landmark (optional)"
+                value={deliveryLandmark}
+                onChange={(e) => setDeliveryLandmark(e.target.value)}
+                className="h-8 text-sm"
+              />
+              <div className="flex items-center gap-2">
+                <Select value={deliveryBarangay} onValueChange={setDeliveryBarangay}>
+                  <SelectTrigger className="h-8 text-sm flex-1">
+                    <SelectValue placeholder="Barangay" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {deliveryFees.map((f) => (
+                      <SelectItem key={f.barangay} value={f.barangay}>
+                        {f.barangay} ({f.zone})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {selectedDeliveryFee != null && (
+                  <Badge variant="secondary" className="font-normal shrink-0">
+                    Fee: {formatCurrency(selectedDeliveryFee)}
+                  </Badge>
+                )}
+              </div>
+            </div>
+          )}
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             {orderType === 'dine_in' ? (
               <>
@@ -1320,6 +1433,16 @@ export default function POSTerminal() {
                   </Button>
                   <span>Guests</span>
                 </div>
+              </>
+            ) : orderType === 'delivery' ? (
+              <>
+                <Truck className="w-4 h-4" />
+                <span>Delivery</span>
+                {deliveryBarangay && (
+                  <Badge variant="secondary" className="font-normal">
+                    {deliveryBarangay}
+                  </Badge>
+                )}
               </>
             ) : (
               <>

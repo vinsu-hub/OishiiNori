@@ -304,6 +304,9 @@ export default function OrderQueue() {
                       {t.guest_count ? ` · ${t.guest_count} guests` : ''}
                     </Badge>
                   )}
+                  {t.order_type === 'delivery' && (
+                    <Badge variant="outline">Delivery{t.delivery?.barangay ? ` · ${t.delivery.barangay}` : ''}</Badge>
+                  )}
                   {t.is_owner_request && <Badge variant="secondary">Owner's Request</Badge>}
                   {t.related_transaction_id && (
                     <Badge variant="outline">

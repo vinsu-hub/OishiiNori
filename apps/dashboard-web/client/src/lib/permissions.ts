@@ -23,6 +23,7 @@ export const GRANTABLE_PAGES: GrantablePage[] = [
   { key: 'stock', label: 'Stock & Inventory (manage)', group: 'Stock & Inventory' },
   { key: 'business-day-report', label: 'Business Day Report', group: 'Business & Finance' },
   { key: 'refund-approval', label: 'Refund Approval', group: 'Business & Finance' },
+  { key: 'reviews', label: 'Customer Reviews', group: 'Business & Finance' },
   { key: 'loss-log', label: 'Loss Log', group: 'Business & Finance' },
   { key: 'utility-log', label: 'Utility Log', group: 'Business & Finance' },
   { key: 'pos-management', label: 'POS Management', group: 'Business & Finance' },

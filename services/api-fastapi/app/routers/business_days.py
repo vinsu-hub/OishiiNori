@@ -8,7 +8,7 @@ executive caller -- BusinessDayStatusOut (used by /today, /open, /close)
 simply has no field for it.
 """
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from postgrest.exceptions import APIError
@@ -16,9 +16,12 @@ from postgrest.exceptions import APIError
 from app.auth import CurrentUser, get_current_user, require_role, require_role_or_grant, verify_employee_pin
 from app.deps import get_supabase
 from app.ph_time import ph_day_bounds_utc, today_ph
+from app.routers.analytics import _aggregate_items_sold
 from app.schemas import (
     BusinessDayAdminOut,
     BusinessDayCloseRequest,
+    BusinessDayItemRow,
+    BusinessDayItemsResponse,
     BusinessDayOpenRequest,
     BusinessDayStatusOut,
 )
@@ -191,3 +194,27 @@ def list_business_days(user: CurrentUser = Depends(get_current_user)):
             variance = float(row["cash_register_total"]) - float(row["system_eod_total"])
         rows.append({**row, "variance": variance})
     return rows
+
+
+@router.get("/business-days/{business_date}/items", response_model=BusinessDayItemsResponse)
+def get_business_day_items(business_date: date, user: CurrentUser = Depends(get_current_user)):
+    """Total items sold that business day, by product/category -- the
+    per-day drill-down for the report above. Reuses analytics.py's
+    _aggregate_items_sold (same non-voided-sale aggregation Trend
+    Analysis's top-products already does) scoped to a single day instead
+    of a range. Returned unsorted -- the frontend sorts client-side so
+    every column, including category, is sortable with no re-fetch."""
+    require_role_or_grant(user, "business-day-report", "manager", "executive")
+    supabase = get_supabase()
+    rows = _aggregate_items_sold(supabase, business_date, business_date)
+    items = [
+        BusinessDayItemRow(
+            product_id=r["product_id"],
+            product_name=r["name"],
+            category=r["category"],
+            quantity_sold=r["quantity_sold"],
+            revenue=r["revenue"],
+        )
+        for r in rows
+    ]
+    return BusinessDayItemsResponse(business_date=business_date, items=items)

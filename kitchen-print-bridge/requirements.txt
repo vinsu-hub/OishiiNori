@@ -1,0 +1,7 @@
+python-escpos>=3.1
+pyserial>=3.5
+requests>=2.31
+python-dotenv>=1.0
+# zoneinfo has no bundled IANA tzdata on Windows -- this backfills it.
+# Harmless no-op on Linux, which already has system tzdata.
+tzdata>=2024.1
