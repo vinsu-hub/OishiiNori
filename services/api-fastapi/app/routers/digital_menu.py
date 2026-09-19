@@ -127,7 +127,7 @@ def public_queue_display(request: Request):
     """Read-only feed for the in-restaurant "Now Serving" TV (/tv on the
     customer-menu app). Deliberately exposes nothing but today's order
     numbers grouped by kitchen stage -- no names, phones, items or ids -- so
-    it's safe to leave unauthenticated."""
+    it's safe to leave unauthenticated. POS-originated orders only."""
     if "v" in _queue_display_cache:
         return _queue_display_cache["v"]
     supabase = get_supabase()
@@ -135,13 +135,22 @@ def public_queue_display(request: Request):
     start, end = ph_day_bounds_utc(today_ph())
     rows = (
         supabase.table("transactions")
-        .select("order_number, kitchen_status, kitchen_status_updated_at, opened_at")
+        .select("id, order_number, kitchen_status, kitchen_status_updated_at, opened_at")
         .gte("opened_at", start)
         .lt("opened_at", end)
         .neq("status", "voided")
         .in_("kitchen_status", ["queued", "preparing", "ready"])
         .execute()
     ).data
+    # The TV board is for orders rung up at the POS counter only. Approved
+    # online/QR orders become transactions too, but they're linked back from
+    # digital_orders.transaction_id, so drop those.
+    ids = [r["id"] for r in rows]
+    from_digital: set[str] = set()
+    for i in range(0, len(ids), 200):
+        linked = supabase.table("digital_orders").select("transaction_id").in_("transaction_id", ids[i : i + 200]).execute()
+        from_digital.update(d["transaction_id"] for d in linked.data)
+    rows = [r for r in rows if r["id"] not in from_digital]
     preparing = sorted(r["order_number"] for r in rows if r["kitchen_status"] in ("queued", "preparing") and r["order_number"] is not None)
     ready_rows = [r for r in rows if r["kitchen_status"] == "ready" and r["order_number"] is not None]
     # Most recently readied first, capped so an un-cleared backlog can't overflow the screen.
