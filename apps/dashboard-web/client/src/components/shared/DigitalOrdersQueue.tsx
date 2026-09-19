@@ -396,7 +396,13 @@ export function DigitalOrdersQueue({
                 : approveTarget?.delivery
                   ? ` from ${approveTarget.delivery.customer_name}`
                   : ''}
-              . This will create the sale and send it to the kitchen{channel !== 'dine_in_qr' ? ' as a takeout order' : ''}.
+              .{' '}
+              {approveTarget?.scheduled_for &&
+              new Date(approveTarget.scheduled_for).getTime() > Date.now() + 20 * 60_000
+                ? `This confirms the scheduled order. It goes to the kitchen at ${formatDateTime12h(
+                    new Date(new Date(approveTarget.scheduled_for).getTime() - 20 * 60_000).toISOString()
+                  )}, 20 minutes before it is due.`
+                : `This will create the sale and send it to the kitchen${channel !== 'dine_in_qr' ? ' as a takeout order' : ''}.`}
             </DialogDescription>
           </DialogHeader>
           {approveTarget?.payment_proof_url ? (
