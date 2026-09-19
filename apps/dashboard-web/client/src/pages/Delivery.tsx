@@ -73,8 +73,8 @@ export default function Delivery() {
       <div className="space-y-4 p-4 sm:p-6">
         <Tabs value={tab} onValueChange={(v) => setTab(v as 'pending' | 'pickup')}>
           <TabsList className="h-auto min-h-11 max-w-full overflow-x-auto">
-            <TabsTrigger className="min-h-11 px-4" value="pending">Delivery pending ({orders.length})</TabsTrigger>
-            <TabsTrigger className="min-h-11 px-4" value="pickup">Ready for pick up ({readyCount})</TabsTrigger>
+            <TabsTrigger className="min-h-11 px-4" value="pending">Delivery Pending ({orders.length})</TabsTrigger>
+            <TabsTrigger className="min-h-11 px-4" value="pickup">For Pick Up ({readyCount})</TabsTrigger>
           </TabsList>
         </Tabs>
         {loading && <p className="text-sm text-muted-foreground" role="status">Loading deliveries…</p>}
