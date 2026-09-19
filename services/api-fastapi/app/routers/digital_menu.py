@@ -18,10 +18,12 @@ concepts, not wired into recipe/ingredient deduction -- see migration
 0017's header comment for why.
 """
 
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
 from cachetools import TTLCache
+from pydantic import TypeAdapter
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 
 from app.auth import CurrentUser, get_current_user
@@ -32,6 +34,7 @@ from app.rate_limit import client_ip, enforce_rate_limit
 from app.routers.business_days import is_open_today
 from app.routers.products import _list_products_data
 from app.routers.recipes import _get_recipe_data
+from app.routers.reservations import ADVANCE_ORDER_LEAD_MINUTES
 from app.routers.transactions import _create_transaction_row, _get_vat_rate
 from app.schemas import (
     CreateDigitalOrderRequest,
@@ -119,7 +122,7 @@ def public_delivery_fees():
 
 # The restaurant TV polls this every few seconds and several screens may
 # share one backend instance -- a short cache keeps that from multiplying DB reads.
-_queue_display_cache: TTLCache = TTLCache(maxsize=1, ttl=3)
+_queue_display_cache: TTLCache = TTLCache(maxsize=1, ttl=2)
 
 
 @router.get("/public/queue-display", response_model=QueueDisplayOut)
@@ -127,7 +130,11 @@ def public_queue_display(request: Request):
     """Read-only feed for the in-restaurant "Now Serving" TV (/tv on the
     customer-menu app). Deliberately exposes nothing but today's order
     numbers grouped by kitchen stage -- no names, phones, items or ids -- so
-    it's safe to leave unauthenticated. POS-originated orders only."""
+    it's safe to leave unauthenticated. POS-originated orders only, and the
+    two lists mirror Kitchen Display's own columns: `preparing` is exactly the
+    Preparing column (queued tickets are not shown yet) and `ready` is exactly
+    the Ready column -- a ticket only moves to "Now Serving" when kitchen
+    staff move it there."""
     if "v" in _queue_display_cache:
         return _queue_display_cache["v"]
     supabase = get_supabase()
@@ -151,7 +158,7 @@ def public_queue_display(request: Request):
         linked = supabase.table("digital_orders").select("transaction_id").in_("transaction_id", ids[i : i + 200]).execute()
         from_digital.update(d["transaction_id"] for d in linked.data)
     rows = [r for r in rows if r["id"] not in from_digital]
-    preparing = sorted(r["order_number"] for r in rows if r["kitchen_status"] in ("queued", "preparing") and r["order_number"] is not None)
+    preparing = sorted(r["order_number"] for r in rows if r["kitchen_status"] == "preparing" and r["order_number"] is not None)
     ready_rows = [r for r in rows if r["kitchen_status"] == "ready" and r["order_number"] is not None]
     # Most recently readied first, capped so an un-cleared backlog can't overflow the screen.
     ready_rows.sort(key=lambda r: r["kitchen_status_updated_at"] or r["opened_at"], reverse=True)
@@ -413,15 +420,10 @@ def list_digital_orders(
     return orders
 
 
-@router.post("/digital-orders/{order_id}/approve", response_model=DigitalOrderResponse)
-def approve_digital_order(order_id: str, user: CurrentUser = Depends(get_current_user)):
-    supabase = get_supabase()
-    order = _fetch_digital_order(supabase, order_id)
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
-    if order["status"] != "pending":
-        raise HTTPException(status_code=400, detail=f"Order is already {order['status']}")
-
+def _fire_digital_order(supabase, order: dict, actor_id: str):
+    """Turn a (fully fetched) digital order into a real transaction -- the
+    kitchen ticket, stock deduction and print all key off this. Shared by
+    immediate approval and by the deferred firing of scheduled orders."""
     # transactions.payment_method keeps POS's fixed CHECK ('cash','gcash',
     # 'card') -- a digital order's payment_method is now any admin-managed
     # online method name (e.g. "Maya", "Maribank"), which that constraint
@@ -434,7 +436,7 @@ def approve_digital_order(order_id: str, user: CurrentUser = Depends(get_current
 
     transaction = _create_transaction_row(
         supabase,
-        employee_id=user.id,
+        employee_id=actor_id,
         items=[
             TransactionItemCreate(
                 product_size_id=i["product_size_id"],
@@ -465,25 +467,99 @@ def approve_digital_order(order_id: str, user: CurrentUser = Depends(get_current
                 "tax_amount": transaction.tax_amount + addons_subtotal * _get_vat_rate(supabase),
             }
         ).eq("id", transaction.id).execute()
+    return transaction
 
-    updated = (
-        supabase.table("digital_orders")
-        .update(
-            {
-                "status": "approved",
-                "approved_by": user.id,
-                "approved_at": datetime.now(timezone.utc).isoformat(),
-                "transaction_id": transaction.id,
-            }
-        )
-        .eq("id", order_id)
-        .execute()
-    )
+
+def _parse_scheduled_for(order: dict) -> datetime | None:
+    raw = order.get("scheduled_for")
+    if not raw:
+        return None
+    return TypeAdapter(datetime).validate_python(raw)
+
+
+@router.post("/digital-orders/{order_id}/approve", response_model=DigitalOrderResponse)
+def approve_digital_order(order_id: str, user: CurrentUser = Depends(get_current_user)):
+    supabase = get_supabase()
+    order = _fetch_digital_order(supabase, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if order["status"] != "pending":
+        raise HTTPException(status_code=400, detail=f"Order is already {order['status']}")
+
+    update = {
+        "status": "approved",
+        "approved_by": user.id,
+        "approved_at": datetime.now(timezone.utc).isoformat(),
+    }
+    scheduled_for = _parse_scheduled_for(order)
+    lead = timedelta(minutes=ADVANCE_ORDER_LEAD_MINUTES)
+    if scheduled_for is not None and scheduled_for > datetime.now(timezone.utc) + lead:
+        # Advance order approved well ahead of time: confirm it now, but hold
+        # it out of the kitchen (no ticket, no print, no stock deduction)
+        # until _fire_due_scheduled_orders releases it 20 min before.
+        pass
+    else:
+        update["transaction_id"] = _fire_digital_order(supabase, order, user.id).id
+
+    updated = supabase.table("digital_orders").update(update).eq("id", order_id).execute()
     result = updated.data[0]
     result["items"] = order["items"]
     result["addons"] = order["addons"]
     result["delivery"] = order.get("delivery")
     return result
+
+
+# Firing is triggered from GET /transactions (polled by Kitchen Display, Order
+# Queue and the print bridge). If the scheduled_for/kitchen_fired_at columns
+# don't exist yet (migration 0054 not applied) or the DB hiccups, back off so
+# every poll doesn't repeat a failing query.
+_fire_backoff_until = 0.0
+
+
+def fire_due_scheduled_orders(supabase) -> int:
+    """Release approved advance orders whose requested time is within the
+    lead window into the kitchen. Safe to call from many concurrent pollers:
+    each order is claimed with one conditional UPDATE, so exactly one caller
+    fires it. Never raises."""
+    global _fire_backoff_until
+    if time.monotonic() < _fire_backoff_until:
+        return 0
+    fired = 0
+    try:
+        horizon = (datetime.now(timezone.utc) + timedelta(minutes=ADVANCE_ORDER_LEAD_MINUTES)).isoformat()
+        due = (
+            supabase.table("digital_orders")
+            .select("id, approved_by")
+            .eq("status", "approved")
+            .is_("transaction_id", "null")
+            .is_("kitchen_fired_at", "null")
+            .not_.is_("scheduled_for", "null")
+            .lte("scheduled_for", horizon)
+            .execute()
+            .data
+        )
+        for row in due:
+            claim = (
+                supabase.table("digital_orders")
+                .update({"kitchen_fired_at": datetime.now(timezone.utc).isoformat()})
+                .eq("id", row["id"])
+                .is_("kitchen_fired_at", "null")
+                .execute()
+            )
+            if not claim.data:
+                continue  # another poller won the claim
+            try:
+                order = _fetch_digital_order(supabase, row["id"])
+                transaction = _fire_digital_order(supabase, order, row["approved_by"])
+                supabase.table("digital_orders").update({"transaction_id": transaction.id}).eq("id", row["id"]).execute()
+                fired += 1
+            except Exception:
+                # Release the claim so the next poll retries this order.
+                supabase.table("digital_orders").update({"kitchen_fired_at": None}).eq("id", row["id"]).execute()
+                raise
+    except Exception:
+        _fire_backoff_until = time.monotonic() + 60
+    return fired
 
 
 @router.post("/digital-orders/{order_id}/reject", response_model=DigitalOrderResponse)

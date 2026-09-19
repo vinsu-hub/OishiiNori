@@ -11,6 +11,7 @@ import {
   ListOrdered,
   QrCode,
   CalendarCheck,
+  CalendarClock,
   ChefHat,
   Package,
   Boxes,
@@ -146,6 +147,9 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
     { icon: Truck, label: 'Delivery Requests', href: '/delivery-requests' },
     ...(isManagerOrExecutive || hasGrant('online-orders')
       ? [{ icon: Truck, label: 'Online Orders', href: '/online-orders' }]
+      : []),
+    ...(isManagerOrExecutive || hasGrant('online-orders')
+      ? [{ icon: CalendarClock, label: 'Scheduled Orders', href: '/scheduled-orders' }]
       : []),
     { icon: CalendarCheck, label: 'Reservations', href: '/reservations' },
   ];

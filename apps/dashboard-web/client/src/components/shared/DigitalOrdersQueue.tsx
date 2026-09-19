@@ -39,14 +39,23 @@ export function DigitalOrdersQueue({
   title,
   emptyLabel,
   embedded,
+  scheduledOnly,
+  view = 'pending',
 }: {
-  channel: DigitalOrderChannel;
+  // 'all' = delivery + pickup together (the Scheduled Orders tab).
+  channel: DigitalOrderChannel | 'all';
   title: string;
   emptyLabel: string;
   // When true, renders just the list+dialogs (no DashboardLayout wrapper)
   // -- for a parent page that supplies its own layout/tabs, same pattern
   // as reservations/RequestsPanel.tsx under Reservations.tsx.
   embedded?: boolean;
+  // Only advance orders (those with a requested time), sorted by that time
+  // and grouped by day instead of by order number.
+  scheduledOnly?: boolean;
+  // 'upcoming' = approved advance orders still held out of the kitchen
+  // (read-only: no approve/decline, shows when they go to the kitchen).
+  view?: 'pending' | 'upcoming';
 }) {
   const [orders, setOrders] = useState<ApiDigitalOrder[]>([]);
   const { products, error: productsError } = useProductCatalog();
@@ -64,10 +73,20 @@ export function DigitalOrdersQueue({
 
   const load = useCallback(() => {
     setLoadError(null);
-    fetchDigitalOrders('pending')
+    fetchDigitalOrders(view === 'upcoming' ? 'approved' : 'pending')
       .then((o) =>
         setOrders(
-          o.filter((order) => order.order_channel === channel).sort((a, b) => a.order_number - b.order_number)
+          o
+            .filter((order) =>
+              channel === 'all' ? order.order_channel !== 'dine_in_qr' : order.order_channel === channel
+            )
+            .filter((order) => !scheduledOnly || !!order.scheduled_for)
+            .filter((order) => view !== 'upcoming' || !order.transaction_id)
+            .sort((a, b) =>
+              scheduledOnly
+                ? (a.scheduled_for ?? '').localeCompare(b.scheduled_for ?? '') || a.order_number - b.order_number
+                : a.order_number - b.order_number
+            )
         )
       )
       .catch((e) => {
@@ -76,7 +95,7 @@ export function DigitalOrdersQueue({
         toast.error(`Failed to load orders: ${message}`);
       })
       .finally(() => setLoading(false));
-  }, [channel]);
+  }, [channel, scheduledOnly, view]);
 
   useVisiblePolling(load, POLL_INTERVAL_MS);
 
@@ -89,6 +108,17 @@ export function DigitalOrdersQueue({
     }
     return map;
   }, [products]);
+
+  // Day headers for the scheduled view (orders are already sorted by time).
+  function dayLabel(iso: string): string {
+    const day = new Date(iso);
+    const key = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    const today = new Date();
+    const tomorrow = new Date(today.getTime() + 86_400_000);
+    if (key(day) === key(today)) return 'Today';
+    if (key(day) === key(tomorrow)) return 'Tomorrow';
+    return day.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+  }
 
   async function handleApprove() {
     if (!approveTarget) return;
@@ -143,8 +173,15 @@ export function DigitalOrdersQueue({
             <p className="text-sm text-muted-foreground">{emptyLabel}</p>
           </div>
         )}
-        {!loadError && orders.map((order) => (
-          <Card key={order.id}>
+        {!loadError && orders.map((order, index) => (
+          <React.Fragment key={order.id}>
+          {scheduledOnly && order.scheduled_for &&
+            (index === 0 || dayLabel(orders[index - 1].scheduled_for ?? '') !== dayLabel(order.scheduled_for)) && (
+              <h3 className="pt-2 font-corp-display text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                {dayLabel(order.scheduled_for)}
+              </h3>
+            )}
+          <Card>
             <CardContent className="space-y-3 py-4">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -161,7 +198,10 @@ export function DigitalOrdersQueue({
                     </Badge>
                   )}
                   {channel === 'dine_in_qr' && <Badge variant="outline">Table {order.table_number}</Badge>}
-                  {channel === 'delivery' && order.delivery?.barangay && (
+                  {channel === 'all' && (
+                    <Badge variant="outline">{order.order_channel === 'delivery' ? 'Delivery' : 'Pickup'}</Badge>
+                  )}
+                  {(channel === 'delivery' || channel === 'all') && order.delivery?.barangay && order.order_channel === 'delivery' && (
                     <Badge variant="outline">{order.delivery.barangay}</Badge>
                   )}
                   <Badge variant="gold">{order.payment_method}</Badge>
@@ -213,13 +253,24 @@ export function DigitalOrdersQueue({
                 <p className="text-sm italic text-muted-foreground">Note: {order.customer_note}</p>
               )}
 
+              {view === 'upcoming' && order.scheduled_for && (
+                <p className="text-sm font-medium">
+                  Approved. Goes to the kitchen at{' '}
+                  {formatDateTime12h(new Date(new Date(order.scheduled_for).getTime() - 20 * 60_000).toISOString())}{' '}
+                  (20 min before it is due).
+                </p>
+              )}
               <div className="flex flex-wrap items-center gap-2 pt-1">
-                <Button className="min-h-11" onClick={() => setApproveTarget(order)}>
-                  Approve
-                </Button>
-                <Button className="min-h-11" variant="destructive" onClick={() => setRejectTarget(order)}>
-                  {channel === 'dine_in_qr' ? 'Decline' : 'Delete / Decline'}
-                </Button>
+                {view === 'pending' && (
+                  <>
+                    <Button className="min-h-11" onClick={() => setApproveTarget(order)}>
+                      Approve
+                    </Button>
+                    <Button className="min-h-11" variant="destructive" onClick={() => setRejectTarget(order)}>
+                      {channel === 'dine_in_qr' ? 'Decline' : 'Delete / Decline'}
+                    </Button>
+                  </>
+                )}
                 {order.payment_proof_url && (
                   <Button className="min-h-11" variant="outline" onClick={() => setDetailTarget(order)}>
                     Show proof of payment
@@ -228,6 +279,7 @@ export function DigitalOrdersQueue({
               </div>
             </CardContent>
           </Card>
+          </React.Fragment>
         ))}
       </div>
 

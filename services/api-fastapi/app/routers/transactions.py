@@ -873,6 +873,12 @@ def list_transactions(
     user: CurrentUser = Depends(get_current_user),
 ):
     supabase = get_supabase()
+    # Release approved advance orders that are now within their kitchen lead
+    # window, so they show up in this very response. Imported lazily because
+    # digital_menu already imports this module. Never raises.
+    from app.routers.digital_menu import fire_due_scheduled_orders
+
+    fire_due_scheduled_orders(supabase)
     columns = (
         "id, employee_id, status, opened_at, closed_at, total_amount, discount_type_id, "
         "discount_amount, tax_amount, is_owner_request, owner_request_by, owner_request_note, "

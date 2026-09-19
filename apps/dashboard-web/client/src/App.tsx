@@ -50,6 +50,7 @@ const Reviews = lazyWithReload(() => import('./pages/Reviews'), 'Reviews');
 const Delivery = lazyWithReload(() => import('./pages/Delivery'), 'Delivery');
 const DeliveryRequests = lazyWithReload(() => import('./pages/DeliveryRequests'), 'DeliveryRequests');
 const OnlineOrders = lazyWithReload(() => import('./pages/OnlineOrders'), 'OnlineOrders');
+const ScheduledOrders = lazyWithReload(() => import('./pages/ScheduledOrders'), 'ScheduledOrders');
 const StockVS = lazyWithReload(() => import('./pages/StockVS'), 'StockVS');
 const Settings = lazyWithReload(() => import('./pages/Settings'), 'Settings');
 const NotFound = lazyWithReload(() => import('./pages/NotFound'), 'NotFound');
@@ -94,6 +95,7 @@ function Router() {
         <Route path={'/delivery'} component={Delivery} />
         <Route path={'/delivery-requests'} component={DeliveryRequests} />
         <Route path={'/online-orders'} component={OnlineOrders} />
+        <Route path={'/scheduled-orders'} component={ScheduledOrders} />
         <Route path={'/stock/vs'} component={StockVS} />
         <Route path={'/loss-log'} component={LossLog} />
         <Route path={'/utility-log'} component={UtilityLog} />

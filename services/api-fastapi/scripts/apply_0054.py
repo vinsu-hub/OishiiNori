@@ -40,12 +40,12 @@ try:
         cur.execute(sql)
         cur.execute(
             "select column_name from information_schema.columns "
-            "where table_name = 'digital_orders' and column_name = 'scheduled_for'"
+            "where table_name = 'digital_orders' and column_name in ('scheduled_for', 'kitchen_fired_at')"
         )
         cols = [r[0] for r in cur.fetchall()]
     conn.commit()
     print("Applied 0054_advance_orders.sql successfully.")
-    print(f"digital_orders.scheduled_for present: {cols}")
+    print(f"digital_orders.scheduled_for + kitchen_fired_at present: {cols}")
 except Exception:
     conn.rollback()
     raise
