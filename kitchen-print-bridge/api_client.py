@@ -31,11 +31,17 @@ def _get(config: Config, auth: BridgeAuth, path: str, params: dict | None = None
     return r
 
 
-def fetch_preparing_transactions(config: Config, auth: BridgeAuth) -> list[dict]:
-    """Orders the kitchen has accepted (queued -> preparing) but this
-    bridge hasn't necessarily printed yet -- state.PrintedTicketStore does
-    the actual dedupe, this just returns the current live set."""
-    return _get(config, auth, "/transactions", params={"kitchen_status": "preparing"}).json()
+def fetch_active_kitchen_transactions(config: Config, auth: BridgeAuth) -> list[dict]:
+    """Orders the kitchen still has to make: `queued` (just charged at the
+    POS / approved from the online queue) plus `preparing`. Printing on
+    `queued` means the ticket comes out the moment the cashier approves or
+    charges, not only after kitchen staff tap Accept. state.PrintedTicketStore
+    does the actual dedupe, so an order that moves queued -> preparing is
+    never printed twice."""
+    rows: list[dict] = []
+    for status in ("queued", "preparing"):
+        rows.extend(_get(config, auth, "/transactions", params={"kitchen_status": status}).json())
+    return rows
 
 
 def fetch_products(config: Config, auth: BridgeAuth) -> list[dict]:

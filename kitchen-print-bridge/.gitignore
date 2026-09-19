@@ -3,3 +3,4 @@ bridge.log
 bridge.log.*
 test_ticket.bin
 test_ticket.txt
+!.env.example

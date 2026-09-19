@@ -67,6 +67,7 @@ import {
   posTableStatus,
 } from '@/lib/api';
 import { formatCurrency, formatTime12h, formatTimestamp12h } from '@/lib/utils';
+import { ReceiptDialog, type ReceiptData } from '@/components/pos/Receipt';
 
 interface CartLineAddon {
   addon_id: string;
@@ -253,6 +254,7 @@ export default function POSTerminal() {
 
   const [cart, setCart] = useState<CartLine[]>([]);
   const [discountTypeId, setDiscountTypeId] = useState<string>('none');
+  const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const [sizePickerProduct, setSizePickerProduct] = useState<ApiProduct | null>(null);
@@ -871,6 +873,33 @@ export default function POSTerminal() {
                 barangay: deliveryBarangay,
               }
             : undefined,
+      });
+      const deliveryFee = orderType === 'delivery' ? transaction.delivery?.delivery_fee ?? 0 : 0;
+      setReceipt({
+        orderNumber: transaction.order_number,
+        openedAt: transaction.opened_at,
+        orderType: transaction.order_type,
+        tableNumber: transaction.table_number,
+        lines: cart.map((l) => ({
+          name: `${l.product.name} (${l.size.size_label})`,
+          quantity: l.quantity,
+          unitPrice: l.size.price,
+          addons: l.addons.map((a) => ({ name: a.name, quantity: a.quantity, unitPrice: a.price })),
+        })),
+        discountAmount: transaction.discount_amount,
+        taxAmount: transaction.tax_amount,
+        deliveryFee,
+        totalAmount: transaction.total_amount + deliveryFee,
+        paymentMethod: transaction.payment_method,
+        delivery:
+          orderType === 'delivery'
+            ? {
+                customerName: deliveryCustomerName.trim(),
+                phone: deliveryCustomerPhone.trim(),
+                address: deliveryAddress.trim() || null,
+                barangay: deliveryBarangay || null,
+              }
+            : null,
       });
       toast.success(
         `${transaction.order_number != null ? `Order #${transaction.order_number} -- ` : ''}Sale complete -- total ${formatCurrency(
@@ -2044,6 +2073,7 @@ export default function POSTerminal() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <ReceiptDialog receipt={receipt} onClose={() => setReceipt(null)} />
     </DashboardLayout>
   );
 }

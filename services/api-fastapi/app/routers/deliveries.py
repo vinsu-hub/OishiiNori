@@ -77,8 +77,30 @@ def list_deliveries(
         ticket = fetch_transaction_delivery_ticket(supabase, transaction_id)
         if ticket:
             tickets.append(ticket)
-    tickets.sort(key=lambda t: t["created_at"])
-    return tickets
+
+    # One bulk lookup of the backing transactions' state: drops voided orders
+    # from the rider's working queue (a voided POS delivery used to linger
+    # there) and stamps `kitchen_status` for the "For Pick Up" tab.
+    backing_ids = list({t.get("transaction_id") or t["id"] for t in tickets if t.get("transaction_id") or t.get("id")})
+    state_by_id: dict[str, dict] = {}
+    for i in range(0, len(backing_ids), 200):
+        rows = (
+            supabase.table("transactions")
+            .select("id, status, kitchen_status")
+            .in_("id", backing_ids[i : i + 200])
+            .execute()
+        )
+        state_by_id.update({r["id"]: r for r in rows.data})
+    visible = []
+    for ticket in tickets:
+        state = state_by_id.get(ticket.get("transaction_id") or ticket["id"])
+        if state:
+            if status == "pending" and state["status"] == "voided":
+                continue
+            ticket["kitchen_status"] = state.get("kitchen_status")
+        visible.append(ticket)
+    visible.sort(key=lambda t: t["created_at"])
+    return visible
 
 
 @router.post("/deliveries/{order_id}/done", response_model=DigitalOrderResponse)

@@ -449,6 +449,16 @@ class DigitalOrderResponse(BaseModel):
     items: list[DigitalOrderItemResponse] = Field(default_factory=list)
     addons: list[DigitalOrderAddonResponse] = Field(default_factory=list)
     delivery: DeliveryDetailOut | None = None
+    # Populated by GET /deliveries only (the rider's "For Pick Up" tab keys
+    # off `ready`); None everywhere else and for orders with no transaction yet.
+    kitchen_status: str | None = None
+
+
+class QueueDisplayOut(BaseModel):
+    """Public TV feed: order numbers only, by kitchen stage."""
+
+    preparing: list[int] = Field(default_factory=list)
+    ready: list[int] = Field(default_factory=list)
 
 
 class DigitalOrderStatusResponse(BaseModel):

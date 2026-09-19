@@ -24,6 +24,9 @@ function SortIcon({ active, dir }: { active: boolean; dir: 'asc' | 'desc' }) {
 function BusinessDayItemsTable({ items }: { items: ApiBusinessDayItemRow[] }) {
   const [sortKey, setSortKey] = useState<ItemSortKey>('category');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  // End-of-day view: items grouped under their category with a subtotal per
+  // category (default). The flat, click-to-sort table stays one toggle away.
+  const [grouped, setGrouped] = useState(true);
 
   function handleSort(key: ItemSortKey) {
     if (key === sortKey) {
@@ -48,6 +51,71 @@ function BusinessDayItemsTable({ items }: { items: ApiBusinessDayItemRow[] }) {
     return <p className="text-sm text-muted-foreground py-3 px-1">No items sold this day.</p>;
   }
 
+  const groups = (() => {
+    const byCategory = new Map<string, ApiBusinessDayItemRow[]>();
+    for (const item of items) {
+      const key = item.category || 'Uncategorized';
+      byCategory.set(key, [...(byCategory.get(key) ?? []), item]);
+    }
+    return Array.from(byCategory.entries())
+      .map(([category, rows]) => ({
+        category,
+        rows: [...rows].sort((a, b) => b.quantity_sold - a.quantity_sold),
+        qty: rows.reduce((sum, r) => sum + r.quantity_sold, 0),
+        revenue: rows.reduce((sum, r) => sum + r.revenue, 0),
+      }))
+      .sort((a, b) => a.category.localeCompare(b.category));
+  })();
+
+  const toggle = (
+    <div className="flex justify-end pb-2">
+      <button
+        type="button"
+        className="text-xs text-primary underline underline-offset-2"
+        onClick={() => setGrouped((g) => !g)}
+      >
+        {grouped ? 'Show flat sortable list' : 'Group by category'}
+      </button>
+    </div>
+  );
+
+  if (grouped) {
+    return (
+      <div>
+        {toggle}
+        <Table>
+          <TableHeader>
+            <TableRow className={STOCK_TABLE_ROW_CLASS}>
+              <TableHead className={STOCK_TABLE_HEAD_CLASS}>Product</TableHead>
+              <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Qty sold</TableHead>
+              <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Revenue</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {groups.map((g) => (
+              <React.Fragment key={g.category}>
+                <TableRow className={`${STOCK_TABLE_ROW_CLASS} bg-muted/50`}>
+                  <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-semibold`}>{g.category}</TableCell>
+                  <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right font-semibold`}>{g.qty}</TableCell>
+                  <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right font-semibold`}>
+                    {formatCurrency(g.revenue)}
+                  </TableCell>
+                </TableRow>
+                {g.rows.map((item) => (
+                  <TableRow key={item.product_id} className={STOCK_TABLE_ROW_CLASS}>
+                    <TableCell className={`${STOCK_TABLE_CELL_CLASS} pl-6`}>{item.product_name}</TableCell>
+                    <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>{item.quantity_sold}</TableCell>
+                    <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>{formatCurrency(item.revenue)}</TableCell>
+                  </TableRow>
+                ))}
+              </React.Fragment>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    );
+  }
+
   const columns: { key: ItemSortKey; label: string; align?: 'right' }[] = [
     { key: 'product_name', label: 'Product' },
     { key: 'category', label: 'Category' },
@@ -56,6 +124,8 @@ function BusinessDayItemsTable({ items }: { items: ApiBusinessDayItemRow[] }) {
   ];
 
   return (
+    <div>
+    {toggle}
     <Table>
       <TableHeader>
         <TableRow className={STOCK_TABLE_ROW_CLASS}>
@@ -86,6 +156,7 @@ function BusinessDayItemsTable({ items }: { items: ApiBusinessDayItemRow[] }) {
         ))}
       </TableBody>
     </Table>
+    </div>
   );
 }
 

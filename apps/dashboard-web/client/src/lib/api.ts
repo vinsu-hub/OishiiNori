@@ -570,6 +570,8 @@ export interface ApiDigitalOrder {
   items: ApiDigitalOrderItem[];
   addons: ApiDigitalOrderAddon[];
   delivery: ApiDeliveryDetail | null;
+  /** Only set by GET /deliveries (rider "For Pick Up" tab keys off 'ready'). */
+  kitchen_status?: string | null;
 }
 
 export function fetchDigitalOrders(status?: DigitalOrderStatus): Promise<ApiDigitalOrder[]> {

@@ -21,10 +21,12 @@ concepts, not wired into recipe/ingredient deduction -- see migration
 import uuid
 from datetime import datetime, timezone
 
+from cachetools import TTLCache
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 
 from app.auth import CurrentUser, get_current_user
 from app.deps import get_supabase
+from app.ph_time import ph_day_bounds_utc, today_ph
 from app.idempotency import check_idempotency_key, record_idempotency_key
 from app.rate_limit import client_ip, enforce_rate_limit
 from app.routers.business_days import is_open_today
@@ -36,6 +38,7 @@ from app.schemas import (
     DeliveryFeeOut,
     DigitalOrderResponse,
     DigitalOrderStatusResponse,
+    QueueDisplayOut,
     MenuAddonOut,
     ProductOut,
     RecipeItemOut,
@@ -112,6 +115,40 @@ def public_delivery_fees():
     link (apps/customer-menu with no ?table= param)."""
     result = get_supabase().table("delivery_fees").select("barangay, zone, fee").order("barangay").execute()
     return result.data
+
+
+# The restaurant TV polls this every few seconds and several screens may
+# share one backend instance -- a short cache keeps that from multiplying DB reads.
+_queue_display_cache: TTLCache = TTLCache(maxsize=1, ttl=3)
+
+
+@router.get("/public/queue-display", response_model=QueueDisplayOut)
+def public_queue_display(request: Request):
+    """Read-only feed for the in-restaurant "Now Serving" TV (/tv on the
+    customer-menu app). Deliberately exposes nothing but today's order
+    numbers grouped by kitchen stage -- no names, phones, items or ids -- so
+    it's safe to leave unauthenticated."""
+    if "v" in _queue_display_cache:
+        return _queue_display_cache["v"]
+    supabase = get_supabase()
+    enforce_rate_limit(supabase, f"queue-display:{client_ip(request)}", window_seconds=60, limit=120)
+    start, end = ph_day_bounds_utc(today_ph())
+    rows = (
+        supabase.table("transactions")
+        .select("order_number, kitchen_status, kitchen_status_updated_at, opened_at")
+        .gte("opened_at", start)
+        .lt("opened_at", end)
+        .neq("status", "voided")
+        .in_("kitchen_status", ["queued", "preparing", "ready"])
+        .execute()
+    ).data
+    preparing = sorted(r["order_number"] for r in rows if r["kitchen_status"] in ("queued", "preparing") and r["order_number"] is not None)
+    ready_rows = [r for r in rows if r["kitchen_status"] == "ready" and r["order_number"] is not None]
+    # Most recently readied first, capped so an un-cleared backlog can't overflow the screen.
+    ready_rows.sort(key=lambda r: r["kitchen_status_updated_at"] or r["opened_at"], reverse=True)
+    result = {"preparing": preparing, "ready": [r["order_number"] for r in ready_rows[:12]]}
+    _queue_display_cache["v"] = result
+    return result
 
 
 @router.post("/public/orders", response_model=DigitalOrderStatusResponse)

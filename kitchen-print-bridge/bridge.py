@@ -20,11 +20,11 @@ import logging
 import signal
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from api_client import build_product_index, fetch_preparing_transactions, fetch_products
+from api_client import build_product_index, fetch_active_kitchen_transactions, fetch_products
 from auth import BridgeAuth
 from config import Config, load_config, require_live_fields
 from state import PrintedTicketStore
@@ -102,6 +102,13 @@ class ProductCache:
         return self.get()
 
 
+def _opened_at(transaction: dict) -> datetime:
+    raw = transaction.get("opened_at")
+    if not raw:
+        return datetime.now(timezone.utc)
+    return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+
+
 def poll_once(
     config: Config,
     auth: BridgeAuth,
@@ -110,10 +117,15 @@ def poll_once(
     product_cache: ProductCache,
 ) -> None:
     try:
-        transactions = fetch_preparing_transactions(config, auth)
+        transactions = fetch_active_kitchen_transactions(config, auth)
     except Exception as e:  # noqa: BLE001 -- a network blip must not kill the loop
-        logger.error("Failed to fetch preparing orders: %r", e)
+        logger.error("Failed to fetch kitchen orders: %r", e)
         return
+
+    # Ignore stale queued orders (e.g. from a previous day that was never
+    # accepted) so switching the trigger on can't dump old tickets.
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=config.max_ticket_age_hours)
+    transactions = [t for t in transactions if _opened_at(t) >= cutoff]
 
     pending = [t for t in transactions if not store.is_printed(t["id"])]
     if not pending:

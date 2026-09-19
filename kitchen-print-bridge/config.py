@@ -25,6 +25,7 @@ class Config:
     paper_width_chars: int
     state_db_path: str
     log_file_path: str
+    max_ticket_age_hours: int = 12
 
 
 def load_config(env_path: Path | None = None) -> Config:
@@ -46,6 +47,7 @@ def load_config(env_path: Path | None = None) -> Config:
         paper_width_chars=int(os.environ.get("PAPER_WIDTH_CHARS", "32")),
         state_db_path=os.environ.get("STATE_DB_PATH", "printed_tickets.db"),
         log_file_path=os.environ.get("LOG_FILE_PATH", "bridge.log"),
+        max_ticket_age_hours=int(os.environ.get("MAX_TICKET_AGE_HOURS", "12")),
     )
 
 

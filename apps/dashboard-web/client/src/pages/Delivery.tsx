@@ -4,6 +4,7 @@ import { DashboardLayout } from '@/components/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { MapPin } from 'lucide-react';
 import { ApiDigitalOrder, ApiProduct, fetchDeliveries, markDeliveryDone } from '@/lib/api';
 import { formatCurrency } from '@/lib/utils';
@@ -22,6 +23,9 @@ export default function Delivery() {
   const { products } = useProductCatalog();
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // "pending" = every undelivered order; "pickup" = the subset the kitchen has
+  // marked ready, i.e. food the rider can physically collect and take out now.
+  const [tab, setTab] = useState<'pending' | 'pickup'>('pending');
 
   const load = useCallback(() => {
     fetchDeliveries()
@@ -42,6 +46,9 @@ export default function Delivery() {
     return map;
   }, [products]);
 
+  const readyCount = useMemo(() => orders.filter((o) => o.kitchen_status === 'ready').length, [orders]);
+  const visibleOrders = tab === 'pickup' ? orders.filter((o) => o.kitchen_status === 'ready') : orders;
+
   async function handleDone(order: ApiDigitalOrder) {
     setBusyId(order.id);
     try {
@@ -58,24 +65,39 @@ export default function Delivery() {
   return (
     <DashboardLayout title="Delivery">
       <div className="p-6 space-y-3">
+        <Tabs value={tab} onValueChange={(v) => setTab(v as 'pending' | 'pickup')}>
+          <TabsList>
+            <TabsTrigger value="pending">Delivery Pending ({orders.length})</TabsTrigger>
+            <TabsTrigger value="pickup">For Pick Up ({readyCount})</TabsTrigger>
+          </TabsList>
+        </Tabs>
         {loading && <p className="text-sm text-muted-foreground">Loading deliveries...</p>}
-        {!loading && orders.length === 0 && (
+        {!loading && visibleOrders.length === 0 && (
           <Card className="max-w-xl">
             <CardHeader>
-              <CardTitle className="font-corp-display text-base">No deliveries yet</CardTitle>
+              <CardTitle className="font-corp-display text-base">
+                {tab === 'pickup' ? 'Nothing ready for pick up' : 'No deliveries yet'}
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground">
-                Current and pending deliveries assigned to you will show up here.
+                {tab === 'pickup'
+                  ? 'Orders show up here once the kitchen marks them ready.'
+                  : 'Current and pending deliveries assigned to you will show up here.'}
               </p>
             </CardContent>
           </Card>
         )}
-        {orders.map((order) => (
+        {visibleOrders.map((order) => (
           <Card key={order.id} className="max-w-xl">
             <CardContent className="py-3 space-y-2">
               <div className="flex items-center justify-between flex-wrap gap-2">
-                <span className="font-corp-display text-sm">Order #{order.order_number}</span>
+                <span className="font-corp-display text-sm">
+                  Order #{order.order_number}
+                  {order.kitchen_status === 'ready' && (
+                    <Badge className="ml-2" variant="secondary">Ready</Badge>
+                  )}
+                </span>
                 <span className="font-semibold">
                   {formatCurrency(order.subtotal + (order.delivery?.delivery_fee ?? 0))}
                 </span>
