@@ -19,7 +19,7 @@ concepts, not wired into recipe/ingredient deduction -- see migration
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from cachetools import TTLCache
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
@@ -166,7 +166,19 @@ def submit_digital_order(body: CreateDigitalOrderRequest, request: Request):
     # closed (or before they've opened) today's business day -- the
     # frontend gates this at "press an item," this just makes sure it
     # can't be bypassed by an already-open tab.
-    if not is_open_today(supabase):
+    # An advance order is for later, so it's allowed while today's business
+    # day is closed/unopened -- staff decide when to approve it.
+    scheduled_for: datetime | None = None
+    if body.scheduled_for is not None:
+        if body.order_channel == "dine_in_qr":
+            raise HTTPException(status_code=400, detail="Advance orders are only for delivery or pickup")
+        scheduled_for = body.scheduled_for if body.scheduled_for.tzinfo else body.scheduled_for.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        if scheduled_for < now + timedelta(minutes=30):
+            raise HTTPException(status_code=400, detail="Advance orders must be scheduled at least 30 minutes ahead")
+        if scheduled_for > now + timedelta(days=7):
+            raise HTTPException(status_code=400, detail="Advance orders can be scheduled at most 7 days ahead")
+    elif not is_open_today(supabase):
         raise HTTPException(status_code=403, detail="The shop is currently closed")
 
     delivery_fee: float | None = None
@@ -238,20 +250,19 @@ def submit_digital_order(body: CreateDigitalOrderRequest, request: Request):
         unit_price = float(addons_by_id[addon.addon_id]["price"])
         subtotal += unit_price * addon.quantity
 
-    order_insert = (
-        supabase.table("digital_orders")
-        .insert(
-            {
-                "table_number": body.table_number,
-                "order_channel": body.order_channel,
-                "status": "pending",
-                "payment_method": body.payment_method,
-                "customer_note": body.customer_note,
-                "subtotal": subtotal,
-            }
-        )
-        .execute()
-    )
+    order_row = {
+        "table_number": body.table_number,
+        "order_channel": body.order_channel,
+        "status": "pending",
+        "payment_method": body.payment_method,
+        "customer_note": body.customer_note,
+        "subtotal": subtotal,
+    }
+    if scheduled_for is not None:
+        # Only sent when set, so ordinary orders keep working even before
+        # migration 0054 (digital_orders.scheduled_for) is applied.
+        order_row["scheduled_for"] = scheduled_for.isoformat()
+    order_insert = supabase.table("digital_orders").insert(order_row).execute()
     order = order_insert.data[0]
 
     if body.order_channel != "dine_in_qr":

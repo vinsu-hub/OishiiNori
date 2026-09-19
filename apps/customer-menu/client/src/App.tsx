@@ -111,9 +111,17 @@ export default function App() {
   // ?reserve=1 is the landing page's deep-link into the reservation flow --
   // skips this welcome/choice screen entirely so "Reserve now" there is a
   // true one-click portal, not a redirect-then-click-again.
-  const [landingMode, setLandingMode] = useState<'choice' | 'reserve' | 'order-channel'>(() =>
-    new URLSearchParams(window.location.search).get('reserve') === '1' ? 'reserve' : 'choice'
+  // ?advance=1 is the dedicated Advance Order link: straight to the
+  // delivery/pickup choice, with a required "when do you want it?" time.
+  const [advanceMode, setAdvanceMode] = useState<boolean>(
+    () => new URLSearchParams(window.location.search).get('advance') === '1'
   );
+  const [scheduledLocal, setScheduledLocal] = useState('');
+  const [landingMode, setLandingMode] = useState<'choice' | 'reserve' | 'order-channel'>(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('reserve') === '1') return 'reserve';
+    return params.get('advance') === '1' ? 'order-channel' : 'choice';
+  });
   // WS-7 (Phase 6): the general (non-table) link -- no ?table= param --
   // lets the visitor choose Delivery or Pickup instead of dine-in. `null`
   // means "not yet chosen" (still on the landing screen); dine_in_qr is
@@ -309,7 +317,7 @@ export default function App() {
   }
 
   function openItem(product: ApiProduct) {
-    if (shopOpen === false) {
+    if (shopOpen === false && !advanceMode) {
       setClosedNoticeOpen(true);
       return;
     }
@@ -374,6 +382,13 @@ export default function App() {
       toast('Address and barangay are required for delivery', 'error');
       return false;
     }
+    if (advanceMode) {
+      const when = scheduledLocal ? new Date(scheduledLocal).getTime() : NaN;
+      if (!Number.isFinite(when) || when < Date.now() + 30 * 60_000 || when > Date.now() + 7 * 86_400_000) {
+        toast('Pick a time between 30 minutes and 7 days from now', 'error');
+        return false;
+      }
+    }
     return true;
   }
 
@@ -386,6 +401,9 @@ export default function App() {
       addons: addons.map((l) => ({ addon_id: l.addon.id, quantity: l.quantity })),
       payment_method: method,
       customer_note: customerNote.trim() || undefined,
+      ...(advanceMode && effectiveChannel !== 'dine_in_qr' && scheduledLocal && {
+        scheduled_for: new Date(scheduledLocal).toISOString(),
+      }),
       ...(effectiveChannel !== 'dine_in_qr' && {
         customer_name: customerName.trim(),
         customer_phone: customerPhone.trim(),
@@ -403,7 +421,7 @@ export default function App() {
   // delivery/pickup instead advances to the QR/account-details screen --
   // the order isn't created until proof of payment is uploaded.
   async function handlePlaceOrder() {
-    if (shopOpen === false) {
+    if (shopOpen === false && !advanceMode) {
       setClosedNoticeOpen(true);
       return;
     }
@@ -451,7 +469,7 @@ export default function App() {
   }
 
   async function handleSubmitWithProof() {
-    if (shopOpen === false) {
+    if (shopOpen === false && !advanceMode) {
       setClosedNoticeOpen(true);
       return;
     }
@@ -517,7 +535,7 @@ export default function App() {
           <div className="item-modal" style={{ position: 'static', maxWidth: 380 }}>
             <div className="modal-body" style={{ textAlign: 'center' }}>
               <img src="/logo.jpg" alt="Oishii Nori" className="brand-logo" style={{ width: 64, height: 64, margin: '0 auto 14px' }} />
-              <h2>Order Online</h2>
+              <h2>{advanceMode ? 'Advance Order' : 'Order Online'}</h2>
               <p>How would you like to receive your order?</p>
               <button
                 className="primary-button"
@@ -539,7 +557,10 @@ export default function App() {
                 className="ghost-button"
                 type="button"
                 style={{ width: '100%', marginTop: 10 }}
-                onClick={() => setLandingMode('choice')}
+                onClick={() => {
+                  setAdvanceMode(false);
+                  setLandingMode('choice');
+                }}
               >
                 Back
               </button>
@@ -562,6 +583,17 @@ export default function App() {
               onClick={() => setLandingMode('order-channel')}
             >
               Order Delivery / Pickup <ArrowRight size={16} />
+            </button>
+            <button
+              className="ghost-button"
+              type="button"
+              style={{ width: '100%', marginTop: 10 }}
+              onClick={() => {
+                setAdvanceMode(true);
+                setLandingMode('order-channel');
+              }}
+            >
+              Advance Order (pick a time) <ArrowRight size={16} />
             </button>
             <button
               className="ghost-button"
@@ -1061,6 +1093,18 @@ export default function App() {
                         <h3>Who's this for?</h3>
                       </div>
                     </div>
+                    {advanceMode && (
+                      <label style={{ display: 'block', marginBottom: 10, fontSize: 13 }}>
+                        When do you want it?
+                        <input
+                          className="input"
+                          type="datetime-local"
+                          style={{ marginTop: 4 }}
+                          value={scheduledLocal}
+                          onChange={(e) => setScheduledLocal(e.target.value)}
+                        />
+                      </label>
+                    )}
                     <input
                       className="input"
                       style={{ marginBottom: 10 }}

@@ -39,7 +39,12 @@ export function DeliveryMonitor() {
         <CardContent className="py-3 space-y-1">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
-              <span className="font-corp-display text-sm">Order #{order.order_number}</span>
+              <span className="font-corp-display text-sm">
+              Order #{order.order_number}
+              {order.scheduled_for && (
+                <Badge className="ml-2" variant="destructive">For {formatDateTime12h(order.scheduled_for)}</Badge>
+              )}
+            </span>
               {order.delivery?.barangay && <Badge variant="outline">{order.delivery.barangay}</Badge>}
             </div>
             <span className="font-semibold">

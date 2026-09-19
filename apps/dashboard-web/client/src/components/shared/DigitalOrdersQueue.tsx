@@ -21,7 +21,7 @@ import {
   fetchDigitalOrders,
   rejectDigitalOrder,
 } from '@/lib/api';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, formatDateTime12h } from '@/lib/utils';
 import { POLL_INTERVAL_MS } from '@/lib/constants';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 import { useProductCatalog } from '@/hooks/useProductCatalog';
@@ -135,6 +135,9 @@ export function DigitalOrdersQueue({
                   >
                     Order #{order.order_number}
                   </button>
+                  {order.scheduled_for && (
+                    <Badge variant="destructive">For {formatDateTime12h(order.scheduled_for)}</Badge>
+                  )}
                   {channel === 'dine_in_qr' && <Badge variant="outline">Table {order.table_number}</Badge>}
                   {channel === 'delivery' && order.delivery?.barangay && (
                     <Badge variant="outline">{order.delivery.barangay}</Badge>

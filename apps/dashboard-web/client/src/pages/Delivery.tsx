@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { MapPin } from 'lucide-react';
 import { ApiDigitalOrder, ApiProduct, fetchDeliveries, markDeliveryDone } from '@/lib/api';
-import { formatCurrency } from '@/lib/utils';
+import { formatCurrency, formatDateTime12h } from '@/lib/utils';
 import { POLL_INTERVAL_MS } from '@/lib/constants';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 import { useProductCatalog } from '@/hooks/useProductCatalog';
@@ -94,6 +94,9 @@ export default function Delivery() {
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <span className="font-corp-display text-sm">
                   Order #{order.order_number}
+                  {order.scheduled_for && (
+                    <Badge className="ml-2" variant="destructive">For {formatDateTime12h(order.scheduled_for)}</Badge>
+                  )}
                   {order.kitchen_status === 'ready' && (
                     <Badge className="ml-2" variant="secondary">Ready</Badge>
                   )}

@@ -572,6 +572,8 @@ export interface ApiDigitalOrder {
   delivery: ApiDeliveryDetail | null;
   /** Only set by GET /deliveries (rider "For Pick Up" tab keys off 'ready'). */
   kitchen_status?: string | null;
+  /** Advance order: when the customer wants it (null = as soon as possible). */
+  scheduled_for?: string | null;
 }
 
 export function fetchDigitalOrders(status?: DigitalOrderStatus): Promise<ApiDigitalOrder[]> {

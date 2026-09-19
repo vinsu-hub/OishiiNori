@@ -391,6 +391,9 @@ class CreateDigitalOrderRequest(BaseModel):
     # connection losing the response, or an offline-queue replay) -- see
     # app/idempotency.py. Omitting it keeps today's exact behavior.
     idempotency_key: str | None = None
+    # Advance order (delivery/pickup only): when the customer wants it.
+    # Null = as soon as possible. Validated in the router (needs "now").
+    scheduled_for: datetime | None = None
 
     @field_validator("customer_phone")
     @classmethod
@@ -452,6 +455,7 @@ class DigitalOrderResponse(BaseModel):
     # Populated by GET /deliveries only (the rider's "For Pick Up" tab keys
     # off `ready`); None everywhere else and for orders with no transaction yet.
     kitchen_status: str | None = None
+    scheduled_for: datetime | None = None
 
 
 class QueueDisplayOut(BaseModel):
@@ -476,6 +480,7 @@ class DigitalOrderStatusResponse(BaseModel):
     items: list[DigitalOrderItemResponse] = Field(default_factory=list)
     addons: list[DigitalOrderAddonResponse] = Field(default_factory=list)
     delivery: DeliveryDetailOut | None = None
+    scheduled_for: datetime | None = None
 
 
 class RejectDigitalOrderRequest(BaseModel):

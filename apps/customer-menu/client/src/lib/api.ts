@@ -122,6 +122,8 @@ export interface SubmitOrderPayload {
   landmark?: string;
   barangay?: string;
   idempotency_key?: string;
+  /** Advance order: ISO time the customer wants it (delivery/pickup only). */
+  scheduled_for?: string;
 }
 
 export interface DeliveryFee {
@@ -182,6 +184,7 @@ export interface DigitalOrderStatus {
   items: DigitalOrderStatusItem[];
   addons: DigitalOrderStatusAddon[];
   delivery: DigitalOrderStatusDelivery | null;
+  scheduled_for?: string | null;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
