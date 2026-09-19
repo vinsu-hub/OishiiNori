@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { MapPin } from 'lucide-react';
+import { CalendarClock, CheckCircle2, MapPin, PackageCheck } from 'lucide-react';
 import { ApiDigitalOrder, ApiProduct, fetchDeliveries, markDeliveryDone } from '@/lib/api';
 import { formatCurrency, formatDateTime12h } from '@/lib/utils';
 import { POLL_INTERVAL_MS } from '@/lib/constants';
@@ -22,15 +22,21 @@ export default function Delivery() {
   // blocking the delivery list over, so productsError is deliberately unused.
   const { products } = useProductCatalog();
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   // "pending" = every undelivered order; "pickup" = the subset the kitchen has
   // marked ready, i.e. food the rider can physically collect and take out now.
   const [tab, setTab] = useState<'pending' | 'pickup'>('pending');
 
   const load = useCallback(() => {
+    setError(null);
     fetchDeliveries()
       .then(setOrders)
-      .catch((e) => toast.error(e instanceof Error ? e.message : 'Failed to load deliveries'))
+      .catch((e) => {
+        const message = e instanceof Error ? e.message : 'Failed to load deliveries';
+        setError(message);
+        toast.error(message);
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -64,18 +70,27 @@ export default function Delivery() {
 
   return (
     <DashboardLayout title="Delivery">
-      <div className="p-6 space-y-3">
+      <div className="space-y-4 p-4 sm:p-6">
         <Tabs value={tab} onValueChange={(v) => setTab(v as 'pending' | 'pickup')}>
-          <TabsList>
-            <TabsTrigger value="pending">Delivery Pending ({orders.length})</TabsTrigger>
-            <TabsTrigger value="pickup">For Pick Up ({readyCount})</TabsTrigger>
+          <TabsList className="h-auto min-h-11 max-w-full overflow-x-auto">
+            <TabsTrigger className="min-h-11 px-4" value="pending">Delivery pending ({orders.length})</TabsTrigger>
+            <TabsTrigger className="min-h-11 px-4" value="pickup">Ready for pick up ({readyCount})</TabsTrigger>
           </TabsList>
         </Tabs>
-        {loading && <p className="text-sm text-muted-foreground">Loading deliveries...</p>}
-        {!loading && visibleOrders.length === 0 && (
-          <Card className="max-w-xl">
-            <CardHeader>
-              <CardTitle className="font-corp-display text-base">
+        {loading && <p className="text-sm text-muted-foreground" role="status">Loading deliveries…</p>}
+        {!loading && error && (
+          <Card className="max-w-2xl border-destructive/40">
+            <CardContent className="flex flex-col items-start gap-3 py-5 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-destructive">Couldn’t load deliveries. {error}</p>
+              <Button className="min-h-11" variant="outline" onClick={load}>Try again</Button>
+            </CardContent>
+          </Card>
+        )}
+        {!loading && !error && visibleOrders.length === 0 && (
+          <Card className="max-w-2xl border-dashed">
+            <CardHeader className="pb-2">
+              <PackageCheck className="size-8 text-muted-foreground" aria-hidden="true" />
+              <CardTitle className="font-corp-display text-lg">
                 {tab === 'pickup' ? 'Nothing ready for pick up' : 'No deliveries yet'}
               </CardTitle>
             </CardHeader>
@@ -88,20 +103,24 @@ export default function Delivery() {
             </CardContent>
           </Card>
         )}
-        {visibleOrders.map((order) => (
-          <Card key={order.id} className="max-w-xl">
-            <CardContent className="py-3 space-y-2">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <span className="font-corp-display text-sm">
-                  Order #{order.order_number}
-                  {order.scheduled_for && (
-                    <Badge className="ml-2" variant="destructive">For {formatDateTime12h(order.scheduled_for)}</Badge>
-                  )}
+        {!error && visibleOrders.map((order) => (
+          <Card key={order.id} className="max-w-2xl">
+            <CardContent className="space-y-3 py-4">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <span className="font-corp-display text-lg font-semibold">Order #{order.order_number}</span>
                   {order.kitchen_status === 'ready' && (
-                    <Badge className="ml-2" variant="secondary">Ready</Badge>
+                    <Badge className="border-emerald-700/20 bg-emerald-700 text-white">
+                      <CheckCircle2 aria-hidden="true" /> Ready
+                    </Badge>
                   )}
-                </span>
-                <span className="font-semibold">
+                  {order.scheduled_for && (
+                    <Badge variant="gold">
+                      <CalendarClock aria-hidden="true" /> Scheduled {formatDateTime12h(order.scheduled_for)}
+                    </Badge>
+                  )}
+                </div>
+                <span className="font-semibold tabular-nums">
                   {formatCurrency(order.subtotal + (order.delivery?.delivery_fee ?? 0))}
                 </span>
               </div>
@@ -119,9 +138,9 @@ export default function Delivery() {
                       href={order.delivery.maps_pin_url}
                       target="_blank"
                       rel="noreferrer"
-                      className="flex items-center gap-1 text-xs text-primary underline underline-offset-2 mt-1"
-                    >
-                      <MapPin className="w-3 h-3" /> Open in Google Maps
+                    className="mt-1 inline-flex min-h-11 items-center gap-2 rounded-md text-sm font-medium text-primary underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                      <MapPin className="size-4" aria-hidden="true" /> Open in Google Maps
                     </a>
                   )}
                 </div>
@@ -136,8 +155,13 @@ export default function Delivery() {
                   );
                 })}
               </ul>
-              <Button size="sm" disabled={busyId === order.id} onClick={() => handleDone(order)}>
-                {busyId === order.id ? 'Working...' : 'Delivery done'}
+              <Button
+                className="min-h-12 w-full text-base sm:w-auto sm:min-w-44"
+                disabled={busyId === order.id}
+                onClick={() => handleDone(order)}
+              >
+                <CheckCircle2 aria-hidden="true" />
+                {busyId === order.id ? 'Marking delivered…' : 'Delivery done'}
               </Button>
             </CardContent>
           </Card>

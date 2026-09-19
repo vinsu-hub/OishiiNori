@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Progress } from '@/components/ui/progress';
-import { Volume2, VolumeX } from 'lucide-react';
+import { CalendarDays, Volume2, VolumeX } from 'lucide-react';
 import { BundleFulfillmentChecklist } from '@/components/kitchen/BundleFulfillmentChecklist';
 import { LogExtraUsageDialog } from '@/components/kitchen/LogExtraUsageDialog';
 import { useAuth } from '@/contexts/AuthContext';
@@ -74,7 +74,7 @@ const DELAYED_THRESHOLD_SECONDS: Partial<Record<KitchenStatus, number>> = {
 
 // WS-9: per-ticket glow tiers, same timing base as the "delayed" red text
 // above (kitchen_status_updated_at || opened_at) -- 9min warning, 15min
-// overdue. Deliberately not date-scoped, same reasoning as delayedCount.
+// overdue. The visible-board date filter determines which tickets are tiered.
 const WARNING_THRESHOLD_SECONDS = 8 * 60;
 const OVERDUE_THRESHOLD_SECONDS = 14 * 60;
 
@@ -116,6 +116,7 @@ export default function KitchenDisplay() {
   const [digitalOrderLookup, setDigitalOrderLookup] = useState<Map<string, ApiDigitalOrder>>(new Map());
   const [loading, setLoading] = useState(true);
   const [stationFilter, setStationFilter] = useState<KitchenStation | 'all'>('all');
+  const [dateFilter, setDateFilter] = useState<'today' | 'all'>('all');
   const [fulfilledItemIds, setFulfilledItemIds] = useState<Set<string>>(new Set());
   const [checklistTarget, setChecklistTarget] = useState<ChecklistTarget | null>(null);
   const [extraUsageTarget, setExtraUsageTarget] = useState<{ size: ApiProductSize; product: ApiProduct } | null>(
@@ -164,7 +165,9 @@ export default function KitchenDisplay() {
         // Chime on any order newly seen in "queued" -- skip entirely on the
         // very first load (ref starts null) so opening the page doesn't
         // chime for every already-queued order.
-        const queuedIds = new Set(t.filter((tx) => tx.kitchen_status === 'queued').map((tx) => tx.id));
+        const queueCandidates =
+          dateFilter === 'today' ? t.filter((tx) => toIsoDatePH(tx.opened_at) === todayIsoPH()) : t;
+        const queuedIds = new Set(queueCandidates.filter((tx) => tx.kitchen_status === 'queued').map((tx) => tx.id));
         if (seenQueuedIdsRef.current) {
           const isNew = Array.from(queuedIds).some((id) => !seenQueuedIdsRef.current!.has(id));
           if (isNew && soundOn) playNewOrderBeep();
@@ -173,22 +176,9 @@ export default function KitchenDisplay() {
       })
       .catch((e) => toast.error(`Failed to load kitchen display: ${e instanceof Error ? e.message : 'Unknown error'}`))
       .finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [soundOn]);
+  }, [dateFilter, soundOn]);
 
   useVisiblePolling(load, POLL_INTERVAL_MS);
-
-  // Fire the overdue beep once per ticket the instant it crosses the 15min
-  // tier (ref-camped like seenQueuedIdsRef above), on the 1s tick since the
-  // crossing happens between polls, not on load().
-  useEffect(() => {
-    const overdueIds = new Set(
-      transactions.filter((t) => ticketTier(t, now) === 'overdue').map((t) => t.id)
-    );
-    const isNewlyOverdue = Array.from(overdueIds).some((id) => !seenOverdueIdsRef.current.has(id));
-    if (isNewlyOverdue && soundOn) playOverdueBeep();
-    seenOverdueIdsRef.current = overdueIds;
-  }, [transactions, now, soundOn]);
 
   const sizeIndex = useMemo(() => {
     const map = new Map<string, { product: ApiProduct; size: ApiProductSize }>();
@@ -220,13 +210,32 @@ export default function KitchenDisplay() {
       .filter((x): x is ResolvedItem => x !== null);
   }
 
+  const currentBusinessDate = toIsoDatePH(now.toISOString());
+
+  const dateFilteredOrders = useMemo(
+    () =>
+      dateFilter === 'today'
+        ? transactions.filter((order) => toIsoDatePH(order.opened_at) === currentBusinessDate)
+        : transactions,
+    [currentBusinessDate, dateFilter, transactions]
+  );
+
   const visibleOrders = useMemo(() => {
-    if (stationFilter === 'all') return transactions;
-    return transactions.filter((order) =>
+    if (stationFilter === 'all') return dateFilteredOrders;
+    return dateFilteredOrders.filter((order) =>
       resolveItems(order).some((r) => r.product.station === stationFilter)
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transactions, stationFilter, sizeIndex]);
+  }, [dateFilteredOrders, stationFilter, sizeIndex]);
+
+  // Fire the overdue beep once per visible ticket the instant it crosses the
+  // tier, so the default Today view cannot alert for stale orders.
+  useEffect(() => {
+    const overdueIds = new Set(visibleOrders.filter((t) => ticketTier(t, now) === 'overdue').map((t) => t.id));
+    const isNewlyOverdue = Array.from(overdueIds).some((id) => !seenOverdueIdsRef.current.has(id));
+    if (isNewlyOverdue && soundOn) playOverdueBeep();
+    seenOverdueIdsRef.current = overdueIds;
+  }, [visibleOrders, now, soundOn]);
 
   const ordersByStatus = useMemo(() => {
     const map: Record<KitchenStatus, ApiTransaction[]> = { queued: [], preparing: [], ready: [], completed: [] };
@@ -252,11 +261,8 @@ export default function KitchenDisplay() {
   // (Philippines-local calendar day, not UTC) completed orders, as a rough
   // "how long an order takes end to end" stand-in for a glance-at-the-board
   // metric. SMFC computes a true prep-time from a dedicated backend summary
-  // endpoint; this avoids adding one, at the cost of precision. Unlike
-  // delayedCount/longestOrder below (deliberately NOT date-scoped -- a
-  // stuck order from yesterday should still count as delayed on the live
-  // board), this metric's own label claims "today", so it has to actually
-  // filter to today or it's misleading.
+  // endpoint; this avoids adding one, at the cost of precision. This metric
+  // remains today-only even when the board's optional All dates view is on.
   const avgPrepSeconds = useMemo(() => {
     const today = todayIsoPH();
     const completed = visibleOrders.filter(
@@ -292,8 +298,8 @@ export default function KitchenDisplay() {
   return (
     <DashboardLayout title="Kitchen Display">
       <div className="p-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="grid grid-cols-4 gap-3 flex-1 mr-4">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+          <div className="grid flex-1 grid-cols-2 gap-3 xl:mr-4 xl:grid-cols-4">
             {KITCHEN_STATUSES.map((status) => (
               <Card key={status}>
                 <CardContent className="py-3">
@@ -303,29 +309,49 @@ export default function KitchenDisplay() {
               </Card>
             ))}
           </div>
-          <Select value={stationFilter} onValueChange={(v) => setStationFilter(v as KitchenStation | 'all')}>
-            <SelectTrigger className="w-56">
-              <SelectValue placeholder="All stations" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All stations</SelectItem>
-              {STATIONS.map((s) => (
-                <SelectItem key={s.value} value={s.value}>
-                  {s.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button
-            size="icon"
-            variant="outline"
-            className="ml-2"
-            onClick={() => setSoundOn((v) => !v)}
-            aria-label={soundOn ? 'Mute new-order sound' : 'Unmute new-order sound'}
-            title={soundOn ? 'Mute new-order sound' : 'Unmute new-order sound'}
-          >
-            {soundOn ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex min-h-10 items-center rounded-md border p-1" aria-label="Order date filter">
+              <CalendarDays className="mx-2 size-4 text-muted-foreground" aria-hidden="true" />
+              <Button
+                size="sm"
+                variant={dateFilter === 'today' ? 'default' : 'ghost'}
+                aria-pressed={dateFilter === 'today'}
+                onClick={() => setDateFilter('today')}
+              >
+                Today
+              </Button>
+              <Button
+                size="sm"
+                variant={dateFilter === 'all' ? 'default' : 'ghost'}
+                aria-pressed={dateFilter === 'all'}
+                onClick={() => setDateFilter('all')}
+              >
+                All dates
+              </Button>
+            </div>
+            <Select value={stationFilter} onValueChange={(v) => setStationFilter(v as KitchenStation | 'all')}>
+              <SelectTrigger className="min-h-10 w-56 max-w-full" aria-label="Filter by kitchen station">
+                <SelectValue placeholder="All stations" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All stations</SelectItem>
+                {STATIONS.map((s) => (
+                  <SelectItem key={s.value} value={s.value}>
+                    {s.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              size="icon"
+              variant="outline"
+              onClick={() => setSoundOn((v) => !v)}
+              aria-label={soundOn ? 'Mute new-order sound' : 'Unmute new-order sound'}
+              title={soundOn ? 'Mute new-order sound' : 'Unmute new-order sound'}
+            >
+              {soundOn ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+            </Button>
+          </div>
         </div>
 
         <div className="grid grid-cols-3 gap-3">
@@ -362,6 +388,11 @@ export default function KitchenDisplay() {
                 <h3 className="font-corp-display font-semibold text-sm text-muted-foreground">
                   {STATUS_LABEL[status]} ({ordersByStatus[status].length})
                 </h3>
+                {ordersByStatus[status].length === 0 && (
+                  <p className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
+                    No {STATUS_LABEL[status].toLowerCase()} orders {dateFilter === 'today' ? 'today' : ''}.
+                  </p>
+                )}
                 {ordersByStatus[status].map((order) => {
                   const resolved = resolveItems(order);
                   const bundleItems = resolved.filter((r) => r.product.is_bundle);

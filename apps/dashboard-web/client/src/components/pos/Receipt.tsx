@@ -1,5 +1,6 @@
-import React from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import React, { useRef } from 'react';
+import { Printer } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { formatCurrency, formatTimestamp12h } from '@/lib/utils';
 
@@ -75,14 +76,16 @@ export function receiptHtml(r: ReceiptData): string {
 
 const RECEIPT_CSS = `
   @page { size: 58mm auto; margin: 0; }
-  body { margin: 0; font-family: 'Courier New', monospace; font-size: 12px; color: #000; }
-  .receipt { width: 58mm; max-width: 100%; margin: 0 auto; padding: 3mm; font-family: 'Courier New', monospace; font-size: 12px; color: #000; }
+  body { width: 58mm; margin: 0; padding: 0; font-family: 'Courier New', monospace; font-size: 12px; color: #000; }
+  .receipt { box-sizing: border-box; width: 58mm; max-width: 100%; margin: 0 auto; padding: 3mm; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.35; color: #000; }
   .receipt * { box-sizing: border-box; }
-  .receipt .row { display: flex; justify-content: space-between; gap: 6px; }
-  .receipt .row span:first-child { flex: 1; word-break: break-word; }
+  .receipt .row { display: flex; justify-content: space-between; align-items: flex-start; gap: 6px; margin: 1px 0; }
+  .receipt .row span:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .receipt .row span:last-child { flex: 0 0 auto; text-align: right; font-variant-numeric: tabular-nums; }
   .receipt .c { text-align: center; } .receipt .b { font-weight: 700; } .receipt .small { font-size: 10px; }
-  .receipt .big { font-size: 16px; } .receipt .ticket { font-size: 30px; line-height: 1.2; margin: 2px 0; }
-  .receipt hr { border: 0; border-top: 1px dashed #000; margin: 5px 0; }
+  .receipt .big { font-size: 16px; letter-spacing: 0.06em; }
+  .receipt .ticket { font-size: 36px; line-height: 1.1; margin: 3px 0 4px; letter-spacing: 0.02em; font-variant-numeric: tabular-nums; }
+  .receipt hr { border: 0; border-top: 1px dashed #000; margin: 6px 0; }
 `;
 
 /** Prints through a hidden iframe: no popup for the browser to block, no app-wide print CSS. */
@@ -109,23 +112,45 @@ export function printReceipt(r: ReceiptData): void {
 }
 
 export function ReceiptDialog({ receipt, onClose }: { receipt: ReceiptData | null; onClose: () => void }) {
+  const printButtonRef = useRef<HTMLButtonElement>(null);
+
   return (
     <Dialog open={receipt !== null} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-sm">
+      <DialogContent
+        className="max-h-[calc(100vh-2rem)] max-w-sm overflow-hidden p-4 sm:p-6"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          printButtonRef.current?.focus();
+        }}
+      >
         <DialogHeader>
-          <DialogTitle>Sale complete</DialogTitle>
+          <DialogTitle>
+            Sale complete{receipt?.orderNumber != null ? ` · Ticket #${receipt.orderNumber}` : ''}
+          </DialogTitle>
+          <DialogDescription>Print the customer receipt, or close to begin the next order.</DialogDescription>
         </DialogHeader>
         {receipt && (
-          <div className="max-h-[60vh] overflow-y-auto border rounded bg-white text-black">
+          <div
+            className="mx-auto max-h-[58vh] w-full overflow-y-auto rounded-md border bg-white text-black shadow-inner"
+            role="document"
+            aria-label={`Receipt preview${receipt.orderNumber != null ? ` for ticket ${receipt.orderNumber}` : ''}`}
+          >
             <style>{RECEIPT_CSS.replace(/@page[^}]*}/, '').replace(/body \{[^}]*\}/, '')}</style>
             <div dangerouslySetInnerHTML={{ __html: receiptHtml(receipt) }} />
           </div>
         )}
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>
+        <DialogFooter className="pt-1 sm:grid sm:grid-cols-[auto_1fr]">
+          <Button className="min-h-11" variant="outline" onClick={onClose}>
             Close
           </Button>
-          <Button onClick={() => receipt && printReceipt(receipt)}>Print receipt</Button>
+          <Button
+            ref={printButtonRef}
+            className="min-h-11 text-base"
+            onClick={() => receipt && printReceipt(receipt)}
+          >
+            <Printer aria-hidden="true" />
+            Print receipt
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

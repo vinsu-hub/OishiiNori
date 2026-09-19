@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 // Full-screen "Now Serving" board for the restaurant TV (open /tv, press F11).
 // Read-only and unauthenticated -- the backend feed carries order numbers only.
@@ -10,30 +10,34 @@ interface QueueDisplay {
   ready: number[];
 }
 
-function Column({ title, numbers, accent }: { title: string; numbers: number[]; accent: string }) {
+function Column({
+  title,
+  numbers,
+  accent,
+  emptyText,
+  highlighted = new Set<number>(),
+}: {
+  title: string;
+  numbers: number[];
+  accent: string;
+  emptyText: string;
+  highlighted?: Set<number>;
+}) {
   return (
-    <section style={{ flex: 1, padding: '2vw', borderRight: '1px solid #2a2a2a', minWidth: 0 }}>
-      <h2 style={{ fontSize: '3.2vw', margin: 0, color: accent, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+    <section className="tv-column" style={{ '--tv-accent': accent } as React.CSSProperties}>
+      <h2 className="tv-column-title">
         {title}
       </h2>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1.6vw', marginTop: '2vw' }}>
+      <div className="tv-number-grid">
         {numbers.map((n) => (
           <span
             key={n}
-            style={{
-              fontSize: '7vw',
-              fontWeight: 700,
-              lineHeight: 1,
-              padding: '1vw 2vw',
-              border: `0.3vw solid ${accent}`,
-              borderRadius: '1.2vw',
-              fontVariantNumeric: 'tabular-nums',
-            }}
+            className={`tv-order-number ${highlighted.has(n) ? 'is-newly-ready' : ''}`}
           >
             {n}
           </span>
         ))}
-        {numbers.length === 0 && <span style={{ fontSize: '2.4vw', color: '#777' }}>--</span>}
+        {numbers.length === 0 && <p className="tv-column-empty">{emptyText}</p>}
       </div>
     </section>
   );
@@ -42,6 +46,9 @@ function Column({ title, numbers, accent }: { title: string; numbers: number[]; 
 export default function TvDisplay() {
   const [data, setData] = useState<QueueDisplay>({ preparing: [], ready: [] });
   const [online, setOnline] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [newlyReady, setNewlyReady] = useState<Set<number>>(new Set());
+  const previousReady = useRef<Set<number> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -51,12 +58,20 @@ export default function TvDisplay() {
         if (!res.ok) throw new Error(String(res.status));
         const json = (await res.json()) as QueueDisplay;
         if (!cancelled) {
+          if (previousReady.current) {
+            setNewlyReady(new Set(json.ready.filter((number) => !previousReady.current?.has(number))));
+          }
+          previousReady.current = new Set(json.ready);
           setData(json);
           setOnline(true);
+          setLoading(false);
         }
       } catch {
         // Keep showing the last good board rather than blanking the TV on a network blip.
-        if (!cancelled) setOnline(false);
+        if (!cancelled) {
+          setOnline(false);
+          setLoading(false);
+        }
       }
     }
     load();
@@ -68,27 +83,29 @@ export default function TvDisplay() {
   }, []);
 
   return (
-    <main
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: '#0f0f0f',
-        color: '#fff',
-        fontFamily: "'DM Sans', system-ui, sans-serif",
-        display: 'flex',
-        flexDirection: 'column',
-      }}
-    >
-      <header style={{ padding: '1.5vw 2vw', borderBottom: '1px solid #2a2a2a', display: 'flex', justifyContent: 'space-between' }}>
-        <strong style={{ fontSize: '2.6vw' }}>Oishii Nori</strong>
-        <span style={{ fontSize: '1.6vw', color: online ? '#5ec27a' : '#e0a030' }}>
+    <main className="tv-display">
+      <header className="tv-header">
+        <strong>Oishii Nori</strong>
+        <span className={`tv-connection ${online ? 'is-online' : ''}`} role="status">
           {online ? 'Live' : 'Reconnecting...'}
         </span>
       </header>
-      <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-        <Column title="Now Preparing" numbers={data.preparing} accent="#e0a030" />
-        <Column title="Now Serving" numbers={data.ready} accent="#5ec27a" />
-      </div>
+      {loading ? (
+        <div className="tv-board-message" role="status">Loading order board...</div>
+      ) : data.preparing.length === 0 && data.ready.length === 0 ? (
+        <div className="tv-board-message">No orders right now</div>
+      ) : (
+        <div className="tv-columns">
+          <Column title="Now Preparing" numbers={data.preparing} accent="#f0b84a" emptyText="No orders preparing" />
+          <Column
+            title="Now Serving"
+            numbers={data.ready}
+            accent="#6cdb8a"
+            emptyText="No orders ready"
+            highlighted={newlyReady}
+          />
+        </div>
+      )}
     </main>
   );
 }

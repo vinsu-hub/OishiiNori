@@ -117,6 +117,7 @@ export default function App() {
     () => new URLSearchParams(window.location.search).get('advance') === '1'
   );
   const [scheduledLocal, setScheduledLocal] = useState('');
+  const [scheduleError, setScheduleError] = useState('');
   const [landingMode, setLandingMode] = useState<'choice' | 'reserve' | 'order-channel'>(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('reserve') === '1') return 'reserve';
@@ -150,6 +151,11 @@ export default function App() {
 
   const selectedFee = deliveryFees.find((f) => f.barangay === barangay)?.fee ?? null;
 
+  function toLocalDateTimeInput(date: Date) {
+    const offsetMs = date.getTimezoneOffset() * 60_000;
+    return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+  }
+
   const [products, setProducts] = useState<ApiProduct[]>([]);
   const [addonCatalog, setAddonCatalog] = useState<ApiAddon[]>([]);
   const [loadingMenu, setLoadingMenu] = useState(true);
@@ -160,6 +166,13 @@ export default function App() {
   const [cart, setCart] = useState<CartLine[]>([]);
   const [addons, setAddons] = useState<AddonLine[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
+  const scheduleBounds = useMemo(() => {
+    const now = Date.now();
+    return {
+      min: toLocalDateTimeInput(new Date(Math.ceil((now + 30 * 60_000) / 60_000) * 60_000)),
+      max: toLocalDateTimeInput(new Date(now + 7 * 86_400_000)),
+    };
+  }, [cartOpen]);
   const [itemOpen, setItemOpen] = useState<ApiProduct | null>(null);
   // null = not yet loaded, so we never flash a false "closed" state before
   // the first poll resolves. Menu browsing always stays open; this only
@@ -385,9 +398,10 @@ export default function App() {
     if (advanceMode) {
       const when = scheduledLocal ? new Date(scheduledLocal).getTime() : NaN;
       if (!Number.isFinite(when) || when < Date.now() + 30 * 60_000 || when > Date.now() + 7 * 86_400_000) {
-        toast('Pick a time between 30 minutes and 7 days from now', 'error');
+        setScheduleError('Choose a date and time between 30 minutes and 7 days from now.');
         return false;
       }
+      setScheduleError('');
     }
     return true;
   }
@@ -536,7 +550,7 @@ export default function App() {
             <div className="modal-body" style={{ textAlign: 'center' }}>
               <img src="/logo.jpg" alt="Oishii Nori" className="brand-logo" style={{ width: 64, height: 64, margin: '0 auto 14px' }} />
               <h2>{advanceMode ? 'Advance Order' : 'Order Online'}</h2>
-              <p>How would you like to receive your order?</p>
+              <p>{advanceMode ? 'Choose delivery or pickup, then select your preferred date and time at checkout.' : 'How would you like to receive your order?'}</p>
               <button
                 className="primary-button"
                 type="button"
@@ -593,7 +607,7 @@ export default function App() {
                 setLandingMode('order-channel');
               }}
             >
-              Advance Order (pick a time) <ArrowRight size={16} />
+              Schedule an Order <ArrowRight size={16} />
             </button>
             <button
               className="ghost-button"
@@ -1094,21 +1108,32 @@ export default function App() {
                       </div>
                     </div>
                     {advanceMode && (
-                      <label style={{ display: 'block', marginBottom: 10, fontSize: 13 }}>
-                        When do you want it?
+                      <label className="schedule-field" htmlFor="scheduled-for">
+                        <span>When do you want it?</span>
                         <input
+                          id="scheduled-for"
                           className="input"
                           type="datetime-local"
-                          style={{ marginTop: 4 }}
+                          min={scheduleBounds.min}
+                          max={scheduleBounds.max}
                           value={scheduledLocal}
-                          onChange={(e) => setScheduledLocal(e.target.value)}
+                          aria-describedby={`schedule-help${scheduleError ? ' schedule-error' : ''}`}
+                          aria-invalid={Boolean(scheduleError)}
+                          onChange={(e) => {
+                            setScheduledLocal(e.target.value);
+                            setScheduleError('');
+                          }}
                         />
+                        <small id="schedule-help">Available from 30 minutes to 7 days from now.</small>
+                        {scheduleError && <small id="schedule-error" className="field-error" role="alert">{scheduleError}</small>}
                       </label>
                     )}
                     <input
                       className="input"
                       style={{ marginBottom: 10 }}
                       placeholder="Full name"
+                      aria-label="Full name"
+                      autoComplete="name"
                       value={customerName}
                       onChange={(e) => setCustomerName(e.target.value)}
                     />
@@ -1116,6 +1141,9 @@ export default function App() {
                       className="input"
                       style={{ marginBottom: 10 }}
                       placeholder={`Phone number (${PH_PHONE_HINT})`}
+                      aria-label="Phone number"
+                      autoComplete="tel"
+                      inputMode="tel"
                       value={customerPhone}
                       onChange={(e) => setCustomerPhone(e.target.value)}
                     />
@@ -1125,6 +1153,8 @@ export default function App() {
                           className="input"
                           style={{ marginBottom: 10 }}
                           placeholder="Delivery address"
+                          aria-label="Delivery address"
+                          autoComplete="street-address"
                           value={address}
                           onChange={(e) => setAddress(e.target.value)}
                         />
@@ -1132,12 +1162,14 @@ export default function App() {
                           className="input"
                           style={{ marginBottom: 10 }}
                           placeholder="Landmark (optional)"
+                          aria-label="Landmark (optional)"
                           value={landmark}
                           onChange={(e) => setLandmark(e.target.value)}
                         />
                         <select
                           className="input"
                           value={barangay}
+                          aria-label="Barangay"
                           onChange={(e) => setBarangay(e.target.value)}
                         >
                           <option value="">Select barangay...</option>
@@ -1156,6 +1188,7 @@ export default function App() {
                   className="input"
                   style={{ marginBottom: 14 }}
                   placeholder="Anything else? (optional)"
+                  aria-label="Order notes (optional)"
                   value={customerNote}
                   onChange={(e) => setCustomerNote(e.target.value)}
                 />

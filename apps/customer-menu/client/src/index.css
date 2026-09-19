@@ -367,6 +367,31 @@
 .payment-option.is-selected { border-color:#c92b2b; background:#fff2ee; box-shadow:inset 0 0 0 1px #c92b2b; }
 .payment-option.is-selected span { color:#b12f2d; }
 
+.schedule-field { display:block; margin-bottom:14px; color:#493f38; font-size:13px; font-weight:600; }
+.schedule-field .input { margin-top:6px; }
+.schedule-field small { display:block; margin-top:6px; color:#776d64; font-size:11px; font-weight:400; line-height:1.4; }
+.schedule-field .field-error { color:#a51f26; font-weight:600; }
+
+:where(button, a, input, select, textarea):focus-visible { outline:3px solid #a51f26; outline-offset:3px; }
+
+/* Full-screen restaurant queue board. Fluid sizing keeps order numbers
+   legible at both 1080p and 4K without tying type to a single resolution. */
+.tv-display { position:fixed; inset:0; overflow:hidden; display:flex; flex-direction:column; background:#0f0f0f; color:#fff; font-family:"DM Sans",system-ui,sans-serif; }
+.tv-header { min-height:clamp(72px, 7vh, 132px); padding:1.3vh 2.2vw; border-bottom:1px solid #303030; display:flex; align-items:center; justify-content:space-between; color:#d8d8d8; }
+.tv-header strong { font-size:clamp(28px, 2.2vw, 64px); letter-spacing:-.03em; }
+.tv-connection { font-size:clamp(18px, 1.25vw, 34px); color:#f0b84a; }
+.tv-connection.is-online { color:#6cdb8a; }
+.tv-columns { display:flex; flex:1; min-height:0; }
+.tv-column { --tv-accent:#fff; flex:1; min-width:0; padding:3vh 2.2vw; border-right:1px solid #303030; }
+.tv-column:last-child { border-right:0; }
+.tv-column-title { margin:0; color:var(--tv-accent); font-size:clamp(36px, 3.2vw, 92px); line-height:1.1; letter-spacing:.06em; text-transform:uppercase; }
+.tv-number-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); align-content:start; gap:clamp(16px, 1.7vw, 46px); margin-top:3vh; }
+.tv-order-number { display:grid; min-height:clamp(120px, 17vh, 310px); place-items:center; padding:.5em .25em; border:clamp(4px, .28vw, 8px) solid var(--tv-accent); border-radius:clamp(14px, 1.1vw, 30px); font-size:clamp(72px, 6.4vw, 184px); font-weight:700; line-height:1; font-variant-numeric:tabular-nums; }
+.tv-order-number.is-newly-ready { color:#07150b; background:var(--tv-accent); animation:tv-ready-pulse 1.2s ease-in-out 4; }
+.tv-column-empty { grid-column:1 / -1; margin:4vh 0 0; color:#aaa; font-size:clamp(28px, 2.1vw, 60px); }
+.tv-board-message { flex:1; display:grid; place-items:center; padding:4vw; color:#bbb; font-size:clamp(40px, 4vw, 112px); font-weight:600; text-align:center; }
+@keyframes tv-ready-pulse { 50% { box-shadow:0 0 0 clamp(8px, .6vw, 18px) rgba(108,219,138,.25); transform:scale(1.025); } }
+
 .order-receipt { margin-top:18px; padding:18px 16px; border:1px solid #d9cfc3; background:#fffdf8; box-shadow:0 10px 24px rgba(76,54,37,.08); position:relative; }
 .order-receipt::before, .order-receipt::after { content:""; position:absolute; left:0; right:0; height:5px; background:linear-gradient(135deg, transparent 0 8%, #fffdf8 8% 16%, transparent 16% 24%) repeat-x; background-size:18px 5px; }
 .order-receipt::before { top:-5px; transform:rotate(180deg); }
@@ -422,7 +447,11 @@
   .item-modal { border-radius:20px; }
   .modal-art { height:170px; }
   .modal-body { padding:20px; }
-  .cart-sheet { padding:21px 18px 24px; }
+  .cart-sheet { max-height:88dvh; padding:21px 18px max(24px, env(safe-area-inset-bottom)); }
+  .quantity button, .modal-close { width:44px; height:44px; }
+  .primary-button, .ghost-button, .secondary-button, .edit-order-button, .payment-option { min-height:44px; }
+  .addons-panel, .payment-panel { padding:14px; }
+  .cart-line { gap:12px; }
   .menu-popover { top:76px; right:18px; }
   .sheet-actions { gap:6px; }
   .edit-order-button { padding:8px 10px; font-size:10px; }
@@ -435,4 +464,15 @@
   .recipe-modal-actions button { width:100%; }
   .payment-options { grid-template-columns:1fr; }
   .order-receipt { margin-left:-2px; margin-right:-2px; }
+}
+
+@media (max-width: 1100px) and (orientation: portrait) {
+  .tv-columns { flex-direction:column; }
+  .tv-column { border-right:0; border-bottom:1px solid #303030; }
+  .tv-number-grid { grid-template-columns:repeat(4, minmax(0, 1fr)); }
+  .tv-order-number { min-height:11vh; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tv-order-number.is-newly-ready { animation:none; }
 }

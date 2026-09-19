@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { CalendarClock, CheckCircle2 } from 'lucide-react';
 import { ApiDigitalOrder, fetchDeliveries } from '@/lib/api';
 import { formatCurrency, formatDateTime12h } from '@/lib/utils';
 import { POLL_INTERVAL_MS } from '@/lib/constants';
@@ -18,8 +19,10 @@ export function DeliveryMonitor() {
   const [pending, setPending] = useState<ApiDigitalOrder[]>([]);
   const [completed, setCompleted] = useState<ApiDigitalOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(() => {
+    setLoadError(null);
     Promise.all([fetchDeliveries('pending'), fetchDeliveries('completed')])
       .then(([p, c]) => {
         setPending(p);
@@ -27,7 +30,11 @@ export function DeliveryMonitor() {
           [...c].sort((a, b) => (b.delivery?.delivered_at ?? '').localeCompare(a.delivery?.delivered_at ?? ''))
         );
       })
-      .catch((e) => toast.error(`Failed to load deliveries: ${e instanceof Error ? e.message : 'Unknown error'}`))
+      .catch((e) => {
+        const message = e instanceof Error ? e.message : 'Unknown error';
+        setLoadError(message);
+        toast.error(`Failed to load deliveries: ${message}`);
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -36,18 +43,23 @@ export function DeliveryMonitor() {
   function OrderCard({ order, showCompletion }: { order: ApiDigitalOrder; showCompletion: boolean }) {
     return (
       <Card key={order.id}>
-        <CardContent className="py-3 space-y-1">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div className="flex items-center gap-2">
-              <span className="font-corp-display text-sm">
-              Order #{order.order_number}
+        <CardContent className="space-y-2 py-4">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="font-corp-display text-base font-semibold">Order #{order.order_number}</span>
               {order.scheduled_for && (
-                <Badge className="ml-2" variant="destructive">For {formatDateTime12h(order.scheduled_for)}</Badge>
+                <Badge variant="gold">
+                  <CalendarClock aria-hidden="true" /> Scheduled {formatDateTime12h(order.scheduled_for)}
+                </Badge>
               )}
-            </span>
+              {!showCompletion && order.kitchen_status === 'ready' && (
+                <Badge className="border-emerald-700/20 bg-emerald-700 text-white">
+                  <CheckCircle2 aria-hidden="true" /> Ready
+                </Badge>
+              )}
               {order.delivery?.barangay && <Badge variant="outline">{order.delivery.barangay}</Badge>}
             </div>
-            <span className="font-semibold">
+            <span className="font-semibold tabular-nums">
               {formatCurrency(order.subtotal + (order.delivery?.delivery_fee ?? 0))}
             </span>
           </div>
@@ -70,14 +82,21 @@ export function DeliveryMonitor() {
 
   return (
     <div className="space-y-4">
-      {loading && <p className="text-sm text-muted-foreground">Loading...</p>}
-      {!loading && (
+      {loading && <p className="text-sm text-muted-foreground" role="status">Loading deliveries…</p>}
+      {!loading && loadError && (
+        <div className="rounded-lg border border-destructive/40 p-4">
+          <p className="text-sm text-destructive">Couldn’t load delivery activity. {loadError}</p>
+        </div>
+      )}
+      {!loading && !loadError && (
         <>
           <div className="space-y-2">
             <h3 className="font-corp-display text-sm text-muted-foreground">
               Out for delivery ({pending.length})
             </h3>
-            {pending.length === 0 && <p className="text-sm text-muted-foreground">Nothing out for delivery.</p>}
+            {pending.length === 0 && (
+              <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Nothing out for delivery.</p>
+            )}
             {pending.map((order) => (
               <OrderCard key={order.id} order={order} showCompletion={false} />
             ))}
@@ -87,7 +106,9 @@ export function DeliveryMonitor() {
             <h3 className="font-corp-display text-sm text-muted-foreground">
               Completed ({completed.length})
             </h3>
-            {completed.length === 0 && <p className="text-sm text-muted-foreground">No completed deliveries yet.</p>}
+            {completed.length === 0 && (
+              <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">No completed deliveries yet.</p>
+            )}
             {completed.map((order) => (
               <OrderCard key={order.id} order={order} showCompletion />
             ))}

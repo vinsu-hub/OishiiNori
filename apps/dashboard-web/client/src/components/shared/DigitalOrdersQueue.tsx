@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { CalendarClock, Inbox } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -50,6 +51,7 @@ export function DigitalOrdersQueue({
   const [orders, setOrders] = useState<ApiDigitalOrder[]>([]);
   const { products, error: productsError } = useProductCatalog();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [detailTarget, setDetailTarget] = useState<ApiDigitalOrder | null>(null);
   const [approveTarget, setApproveTarget] = useState<ApiDigitalOrder | null>(null);
   const [rejectTarget, setRejectTarget] = useState<ApiDigitalOrder | null>(null);
@@ -61,13 +63,18 @@ export function DigitalOrdersQueue({
   }, [productsError]);
 
   const load = useCallback(() => {
+    setLoadError(null);
     fetchDigitalOrders('pending')
       .then((o) =>
         setOrders(
           o.filter((order) => order.order_channel === channel).sort((a, b) => a.order_number - b.order_number)
         )
       )
-      .catch((e) => toast.error(`Failed to load orders: ${e instanceof Error ? e.message : 'Unknown error'}`))
+      .catch((e) => {
+        const message = e instanceof Error ? e.message : 'Unknown error';
+        setLoadError(message);
+        toast.error(`Failed to load orders: ${message}`);
+      })
       .finally(() => setLoading(false));
   }, [channel]);
 
@@ -121,22 +128,37 @@ export function DigitalOrdersQueue({
   const content = (
     <>
       <div className={embedded ? 'space-y-3' : 'p-6 space-y-3'}>
-        {loading && <p className="text-sm text-muted-foreground">Loading...</p>}
-        {!loading && orders.length === 0 && <p className="text-sm text-muted-foreground">{emptyLabel}</p>}
-        {orders.map((order) => (
+        {loading && <p className="text-sm text-muted-foreground" role="status">Loading orders…</p>}
+        {!loading && loadError && (
+          <Card className="border-destructive/40">
+            <CardContent className="flex flex-col items-start gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-destructive">Couldn’t load orders. {loadError}</p>
+              <Button className="min-h-11" variant="outline" onClick={load}>Try again</Button>
+            </CardContent>
+          </Card>
+        )}
+        {!loading && !loadError && orders.length === 0 && (
+          <div className="flex min-h-32 flex-col items-center justify-center gap-2 rounded-lg border border-dashed p-6 text-center">
+            <Inbox className="size-8 text-muted-foreground" aria-hidden="true" />
+            <p className="text-sm text-muted-foreground">{emptyLabel}</p>
+          </div>
+        )}
+        {!loadError && orders.map((order) => (
           <Card key={order.id}>
-            <CardContent className="py-3 space-y-2">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center gap-2">
+            <CardContent className="space-y-3 py-4">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <button
                     type="button"
-                    className="font-corp-display text-sm underline-offset-2 hover:underline"
+                    className="min-h-11 rounded-sm font-corp-display text-lg font-semibold underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     onClick={() => setDetailTarget(order)}
                   >
                     Order #{order.order_number}
                   </button>
                   {order.scheduled_for && (
-                    <Badge variant="destructive">For {formatDateTime12h(order.scheduled_for)}</Badge>
+                    <Badge variant="gold">
+                      <CalendarClock aria-hidden="true" /> Scheduled {formatDateTime12h(order.scheduled_for)}
+                    </Badge>
                   )}
                   {channel === 'dine_in_qr' && <Badge variant="outline">Table {order.table_number}</Badge>}
                   {channel === 'delivery' && order.delivery?.barangay && (
@@ -145,7 +167,7 @@ export function DigitalOrdersQueue({
                   <Badge variant="gold">{order.payment_method}</Badge>
                   {order.payment_proof_url && <Badge variant="outline">Proof attached</Badge>}
                 </div>
-                <span className="font-semibold">
+                <span className="pt-2 font-semibold tabular-nums">
                   {formatCurrency(order.subtotal + (order.delivery?.delivery_fee ?? 0))}
                 </span>
               </div>
@@ -191,15 +213,15 @@ export function DigitalOrdersQueue({
                 <p className="text-sm italic text-muted-foreground">Note: {order.customer_note}</p>
               )}
 
-              <div className="flex items-center gap-2 pt-1">
-                <Button size="sm" onClick={() => setApproveTarget(order)}>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <Button className="min-h-11" onClick={() => setApproveTarget(order)}>
                   Approve
                 </Button>
-                <Button size="sm" variant="destructive" onClick={() => setRejectTarget(order)}>
+                <Button className="min-h-11" variant="destructive" onClick={() => setRejectTarget(order)}>
                   {channel === 'dine_in_qr' ? 'Decline' : 'Delete / Decline'}
                 </Button>
                 {order.payment_proof_url && (
-                  <Button size="sm" variant="outline" onClick={() => setDetailTarget(order)}>
+                  <Button className="min-h-11" variant="outline" onClick={() => setDetailTarget(order)}>
                     Show proof of payment
                   </Button>
                 )}

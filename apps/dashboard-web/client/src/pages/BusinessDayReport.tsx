@@ -71,7 +71,8 @@ function BusinessDayItemsTable({ items }: { items: ApiBusinessDayItemRow[] }) {
     <div className="flex justify-end pb-2">
       <button
         type="button"
-        className="text-xs text-primary underline underline-offset-2"
+        className="min-h-11 rounded-md px-3 text-sm font-medium text-primary underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        aria-pressed={grouped}
         onClick={() => setGrouped((g) => !g)}
       >
         {grouped ? 'Show flat sortable list' : 'Group by category'}
@@ -83,7 +84,8 @@ function BusinessDayItemsTable({ items }: { items: ApiBusinessDayItemRow[] }) {
     return (
       <div>
         {toggle}
-        <Table>
+        <div className="overflow-x-auto rounded-md border">
+        <Table aria-label="Items sold grouped by category">
           <TableHeader>
             <TableRow className={STOCK_TABLE_ROW_CLASS}>
               <TableHead className={STOCK_TABLE_HEAD_CLASS}>Product</TableHead>
@@ -94,8 +96,8 @@ function BusinessDayItemsTable({ items }: { items: ApiBusinessDayItemRow[] }) {
           <TableBody>
             {groups.map((g) => (
               <React.Fragment key={g.category}>
-                <TableRow className={`${STOCK_TABLE_ROW_CLASS} bg-muted/50`}>
-                  <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-semibold`}>{g.category}</TableCell>
+                <TableRow className={`${STOCK_TABLE_ROW_CLASS} bg-muted/60`}>
+                  <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-corp-display font-semibold`}>{g.category}</TableCell>
                   <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right font-semibold`}>{g.qty}</TableCell>
                   <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right font-semibold`}>
                     {formatCurrency(g.revenue)}
@@ -103,7 +105,7 @@ function BusinessDayItemsTable({ items }: { items: ApiBusinessDayItemRow[] }) {
                 </TableRow>
                 {g.rows.map((item) => (
                   <TableRow key={item.product_id} className={STOCK_TABLE_ROW_CLASS}>
-                    <TableCell className={`${STOCK_TABLE_CELL_CLASS} pl-6`}>{item.product_name}</TableCell>
+                    <TableCell className={`${STOCK_TABLE_CELL_CLASS} pl-8 font-medium`}>{item.product_name}</TableCell>
                     <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>{item.quantity_sold}</TableCell>
                     <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>{formatCurrency(item.revenue)}</TableCell>
                   </TableRow>
@@ -112,6 +114,7 @@ function BusinessDayItemsTable({ items }: { items: ApiBusinessDayItemRow[] }) {
             ))}
           </TableBody>
         </Table>
+        </div>
       </div>
     );
   }
@@ -126,7 +129,8 @@ function BusinessDayItemsTable({ items }: { items: ApiBusinessDayItemRow[] }) {
   return (
     <div>
     {toggle}
-    <Table>
+    <div className="overflow-x-auto rounded-md border">
+    <Table aria-label="Items sold sortable list">
       <TableHeader>
         <TableRow className={STOCK_TABLE_ROW_CLASS}>
           {columns.map((col) => (
@@ -156,6 +160,7 @@ function BusinessDayItemsTable({ items }: { items: ApiBusinessDayItemRow[] }) {
         ))}
       </TableBody>
     </Table>
+    </div>
     </div>
   );
 }
