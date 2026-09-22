@@ -678,7 +678,7 @@ export default function MenuEditing() {
                   <div className="space-y-3">
                     {recipeRows.map((row) => (
                       <div key={row.localId} className="grid grid-cols-12 gap-2 items-end">
-                        <div className="col-span-4 space-y-1">
+                        <div className={creatingIngredientFor === row.localId ? 'col-span-12 space-y-1' : 'col-span-4 space-y-1'}>
                           <Label className="text-xs">Ingredient</Label>
                           <Select
                             value={row.ingredient_id}
@@ -750,33 +750,37 @@ export default function MenuEditing() {
                             </div>
                           )}
                         </div>
-                        <div className="col-span-2 space-y-1">
-                          <Label className="text-xs">Qty per serving</Label>
-                          <Input
-                            type="number"
-                            min={0}
-                            step="0.01"
-                            value={row.qty_per_serving}
-                            onChange={(e) => updateRecipeRow(row.localId, { qty_per_serving: e.target.value })}
-                          />
-                        </div>
-                        <div className="col-span-2 space-y-1">
-                          <Label className="text-xs">Unit</Label>
-                          <Input
-                            value={row.unit}
-                            onChange={(e) => updateRecipeRow(row.localId, { unit: e.target.value })}
-                            placeholder={row.ingredient_id ? ingredientsById.get(row.ingredient_id)?.base_unit : 'unit'}
-                          />
-                        </div>
-                        <div className="col-span-3 space-y-1">
-                          <Label className="text-xs">Prep notes (optional)</Label>
-                          <Input value={row.prep_notes} onChange={(e) => updateRecipeRow(row.localId, { prep_notes: e.target.value })} />
-                        </div>
-                        <div className="col-span-1">
-                          <Button variant="ghost" size="icon-sm" onClick={() => removeRecipeRow(row.localId)} aria-label="Remove ingredient">
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </div>
+                        {creatingIngredientFor !== row.localId && (
+                          <>
+                            <div className="col-span-2 space-y-1">
+                              <Label className="text-xs">Qty per serving</Label>
+                              <Input
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                value={row.qty_per_serving}
+                                onChange={(e) => updateRecipeRow(row.localId, { qty_per_serving: e.target.value })}
+                              />
+                            </div>
+                            <div className="col-span-2 space-y-1">
+                              <Label className="text-xs">Unit</Label>
+                              <Input
+                                value={row.unit}
+                                onChange={(e) => updateRecipeRow(row.localId, { unit: e.target.value })}
+                                placeholder={row.ingredient_id ? ingredientsById.get(row.ingredient_id)?.base_unit : 'unit'}
+                              />
+                            </div>
+                            <div className="col-span-3 space-y-1">
+                              <Label className="text-xs">Prep notes (optional)</Label>
+                              <Input value={row.prep_notes} onChange={(e) => updateRecipeRow(row.localId, { prep_notes: e.target.value })} />
+                            </div>
+                            <div className="col-span-1">
+                              <Button variant="ghost" size="icon-sm" onClick={() => removeRecipeRow(row.localId)} aria-label="Remove ingredient">
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </>
+                        )}
                       </div>
                     ))}
                     <div className="flex items-center justify-between">

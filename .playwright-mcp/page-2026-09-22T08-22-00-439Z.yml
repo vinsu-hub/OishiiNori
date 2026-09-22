@@ -1,0 +1,236 @@
+- generic:
+  - generic:
+    - region "Notifications alt+T"
+    - generic [aria-hidden]:
+      - complementary:
+        - generic:
+          - generic:
+            - heading [level=2]: Oishii Nori
+            - paragraph: executive · Kitchen
+        - navigation:
+          - button:
+            - generic: POS Terminal
+          - button:
+            - generic: Order Queue
+          - button:
+            - generic: Table Orders
+          - button:
+            - generic: Kitchen Display
+          - button:
+            - generic: Delivery Requests
+          - button:
+            - generic: Online Orders
+          - button:
+            - generic: Scheduled Orders
+          - button:
+            - generic: Reservations
+          - generic:
+            - button [expanded]:
+              - generic: Stock & Inventory
+              - generic: "39"
+            - generic:
+              - button:
+                - generic: Overview
+              - button:
+                - generic: Ingredient Stock
+              - button:
+                - generic: Station Items
+              - button:
+                - generic: Receive Shipment
+              - button:
+                - generic: Alerts
+                - generic: "39"
+              - button:
+                - generic: Variance Log
+              - button:
+                - generic: EOD Stock Count (VS)
+          - button:
+            - generic: Business Day Report
+          - button:
+            - generic: Refund Approval
+          - button:
+            - generic: Customer Reviews
+          - button:
+            - generic: Loss Log
+          - button:
+            - generic: Utility Log
+          - button:
+            - generic: POS Management
+          - button:
+            - generic: Employees
+          - button:
+            - generic: HR Attendance
+          - button:
+            - generic: Payroll
+          - button:
+            - generic: Holiday Calendar
+          - button:
+            - generic: Payroll Settings
+          - button:
+            - generic: Command Center
+          - button:
+            - generic: Trend Analysis
+          - button:
+            - generic: P&L
+          - button:
+            - generic: Oishii AI
+          - button:
+            - generic: Menu Editing
+          - button:
+            - generic: Help
+          - button:
+            - generic: Settings
+        - generic:
+          - paragraph: Oishii Nori Command Suite
+          - paragraph: v1.0.0
+        - button
+      - generic:
+        - banner:
+          - generic:
+            - generic:
+              - generic:
+                - heading [level=1]: POS Terminal
+                - paragraph: executive · Kitchen
+            - generic:
+              - button: Start Business Day
+              - generic: Synced
+              - button:
+                - generic: QA Executive
+        - main:
+          - generic:
+            - generic:
+              - generic:
+                - generic:
+                  - textbox:
+                    - /placeholder: Search menu item...
+                    - text: Torikatsu Maki
+                - generic:
+                  - button: Dine In
+                  - button: Takeout
+                  - button: Delivery
+              - generic:
+                - generic:
+                  - button: Favorites
+                  - button: Baked Sushi
+                  - button: Cafe (16oz Iced)
+                  - button: Donburi
+                  - button: Drip Tea (Classic)
+                - generic:
+                  - button [disabled]
+                  - generic: Page 1 / 7
+                  - button
+              - generic:
+                - generic:
+                  - button: All (115)
+                  - button: Available (83)
+                  - button: Low Stock (0)
+                  - button: Unavailable (32)
+                - generic:
+                  - combobox:
+                    - generic: Sort
+                  - button
+                  - button
+              - generic:
+                - generic:
+                  - generic:
+                    - button
+                    - generic: Torikatsu Maki
+                    - generic:
+                      - paragraph: Oishii Maki Rolls
+                      - paragraph: ₱94.00
+              - generic:
+                - paragraph: You might also like
+                - generic:
+                  - button:
+                    - paragraph: Amerikano
+                    - paragraph: ₱120.00
+                  - button:
+                    - paragraph: Caramel Macchiato (Kyarameru Makiato)
+                    - paragraph: ₱135.00
+                  - button:
+                    - paragraph: Chocolate Pistachio Mousse
+                    - paragraph: ₱129.00
+                  - button:
+                    - paragraph: Dark Mocha (Daku Moka)
+                    - paragraph: ₱135.00
+                  - button:
+                    - paragraph: Matcha Latte (Matcha Rate)
+                    - paragraph: ₱179.00
+                  - button:
+                    - paragraph: Pastillas Latte (Pasutiriasu Rate)
+                    - paragraph: ₱140.00
+            - generic:
+              - generic:
+                - generic:
+                  - heading [level=3]: Current Order
+                  - generic:
+                    - button: Held (0)
+                    - button [disabled]: Edit Order
+                - combobox:
+                  - generic: Pick a table
+                - paragraph: Pick a table to assign this order.
+                - generic:
+                  - generic: Dine In
+                  - generic:
+                    - button: "-"
+                    - generic: "2"
+                    - button: +
+                    - generic: Guests
+              - generic:
+                - paragraph: No items yet.
+              - generic:
+                - generic:
+                  - generic: Discount
+                  - generic:
+                    - button: Employee Discount (10%)
+                    - button: First Online Order (10%)
+                    - button: Senior Discount (15%)
+                    - button: Student (10%)
+                - generic:
+                  - generic: VAT
+                  - generic:
+                    - button: VAT
+                    - button: Non-VAT
+                - generic:
+                  - generic:
+                    - text: Payment Method
+                    - generic: "*"
+                  - generic:
+                    - button: cash
+                    - button: gcash
+                    - button: card
+                - button: Owner's Request
+                - generic:
+                  - button:
+                    - text: Discount
+                    - generic: F3
+                  - button:
+                    - text: Hold
+                    - generic: F4
+                  - button:
+                    - text: Clear
+                    - generic: Esc
+                - generic:
+                  - generic:
+                    - generic: Subtotal
+                    - generic: ₱0.00
+                  - generic:
+                    - generic: Discount (preview)
+                    - generic: "-₱0.00"
+                  - generic:
+                    - generic: Tax (preview)
+                    - generic: ₱0.00
+                  - generic:
+                    - generic: Total (preview)
+                    - generic: ₱0.00
+                - button [disabled]: Add at least one item
+  - dialog [ref=f1e343]:
+    - heading "Torikatsu Maki -- choose a size" [level=2] [ref=f1e345]
+    - generic [ref=f1e346]:
+      - button "8 pcs ₱169.00" [active] [ref=f1e347] [cursor=pointer]:
+        - generic [ref=f1e348]: 8 pcs
+        - generic [ref=f1e349]: ₱169.00
+      - button "4 pcs ₱94.00" [ref=f1e350] [cursor=pointer]:
+        - generic [ref=f1e351]: 4 pcs
+        - generic [ref=f1e352]: ₱94.00
+    - button "Close" [ref=f1e353] [cursor=pointer]

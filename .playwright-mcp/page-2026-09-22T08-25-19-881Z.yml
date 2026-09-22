@@ -1,0 +1,1706 @@
+- generic:
+  - generic:
+    - region "Notifications alt+T"
+    - generic [aria-hidden]:
+      - complementary:
+        - generic:
+          - generic:
+            - heading [level=2]: Oishii Nori
+            - paragraph: executive · Kitchen
+        - navigation:
+          - button:
+            - generic: POS Terminal
+          - button:
+            - generic: Order Queue
+          - button:
+            - generic: Table Orders
+          - button:
+            - generic: Kitchen Display
+          - button:
+            - generic: Delivery Requests
+          - button:
+            - generic: Online Orders
+          - button:
+            - generic: Scheduled Orders
+          - button:
+            - generic: Reservations
+          - generic:
+            - button [expanded]:
+              - generic: Stock & Inventory
+              - generic: "39"
+            - generic:
+              - button:
+                - generic: Overview
+              - button:
+                - generic: Ingredient Stock
+              - button:
+                - generic: Station Items
+              - button:
+                - generic: Receive Shipment
+              - button:
+                - generic: Alerts
+                - generic: "39"
+              - button:
+                - generic: Variance Log
+              - button:
+                - generic: EOD Stock Count (VS)
+          - button:
+            - generic: Business Day Report
+          - button:
+            - generic: Refund Approval
+          - button:
+            - generic: Customer Reviews
+          - button:
+            - generic: Loss Log
+          - button:
+            - generic: Utility Log
+          - button:
+            - generic: POS Management
+          - button:
+            - generic: Employees
+          - button:
+            - generic: HR Attendance
+          - button:
+            - generic: Payroll
+          - button:
+            - generic: Holiday Calendar
+          - button:
+            - generic: Payroll Settings
+          - button:
+            - generic: Command Center
+          - button:
+            - generic: Trend Analysis
+          - button:
+            - generic: P&L
+          - button:
+            - generic: Oishii AI
+          - button:
+            - generic: Menu Editing
+          - button:
+            - generic: Help
+          - button:
+            - generic: Settings
+        - generic:
+          - paragraph: Oishii Nori Command Suite
+          - paragraph: v1.0.0
+        - button
+      - generic:
+        - banner:
+          - generic:
+            - generic:
+              - generic:
+                - heading [level=1]: Menu Editing
+                - paragraph: executive · Kitchen
+            - generic:
+              - generic: Synced
+              - button:
+                - generic: QA Executive
+        - main:
+          - generic:
+            - generic:
+              - paragraph: "Manage menu items: details, sizes & prices, recipe components, and photos."
+              - button: Add menu item
+            - generic:
+              - table:
+                - rowgroup:
+                  - row:
+                    - columnheader: Photo
+                    - columnheader: Name
+                    - columnheader: Category
+                    - columnheader: Department
+                    - columnheader: Station
+                    - columnheader: Sizes
+                    - columnheader: Active
+                    - columnheader
+                - rowgroup:
+                  - row:
+                    - cell
+                    - cell: Baked Kani Sushi
+                    - cell: Baked Sushi
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar / Oven
+                    - cell: Small (2–3 pax) (₱429.00), Medium (4–5 pax) (₱799.00), Large (6–8 pax) (₱999.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Baked Salmon Teriyaki
+                    - cell: Baked Sushi
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar / Oven
+                    - cell: Small (2–3 pax) (₱499.00), Medium (4–5 pax) (₱899.00), Large (6–8 pax) (₱1,049.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Cheesy Baked Spicy Scallop
+                    - cell: Baked Sushi
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar / Oven
+                    - cell: Small (2–3 pax) (₱429.00), Medium (4–5 pax) (₱799.00), Large (6–8 pax) (₱999.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Oishii Baked Sushi
+                    - cell: Baked Sushi
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar / Oven
+                    - cell: Small (2–3 pax) (₱429.00), Medium (4–5 pax) (₱799.00), Large (6–8 pax) (₱999.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Spicy Tuna Baked Sushi
+                    - cell: Baked Sushi
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar / Oven
+                    - cell: Small (2–3 pax) (₱429.00), Medium (4–5 pax) (₱799.00), Large (6–8 pax) (₱999.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Amerikano
+                    - cell: Cafe (16oz Iced)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: 16 oz (₱120.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Caramel Macchiato (Kyarameru Makiato)
+                    - cell: Cafe (16oz Iced)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: 16 oz (₱135.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Chocolate Pistachio Mousse
+                    - cell: Cafe (16oz Iced)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: 16 oz (₱129.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Dark Mocha (Daku Moka)
+                    - cell: Cafe (16oz Iced)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: 16 oz (₱135.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Matcha Latte (Matcha Rate)
+                    - cell: Cafe (16oz Iced)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: 16 oz (₱179.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Pastillas Latte (Pasutiriasu Rate)
+                    - cell: Cafe (16oz Iced)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: 16 oz (₱140.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Sea Salt Latte (Shi Soruto Rate)
+                    - cell: Cafe (16oz Iced)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: 16 oz (₱135.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Spanish Latte (Supein Rate)
+                    - cell: Cafe (16oz Iced)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: 16 oz (₱135.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Gyudon
+                    - cell: Donburi
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 bowl (₱209.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Katsudon
+                    - cell: Donburi
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 bowl (₱199.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Tendon
+                    - cell: Donburi
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 bowl (₱209.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Hokkaido
+                    - cell: Drip Tea (Classic)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱94.00), Medium (₱104.00), Large (₱114.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Okinawa
+                    - cell: Drip Tea (Classic)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱94.00), Medium (₱104.00), Large (₱114.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Pearl Milktea
+                    - cell: Drip Tea (Classic)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱94.00), Medium (₱104.00), Large (₱114.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Thai Milktea
+                    - cell: Drip Tea (Classic)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱94.00), Medium (₱104.00), Large (₱114.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Uji Matcha
+                    - cell: Drip Tea (Classic)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱94.00), Medium (₱104.00), Large (₱114.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Wintermelon
+                    - cell: Drip Tea (Classic)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱94.00), Medium (₱104.00), Large (₱114.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Cocoa Milktea
+                    - cell: Drip Tea (Dark Cocoa Series)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱104.00), Medium (₱114.00), Large (₱154.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Dark Oreo Mousse
+                    - cell: Drip Tea (Dark Cocoa Series)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱114.00), Medium (₱124.00), Large (₱164.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Supreme Cocoa
+                    - cell: Drip Tea (Dark Cocoa Series)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱104.00), Medium (₱114.00), Large (₱154.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Matcha Black Mousse
+                    - cell: Drip Tea (Matcha Series)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱114.00), Medium (₱124.00), Large (₱164.00)
+                    - cell:
+                      - generic: Deactivated
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Matcha Latte
+                    - cell: Drip Tea (Matcha Series)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱104.00), Medium (₱114.00), Large (₱154.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Oreo Matcha
+                    - cell: Drip Tea (Matcha Series)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱114.00), Medium (₱124.00), Large (₱164.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Aurora Passion
+                    - cell: Drip Tea (Passion)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱104.00), Medium (₱114.00), Large (₱144.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Mango Sunset
+                    - cell: Drip Tea (Passion)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱104.00), Medium (₱114.00), Large (₱144.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Northern Yogurt
+                    - cell: Drip Tea (Passion)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱104.00), Medium (₱114.00), Large (₱144.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Sunrise Lychee
+                    - cell: Drip Tea (Passion)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱104.00), Medium (₱114.00), Large (₱144.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Black Wintermelon Mousse
+                    - cell: Drip Tea (Premium)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱104.00), Medium (₱114.00), Large (₱154.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Brown Sugar Latte
+                    - cell: Drip Tea (Premium)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱104.00), Medium (₱114.00), Large (₱154.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Cheesecake
+                    - cell: Drip Tea (Premium)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱104.00), Medium (₱114.00), Large (₱154.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Choco Mousse
+                    - cell: Drip Tea (Premium)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱104.00), Medium (₱114.00), Large (₱154.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Nutella
+                    - cell: Drip Tea (Premium)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱104.00), Medium (₱114.00), Large (₱154.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Oreo Cheesecake
+                    - cell: Drip Tea (Premium)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱104.00), Medium (₱114.00), Large (₱154.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Cookie Dough
+                    - cell: Drip Tea (Signature)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱104.00), Medium (₱114.00), Large (₱154.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Purple Taro
+                    - cell: Drip Tea (Signature)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱104.00), Medium (₱114.00), Large (₱154.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Red Chocolate
+                    - cell: Drip Tea (Signature)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱104.00), Medium (₱114.00), Large (₱154.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Taro Cheesecake
+                    - cell: Drip Tea (Signature)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱104.00), Medium (₱114.00), Large (₱154.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Thai Black Mousse
+                    - cell: Drip Tea (Thai Series)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱114.00), Medium (₱124.00), Large (₱164.00)
+                    - cell:
+                      - generic: Deactivated
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Thai Cheesecake
+                    - cell: Drip Tea (Thai Series)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱104.00), Medium (₱114.00), Large (₱154.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Thai Latte
+                    - cell: Drip Tea (Thai Series)
+                    - cell:
+                      - generic: cafe
+                    - cell: Cafe Bar
+                    - cell: Small (₱104.00), Medium (₱114.00), Large (₱154.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Chicken Katsu Gohan
+                    - cell: Gohan
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 bowl (₱85.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Chicken Tempura Gohan
+                    - cell: Gohan
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 bowl (₱85.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Pork Katsu Gohan
+                    - cell: Gohan
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 bowl (₱89.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Beef Curry
+                    - cell: Kare Raisu / Curry
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 plate (₱229.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Ebi Fry Curry
+                    - cell: Kare Raisu / Curry
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 plate (₱229.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Katsudon Curry (Pork or Chicken)
+                    - cell: Kare Raisu / Curry
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 plate (₱219.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Gyoza Platter
+                    - cell: Maki & Gyoza Platters
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 32 pcs (₱1,099.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Medium Sushi Boat
+                    - cell: Maki & Gyoza Platters (Bundle)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar
+                    - cell: 64 pcs, classic maki flavors (₱1,999.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Small Sushi Boat
+                    - cell: Maki & Gyoza Platters (Bundle)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar
+                    - cell: 32 pcs, classic maki flavors (₱1,199.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Cheesy Katsu oBento (Pork or Chicken)
+                    - cell: oBento
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 box (w/ 2pcs Takoyaki) (₱115.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Chicken Tempura oBento
+                    - cell: oBento
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 box (w/ 2pcs Takoyaki) (₱99.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Katsu oBento (Pork or Chicken)
+                    - cell: oBento
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 box (w/ 2pcs Takoyaki) (₱99.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: California Maki
+                    - cell: Oishii Maki Rolls
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar
+                    - cell: 8 pcs (₱189.00), 4 pcs (₱109.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Crazy Maki
+                    - cell: Oishii Maki Rolls
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar
+                    - cell: 8 pcs (₱207.00), 4 pcs (₱115.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Crunchy Kani Maki
+                    - cell: Oishii Maki Rolls
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar
+                    - cell: 8 pcs (₱209.00), 4 pcs (₱119.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Dragon Maki
+                    - cell: Oishii Maki Rolls
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar
+                    - cell: 8 pcs (₱189.00), 4 pcs (₱109.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Futo Maki
+                    - cell: Oishii Maki Rolls
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar
+                    - cell: 6 pcs (₱115.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Oishii Maki
+                    - cell: Oishii Maki Rolls
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar
+                    - cell: 8 pcs (₱198.00), 4 pcs (₱112.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Spicy Tuna
+                    - cell: Oishii Maki Rolls
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar
+                    - cell: 8 pcs (₱172.00), 4 pcs (₱99.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Torikatsu Maki
+                    - cell: Oishii Maki Rolls
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar
+                    - cell: 8 pcs (₱169.00), 4 pcs (₱94.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Large Platter
+                    - cell: Oishii Platter (Bundle)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar
+                    - cell: 64 pcs assorted (₱1,599.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Medium Platter
+                    - cell: Oishii Platter (Bundle)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar
+                    - cell: 48 pcs assorted (₱1,299.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Small Platter
+                    - cell: Oishii Platter (Bundle)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar
+                    - cell: 32 pcs assorted (₱799.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Kani Salad
+                    - cell: Oishii Salad
+                    - cell:
+                      - generic: kitchen
+                    - cell: Salad / Cold Bar
+                    - cell: 1 serving (₱159.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Oishii Salad
+                    - cell: Oishii Salad
+                    - cell:
+                      - generic: kitchen
+                    - cell: Salad / Cold Bar
+                    - cell: 1 serving (₱169.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Spicy Tuna Roll
+                    - cell: Oishii Salad
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar
+                    - cell: 1 serving (₱149.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Angus Ramen
+                    - cell: Ramen (Premium)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 bowl (₱289.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Oishii Nori Ramen
+                    - cell: Ramen (Premium)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 bowl (₱289.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Seafood Ramen
+                    - cell: Ramen (Premium)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 bowl (₱289.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Beef Ramen
+                    - cell: Ramen (Regular)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 bowl (₱199.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Chasu Ramen
+                    - cell: Ramen (Regular)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 bowl (₱199.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Tonkatsu Ramen
+                    - cell: Ramen (Regular)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 bowl (₱199.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Torikatsu Ramen
+                    - cell: Ramen (Regular)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 bowl (₱199.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Beef Teriyaki
+                    - cell: Rice Meals
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 plate (₱199.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Beef/Chicken Yakiniku
+                    - cell: Rice Meals
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 plate (₱199.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Cheesy Katsu w/ Rice
+                    - cell: Rice Meals
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 plate (₱229.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Chicken Teriyaki
+                    - cell: Rice Meals
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 plate (₱199.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Ebi Fry
+                    - cell: Rice Meals
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 plate (₱199.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Ika Furai
+                    - cell: Rice Meals
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 plate (₱199.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Pork Teriyaki
+                    - cell: Rice Meals
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 plate (₱199.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Pork Tonkatsu
+                    - cell: Rice Meals
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 plate (₱199.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Salmon Teriyaki
+                    - cell: Rice Meals
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 plate (₱289.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Torikatsu (Chicken)
+                    - cell: Rice Meals
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 plate (₱199.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Salmon Box
+                    - cell: Salmon Box
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar / Oven
+                    - cell: 1 box (₱1,299.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: 5pc Gyoza
+                    - cell: Sides
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 5 pcs (₱229.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Chicken Karaage
+                    - cell: Sides
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 serving (₱149.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Kani Tempura
+                    - cell: Sides
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 5 pcs (₱189.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Okonomiyaki
+                    - cell: Sides
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 serving (₱95.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: TakoFries
+                    - cell: Sides
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 serving (₱99.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Tempura
+                    - cell: Sides
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 5 pcs (₱229.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Truffle Fries
+                    - cell: Sides
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 serving (₱95.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Wasabi Fries
+                    - cell: Sides
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 serving (₱95.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Yakisoba
+                    - cell: Sides
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 1 serving (₱105.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Assorted Cheesy Takoyaki Platter
+                    - cell: Takoyaki (Assorted Platters)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 24 pcs (₱419.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Assorted Classic Takoyaki Platter
+                    - cell: Takoyaki (Assorted Platters)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 24 pcs (₱375.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Assorted Premium Takoyaki Platter
+                    - cell: Takoyaki (Assorted Platters)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 24 pcs (₱539.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Cheesy Bacon Takoyaki
+                    - cell: Takoyaki (Cheesy)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 4 pcs (₱69.00), 8 pcs (₱136.00), 24 pcs (Platter) (₱395.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Cheesy Kani Takoyaki
+                    - cell: Takoyaki (Cheesy)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 4 pcs (₱69.00), 8 pcs (₱136.00), 24 pcs (Platter) (₱395.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Cheesy Octo Takoyaki
+                    - cell: Takoyaki (Cheesy)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 4 pcs (₱69.00), 8 pcs (₱136.00), 24 pcs (Platter) (₱395.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Cheesy Tori Takoyaki
+                    - cell: Takoyaki (Cheesy)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 4 pcs (₱69.00), 8 pcs (₱136.00), 24 pcs (Platter) (₱395.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Cheesy Tuna Takoyaki
+                    - cell: Takoyaki (Cheesy)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 4 pcs (₱69.00), 8 pcs (₱136.00), 24 pcs (Platter) (₱395.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Double Cheese Takoyaki
+                    - cell: Takoyaki (Cheesy)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 4 pcs (₱59.00), 8 pcs (₱116.00), 24 pcs (Platter) (₱335.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Bacon Takoyaki
+                    - cell: Takoyaki (Classic)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 4 pcs (₱59.00), 8 pcs (₱116.00), 24 pcs (Platter) (₱335.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Classic Cheese Takoyaki
+                    - cell: Takoyaki (Classic)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 4 pcs (₱49.00), 8 pcs (₱96.00), 24 pcs (Platter) (₱275.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Kani Takoyaki
+                    - cell: Takoyaki (Classic)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 4 pcs (₱65.00), 8 pcs (₱128.00), 24 pcs (Platter) (₱370.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Octobits Takoyaki
+                    - cell: Takoyaki (Classic)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 4 pcs (₱65.00), 8 pcs (₱128.00), 24 pcs (Platter) (₱370.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Cheese Bomb Takoyaki
+                    - cell: Takoyaki (Premium)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 4 pcs (₱79.00), 8 pcs (₱156.00), 24 pcs (Platter) (₱499.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Oishii Takoyaki
+                    - cell: Takoyaki (Premium)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 4 pcs (₱99.00), 8 pcs (₱189.00), 24 pcs (Platter) (₱599.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Truffle Nori Takoyaki
+                    - cell: Takoyaki (Premium)
+                    - cell:
+                      - generic: kitchen
+                    - cell: Hot Line
+                    - cell: 4 pcs (₱89.00), 8 pcs (₱176.00), 24 pcs (Platter) (₱539.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: PNL Test Item
+                    - cell: Test
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar
+                    - cell: Regular (₱100.00)
+                    - cell:
+                      - generic: Deactivated
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: PNL Test Item Prod
+                    - cell: Test
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar
+                    - cell: Regular (₱100.00)
+                    - cell:
+                      - generic: Deactivated
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Torched Cheesy Salmon Maki
+                    - cell: Torched Maki
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar
+                    - cell: 8 pcs (₱319.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Torched Cheesy Tempura Maki
+                    - cell: Torched Maki
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar
+                    - cell: 8 pcs (₱309.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: Torched Cheesy Tuna Maki
+                    - cell: Torched Maki
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar
+                    - cell: 8 pcs (₱309.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+                  - row:
+                    - cell
+                    - cell: ZZ TEST QA PRODUCT
+                    - cell: ZZ Test
+                    - cell:
+                      - generic: kitchen
+                    - cell: Sushi Bar
+                    - cell: Regular (₱1.00)
+                    - cell:
+                      - generic: Active
+                    - cell:
+                      - button: Edit
+  - dialog [aria-hidden]:
+    - generic:
+      - heading [level=2]: ZZ TEST QA PRODUCT
+    - generic:
+      - tablist:
+        - tab: Details
+        - tab: Sizes & Prices
+        - tab [selected]: Recipe
+        - tab: Image
+      - tabpanel:
+        - generic:
+          - generic: Size
+          - combobox:
+            - generic: Regular
+        - generic:
+          - generic:
+            - generic:
+              - generic: Ingredient
+              - combobox [expanded]:
+                - generic: Select ingredient
+            - generic:
+              - generic: Qty per serving
+              - spinbutton
+            - generic:
+              - generic: Unit
+              - textbox:
+                - /placeholder: unit
+            - generic:
+              - generic: Prep notes (optional)
+              - textbox
+            - generic:
+              - button
+          - generic:
+            - button: Add ingredient
+            - button: Save recipe
+    - button:
+      - generic: Close
+  - listbox [ref=f2e1771]:
+    - option "New ingredient..." [active] [ref=f2e1772]
+    - option "Angus beef (sliced)" [ref=f2e1775]
+    - option "Aonori" [ref=f2e1778]
+    - option "Asparagus" [ref=f2e1781]
+    - option "B.S Syrup" [ref=f2e1784]
+    - option "Beef (sliced)" [ref=f2e1787]
+    - option "Bibigo seasoned seaweed (branded SKU)" [ref=f2e1790]
+    - option "Bonito Flakes" [ref=f2e1793]
+    - option "Breaded prawn" [ref=f2e1796]
+    - option "Breaded shrimp (Ebi)" [ref=f2e1799]
+    - option "Butterfly Pea Tea (batch-brewed)" [ref=f2e1802]
+    - option "C.D Syrup" [ref=f2e1805]
+    - option "Cabbage (slaw)" [ref=f2e1808]
+    - option "Canned tuna" [ref=f2e1811]
+    - option "Caramel syrup" [ref=f2e1814]
+    - option "Carrot" [ref=f2e1817]
+    - option "Charcoal Powder" [ref=f2e1820]
+    - option "Cheddar Cheese" [ref=f2e1823]
+    - option "Cheese blend (torching)" [ref=f2e1826]
+    - option "Cheese Cuts" [ref=f2e1829]
+    - option "Chicken (cutlet)" [ref=f2e1832]
+    - option "Chicken (sliced, teriyaki)" [ref=f2e1835]
+    - option "Chili flakes" [ref=f2e1838]
+    - option "Chili oil" [ref=f2e1841]
+    - option "Chocolate sauce" [ref=f2e1844]
+    - option "Chopsticks" [ref=f2e1847]
+    - option "Cocoa / Creamer" [ref=f2e1850]
+    - option "Cookie Crumble" [ref=f2e1853]
+    - option "Cooking oil" [ref=f2e1856]
+    - option "Crab stick" [ref=f2e1859]
+    - option "Cream cheese" [ref=f2e1862]
+    - option "Crispy kani (garnish, batch-prepped)" [ref=f2e1865]
+    - option "Crispy potato string" [ref=f2e1868]
+    - option "Crushed pistachio" [ref=f2e1871]
+    - option "Cucumber" [ref=f2e1874]
+    - option "Ebiko (fish roe)" [ref=f2e1877]
+    - option "Egg (Tamago / soft-boiled)" [ref=f2e1880]
+    - option "Espresso beans / shots" [ref=f2e1883]
+    - option "Fructose (Drip Tea)" [ref=f2e1886]
+    - option "Full Cream Milk" [ref=f2e1889]
+    - option "Green Tea (batch-brewed)" [ref=f2e1892]
+    - option "Ground pork (gyoza filling)" [ref=f2e1895]
+    - option "Gyoza dipping sauce" [ref=f2e1898]
+    - option "Gyoza wrapper" [ref=f2e1901]
+    - option "Hibiscus Tea (batch-brewed)" [ref=f2e1904]
+    - option "Hokkaido Flavor" [ref=f2e1907]
+    - option "Ice" [ref=f2e1910]
+    - option "Japanese Mayo" [ref=f2e1913]
+    - option "Katsu sauce" [ref=f2e1916]
+    - option "Lettuce" [ref=f2e1919]
+    - option "Lychee Syrup" [ref=f2e1922]
+    - option "Mango" [ref=f2e1925]
+    - option "Mango Syrup" [ref=f2e1928]
+    - option "Matcha powder" [ref=f2e1931]
+    - option "Matcha Powder (Drip Tea)" [ref=f2e1934]
+    - option "Milk" [ref=f2e1937]
+    - option "Milktea base (batch-prepped)" [ref=f2e1940]
+    - option "Mocha sauce" [ref=f2e1943]
+    - option "Mousse mix (Drip Tea)" [ref=f2e1946]
+    - option "Mozzarella cheese" [ref=f2e1949]
+    - option "Mushroom" [ref=f2e1952]
+    - option "Mussels" [ref=f2e1955]
+    - option "Nori sheet" [ref=f2e1958]
+    - option "Nutella Sauce" [ref=f2e1961]
+    - option "Oishii salad sauce (house)" [ref=f2e1964]
+    - option "Okinawa Flavor" [ref=f2e1967]
+    - option "Onion" [ref=f2e1970]
+    - option "Oreo Crumble" [ref=f2e1973]
+    - option "Parmesan cheese" [ref=f2e1976]
+    - option "Passion Syrup" [ref=f2e1979]
+    - option "Pastillas syrup (house)" [ref=f2e1982]
+    - option "Pearl (tapioca)" [ref=f2e1985]
+    - option "Pistachio mousse cream (house)" [ref=f2e1988]
+    - option "Pork (cutlet)" [ref=f2e1991]
+    - option "Pork (sliced, teriyaki)" [ref=f2e1994]
+    - option "Pork belly (Chasu)" [ref=f2e1997]
+    - option "Pork Floss" [ref=f2e2000]
+    - option "Ramen broth (batch-prepped)" [ref=f2e2003]
+    - option "Ramen noodles" [ref=f2e2006]
+    - option "Red Choco / Creamer" [ref=f2e2009]
+    - option "Rice vinegar seasoning mix" [ref=f2e2012]
+    - option "Salmon" [ref=f2e2015]
+    - option "Salted Nori" [ref=f2e2018]
+    - option "Scallion" [ref=f2e2021]
+    - option "Scallop" [ref=f2e2024]
+    - option "Sea salt cream foam (house)" [ref=f2e2027]
+    - option "Sesame seeds" [ref=f2e2030]
+    - option "Shrimp / Prawn (raw)" [ref=f2e2033]
+    - option "Simple syrup" [ref=f2e2036]
+    - option "Spanish cream syrup" [ref=f2e2039]
+    - option "Special Cheese Sauce" [ref=f2e2042]
+    - option "Special mayo (house)" [ref=f2e2045]
+    - option "Special Oishii Nori Sauce" [ref=f2e2048]
+    - option "Spicy mayo" [ref=f2e2051]
+    - option "Squid (Ika)" [ref=f2e2054]
+    - option "Sriracha" [ref=f2e2057]
+    - option "Star Jelly" [ref=f2e2060]
+    - option "Steamed rice" [ref=f2e2063]
+    - option "Sushi rice (raw)" [ref=f2e2066]
+    - option "Takoyaki Sauce" [ref=f2e2069]
+    - option "Tanuki (tempura bits)" [ref=f2e2072]
+    - option "Taro Flavor" [ref=f2e2075]
+    - option "Tartar/mayo sauce" [ref=f2e2078]
+    - option "Tempura batter / panko breading" [ref=f2e2081]
+    - option "Tempura shrimp" [ref=f2e2084]
+    - option "Teriyaki glaze" [ref=f2e2087]
+    - option "Thai Flavor" [ref=f2e2090]
+    - option "Truffle Oil" [ref=f2e2093]
+    - option "Tuna (raw, spicy tuna mix)" [ref=f2e2096]
+    - option "W.M Syrup" [ref=f2e2099]
+    - option "Water" [ref=f2e2102]
+    - option "Yakiniku sauce" [ref=f2e2105]
+    - option "Yogurt Syrup" [ref=f2e2108]
