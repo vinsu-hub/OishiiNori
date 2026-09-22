@@ -4,6 +4,13 @@ import path from "node:path";
 import { defineConfig } from "vite";
 
 export default defineConfig({
+  // Served at oishiinori.com/dashboard via apps/landing-page's vercel.json
+  // rewrite -- every asset reference needs this prefix baked in, or the
+  // browser (sitting on oishiinori.com) requests them at the wrong path.
+  // This is an absolute, fixed prefix: the standalone
+  // oishii-nori-dashboard.vercel.app URL is not expected to keep working
+  // after this (see the plan this shipped under).
+  base: "/dashboard/",
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {

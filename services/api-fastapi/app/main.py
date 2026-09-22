@@ -44,6 +44,13 @@ ALLOWED_ORIGINS = [
     "https://oishii-nori-menu.vercel.app",
     "https://oishii-nori-staff-clock.vercel.app",
     "https://oishii-nori-landing.vercel.app",
+    # Every client app calls this API at this absolute URL directly (never a
+    # same-origin relative path), so once a user reaches any app via
+    # oishiinori.com/<dashboard|menu|staff-clock> (apps/landing-page's
+    # vercel.json rewrite), every API call is cross-origin from oishiinori.com
+    # -- needs to be allowed here regardless of which app made the call.
+    "https://oishiinori.com",
+    "https://www.oishiinori.com",
     "http://localhost:3000",
     "http://localhost:5174",
     "http://localhost:5175",

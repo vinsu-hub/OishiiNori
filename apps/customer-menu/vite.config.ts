@@ -4,6 +4,10 @@ import tailwindcss from '@tailwindcss/vite';
 import path from 'node:path';
 
 export default defineConfig({
+  // Served at oishiinori.com/menu via apps/landing-page's vercel.json
+  // rewrite -- see dashboard-web/vite.config.ts's comment for why this is
+  // an absolute, fixed prefix (standalone URL not expected to keep working).
+  base: '/menu/',
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {

@@ -3,7 +3,7 @@ import { lazyWithReload } from '@/lib/lazyWithReload';
 import { Loader2 } from 'lucide-react';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { Route, Switch } from 'wouter';
+import { Route, Router as WouterRouter, Switch } from 'wouter';
 import ErrorBoundary from './components/ErrorBoundary';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { AuthProvider } from './contexts/AuthContext';
@@ -63,8 +63,14 @@ function RouteFallback() {
   );
 }
 
+// Served at oishiinori.com/dashboard via apps/landing-page's vercel.json
+// rewrite -- every <Route path> below stays root-relative ('/pos', etc.);
+// this base is what makes wouter match them against the real browser path
+// ('/dashboard/pos'). Vite's own `base` (vite.config.ts) only fixes asset
+// URLs, it's a separate concern from wouter's routing base.
 function Router() {
   return (
+    <WouterRouter base="/dashboard">
     <Suspense fallback={<RouteFallback />}>
       <Switch>
         <Route path={'/login'} component={Login} />
@@ -109,6 +115,7 @@ function Router() {
         <Route component={NotFound} />
       </Switch>
     </Suspense>
+    </WouterRouter>
   );
 }
 
