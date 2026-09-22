@@ -547,6 +547,21 @@ class IngredientOut(BaseModel):
     unit_cost: float | None = None
 
 
+class IngredientCreate(BaseModel):
+    """A brand-new ingredient, created from Menu Editing's Recipe tab (the
+    "+ New ingredient..." option) when a recipe needs one that doesn't exist
+    yet, or directly via Ingredient Stock. Starts at current_stock=0 like
+    every ingredient does -- selling against it won't work until a real
+    delivery/count gives it stock, same as every prior ingredient this
+    system has ever gained."""
+
+    name: str = Field(min_length=1)
+    base_unit: str = Field(min_length=1)
+    category: str | None = None
+    suggested_reorder_unit: str | None = None
+    reorder_threshold: float = Field(default=0, ge=0)
+
+
 class IngredientUpdate(BaseModel):
     name: str | None = None
     category: str | None = None

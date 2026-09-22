@@ -7,6 +7,7 @@ from app.deps import get_supabase
 from app.ph_time import today_ph
 from app.schemas import (
     ExpiringIngredient,
+    IngredientCreate,
     IngredientDailySummary,
     IngredientFieldOverrideRequest,
     IngredientOut,
@@ -57,6 +58,42 @@ def list_inventory(user: CurrentUser = Depends(get_current_user)):
         .execute()
     )
     return result.data
+
+
+@router.post("/inventory", response_model=IngredientOut)
+def create_ingredient(body: IngredientCreate, user: CurrentUser = Depends(get_current_user)):
+    """Creates a brand-new ingredient. Until now there was no path anywhere
+    in the app to do this -- Menu Editing's Recipe tab could only pick an
+    ingredient that already existed. Executive-only, same gate as
+    update_ingredient below (base_unit/reorder_threshold are the same kind
+    of "critical measurement" that shouldn't be casual).
+
+    current_stock starts at 0 like every ingredient always has -- a recipe
+    using this ingredient will show "Unavailable" on the POS until a real
+    delivery/count gives it stock. That's the system working as intended,
+    not a bug to work around here.
+    """
+    require_role(user, "executive")
+    supabase = get_supabase()
+
+    existing = supabase.table("ingredients").select("id").ilike("name", body.name).maybe_single().execute()
+    if existing and existing.data:
+        raise HTTPException(status_code=409, detail=f"An ingredient named '{body.name}' already exists")
+
+    result = (
+        supabase.table("ingredients")
+        .insert(
+            {
+                "name": body.name,
+                "base_unit": body.base_unit,
+                "category": body.category,
+                "suggested_reorder_unit": body.suggested_reorder_unit,
+                "reorder_threshold": body.reorder_threshold,
+            }
+        )
+        .execute()
+    )
+    return result.data[0]
 
 
 @router.get("/inventory/low-stock-summary", response_model=LowStockSummaryResponse)

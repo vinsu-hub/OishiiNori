@@ -26,6 +26,7 @@ import {
   ApiRecipeItem,
   Department,
   KitchenStation,
+  createIngredient,
   createProduct,
   createProductSize,
   createRecipeItem,
@@ -90,6 +91,13 @@ function newRecipeRow(): RecipeRow {
   return { localId: crypto.randomUUID(), ingredient_id: '', qty_per_serving: '', unit: '', prep_notes: '' };
 }
 
+// Sentinel Select value that opens the inline "create a new ingredient"
+// form on a recipe row, instead of picking one of the existing ones --
+// see createIngredient() in lib/api.ts and its own docstring for why this
+// had to be built: there was no path anywhere in the app to add a brand-new
+// ingredient before this.
+const NEW_INGREDIENT_VALUE = '__new__';
+
 function recipeRowFromApi(r: ApiRecipeItem): RecipeRow {
   return {
     localId: crypto.randomUUID(),
@@ -145,6 +153,14 @@ export default function MenuEditing() {
   const [originalRecipeIds, setOriginalRecipeIds] = useState<Set<string>>(new Set());
   const [loadingRecipe, setLoadingRecipe] = useState(false);
   const [savingRecipe, setSavingRecipe] = useState(false);
+
+  // Inline "+ New ingredient..." form state -- keyed by which recipe row
+  // (by localId) currently has it open, so only one row shows the form at a time.
+  const [creatingIngredientFor, setCreatingIngredientFor] = useState<string | null>(null);
+  const [newIngredientName, setNewIngredientName] = useState('');
+  const [newIngredientUnit, setNewIngredientUnit] = useState('');
+  const [newIngredientCategory, setNewIngredientCategory] = useState('');
+  const [creatingIngredient, setCreatingIngredient] = useState(false);
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -292,9 +308,48 @@ export default function MenuEditing() {
     setRecipeRows((rows) => rows.filter((r) => r.localId !== localId));
   }
 
+  function openNewIngredientForm(localId: string) {
+    setCreatingIngredientFor(localId);
+    setNewIngredientName('');
+    setNewIngredientUnit('');
+    setNewIngredientCategory('');
+  }
+
+  function cancelNewIngredientForm(localId: string) {
+    setCreatingIngredientFor(null);
+    // The Select was already switched to the sentinel value -- put the row
+    // back to "nothing picked yet" rather than leaving an invalid selection.
+    updateRecipeRow(localId, { ingredient_id: '' });
+  }
+
+  async function handleCreateIngredient(localId: string) {
+    if (!newIngredientName.trim() || !newIngredientUnit.trim()) {
+      toast.error('Name and base unit are required');
+      return;
+    }
+    setCreatingIngredient(true);
+    try {
+      const ingredient = await createIngredient({
+        name: newIngredientName.trim(),
+        base_unit: newIngredientUnit.trim(),
+        category: newIngredientCategory.trim() || undefined,
+      });
+      setIngredients((prev) => [...prev, ingredient].sort((a, b) => a.name.localeCompare(b.name)));
+      updateRecipeRow(localId, { ingredient_id: ingredient.id, unit: ingredient.base_unit });
+      setCreatingIngredientFor(null);
+      toast.success(`Created ingredient "${ingredient.name}" -- starts at 0 stock until a delivery/count gives it real stock`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to create ingredient');
+    } finally {
+      setCreatingIngredient(false);
+    }
+  }
+
   async function handleSaveRecipe() {
     if (!recipeSizeId) return;
-    const activeRows = recipeRows.filter((r) => r.ingredient_id);
+    // A row still mid-"create new ingredient" carries the NEW_INGREDIENT_VALUE
+    // sentinel, not a real ingredient id -- never send that to the backend.
+    const activeRows = recipeRows.filter((r) => r.ingredient_id && r.ingredient_id !== NEW_INGREDIENT_VALUE);
     const invalid = activeRows.some((r) => !Number.isFinite(Number(r.qty_per_serving)) || Number(r.qty_per_serving) <= 0 || !r.unit.trim());
     if (invalid) {
       toast.error('Every recipe line needs an ingredient, a quantity greater than 0, and a unit');
@@ -625,11 +680,25 @@ export default function MenuEditing() {
                       <div key={row.localId} className="grid grid-cols-12 gap-2 items-end">
                         <div className="col-span-4 space-y-1">
                           <Label className="text-xs">Ingredient</Label>
-                          <Select value={row.ingredient_id} onValueChange={(v) => updateRecipeRow(row.localId, { ingredient_id: v })}>
+                          <Select
+                            value={row.ingredient_id}
+                            onValueChange={(v) => {
+                              if (v === NEW_INGREDIENT_VALUE) {
+                                openNewIngredientForm(row.localId);
+                                updateRecipeRow(row.localId, { ingredient_id: v });
+                              } else {
+                                updateRecipeRow(row.localId, { ingredient_id: v });
+                              }
+                            }}
+                          >
                             <SelectTrigger>
                               <SelectValue placeholder="Select ingredient" />
                             </SelectTrigger>
                             <SelectContent>
+                              <SelectItem value={NEW_INGREDIENT_VALUE} className="font-medium text-primary">
+                                <Plus className="w-3.5 h-3.5 inline mr-1" />
+                                New ingredient...
+                              </SelectItem>
                               {ingredients.map((ing) => (
                                 <SelectItem key={ing.id} value={ing.id}>
                                   {ing.name}
@@ -637,6 +706,49 @@ export default function MenuEditing() {
                               ))}
                             </SelectContent>
                           </Select>
+                          {creatingIngredientFor === row.localId && (
+                            <div className="mt-2 space-y-2 rounded-md border p-3 bg-muted/40">
+                              <p className="text-xs text-muted-foreground">
+                                New ingredient -- starts at 0 stock until a delivery or count gives it real stock.
+                              </p>
+                              <Input
+                                placeholder="Name"
+                                value={newIngredientName}
+                                onChange={(e) => setNewIngredientName(e.target.value)}
+                              />
+                              <div className="grid grid-cols-2 gap-2">
+                                <Input
+                                  placeholder="Base unit (g, ml, pcs...)"
+                                  value={newIngredientUnit}
+                                  onChange={(e) => setNewIngredientUnit(e.target.value)}
+                                />
+                                <Input
+                                  placeholder="Category (optional)"
+                                  value={newIngredientCategory}
+                                  onChange={(e) => setNewIngredientCategory(e.target.value)}
+                                />
+                              </div>
+                              <div className="flex gap-2">
+                                <Button
+                                  size="sm"
+                                  disabled={creatingIngredient}
+                                  onClick={() => handleCreateIngredient(row.localId)}
+                                  className="gap-2"
+                                >
+                                  {creatingIngredient ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                                  Create &amp; use
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  disabled={creatingIngredient}
+                                  onClick={() => cancelNewIngredientForm(row.localId)}
+                                >
+                                  Cancel
+                                </Button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                         <div className="col-span-2 space-y-1">
                           <Label className="text-xs">Qty per serving</Label>

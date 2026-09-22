@@ -612,6 +612,22 @@ export function fetchInventory(): Promise<ApiIngredient[]> {
   return request('/inventory');
 }
 
+export interface CreateIngredientPayload {
+  name: string;
+  base_unit: string;
+  category?: string;
+  suggested_reorder_unit?: string;
+  reorder_threshold?: number;
+}
+
+// Executive-only (services/api-fastapi/app/routers/inventory.py's
+// create_ingredient) -- until this existed there was no way anywhere in the
+// app to add a brand-new ingredient; Menu Editing's Recipe tab could only
+// pick one that already existed.
+export function createIngredient(body: CreateIngredientPayload): Promise<ApiIngredient> {
+  return request('/inventory', { method: 'POST', body: JSON.stringify(body) });
+}
+
 export function fetchIngredient(id: string): Promise<ApiIngredient> {
   return request(`/inventory/${id}`);
 }
