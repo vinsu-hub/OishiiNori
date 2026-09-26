@@ -5,6 +5,7 @@
     { "source": "/dashboard/:path*", "destination": "https://oishii-nori-dashboard.vercel.app/:path*" },
 
     { "source": "/menu", "destination": "https://oishii-nori-menu.vercel.app" },
+    { "source": "/menu/", "destination": "https://oishii-nori-menu.vercel.app" },
     { "source": "/menu/:path*", "destination": "https://oishii-nori-menu.vercel.app/:path*" },
 
     { "source": "/staff-clock", "destination": "https://oishii-nori-staff-clock.vercel.app" },

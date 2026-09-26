@@ -18,4 +18,4 @@ Full current menu, prices, and categories: https://oishii-nori-landing.vercel.ap
 
 ## Reservations
 
-Book a table (real-time availability, instant confirmation workflow): https://oishii-nori-menu.vercel.app/?reserve=1
+Book a table (real-time availability, instant confirmation workflow): https://www.oishiinori.com/menu?reserve=1
