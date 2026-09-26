@@ -144,3 +144,21 @@ export async function uploadReviewPhoto(reviewId: string, file: File): Promise<R
   }
   return response.json() as Promise<ReviewSubmitResult>;
 }
+
+// --- Inquiries (Contact form + Catering requests) ------------------------
+
+export interface SubmitInquiryPayload {
+  kind: 'contact' | 'catering';
+  name: string;
+  email: string;
+  phone?: string;
+  message: string;
+  event_date?: string; // YYYY-MM-DD
+  guest_count?: number;
+  // Honeypot -- leave empty; rendered as a hidden field.
+  website?: string;
+}
+
+export function submitInquiry(payload: SubmitInquiryPayload): Promise<{ ok: boolean }> {
+  return request('/public/inquiries', { method: 'POST', body: JSON.stringify(payload) });
+}

@@ -1972,3 +1972,37 @@ export function approveReview(id: string): Promise<ApiReview> {
 export function rejectReview(id: string, reason: string): Promise<ApiReview> {
   return request(`/reviews/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) });
 }
+
+// ---------------------------------------------------------------------------
+// Inquiries (Landing Page Contact + Catering forms -> this inbox)
+// ---------------------------------------------------------------------------
+
+export type InquiryKind = 'contact' | 'catering';
+export type InquiryStatus = 'new' | 'handled';
+
+export interface ApiInquiry {
+  id: string;
+  kind: InquiryKind;
+  name: string;
+  email: string;
+  phone: string | null;
+  message: string;
+  event_date: string | null;
+  guest_count: number | null;
+  status: InquiryStatus;
+  handled_by: string | null;
+  handled_at: string | null;
+  created_at: string;
+}
+
+export function fetchInquiries(filters?: { status?: InquiryStatus; kind?: InquiryKind }): Promise<ApiInquiry[]> {
+  const params = new URLSearchParams();
+  if (filters?.status) params.set('status', filters.status);
+  if (filters?.kind) params.set('kind', filters.kind);
+  const qs = params.toString();
+  return request(`/inquiries${qs ? `?${qs}` : ''}`);
+}
+
+export function updateInquiry(id: string, status: InquiryStatus): Promise<ApiInquiry> {
+  return request(`/inquiries/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
+}

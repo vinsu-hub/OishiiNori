@@ -14,6 +14,7 @@ from app.routers import (
     digital_menu,
     discounts,
     hr,
+    inquiries,
     inventory,
     inventory_movements,
     kiosk,
@@ -120,6 +121,7 @@ app.include_router(refunds.router)
 app.include_router(deliveries.router)
 app.include_router(payment_methods.router)
 app.include_router(reviews.router)
+app.include_router(inquiries.router)
 
 
 @app.get("/health")
