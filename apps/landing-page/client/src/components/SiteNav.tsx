@@ -15,7 +15,7 @@ export default function SiteNav({ home = false }: { home?: boolean }) {
   return <header className="on-header"><a className="on-skip" href="#main-content">Skip to content</a><div className="on-nav">
     <button className="on-toggle" aria-label={open ? 'Close navigation' : 'Open navigation'} aria-expanded={open} aria-controls="site-navigation" onClick={() => setOpen(!open)}>{open ? <X /> : <Menu />}</button>
     <nav id="site-navigation" className={`on-links ${open ? 'is-open' : ''}`} aria-label="Main navigation">{links.map(([label, href]) => <a key={label} className={location === href ? 'is-active' : undefined} aria-current={location === href ? 'page' : undefined} href={href} onClick={event => { setOpen(false); if (home && label === 'HOME') { event.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); } }}>{label}</a>)}</nav>
-    <a className="on-logo" href="/" aria-label="Oishii Nori home" onClick={event => { if (home) { event.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); } }}><img src="/logo-badge.png" alt="Oishii Nori" width="120" height="72" /></a>
+    <a className="on-logo" href="/" aria-label="Oishii Nori home" onClick={event => { if (home) { event.preventDefault(); window.scrollTo({ top: 0, behavior: 'smooth' }); } }}><img src="/logo-badge.png" alt="Oishii Nori" width="104" height="57" /></a>
     <div className="on-nav-actions"><a className="on-button" href="/menu">Order now →</a><a className="on-button on-outline" href="/menu?reserve=1">Reserve →</a></div>
   </div></header>;
 }

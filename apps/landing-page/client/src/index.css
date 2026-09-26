@@ -150,3 +150,8 @@
 
 .on-about-hero:after{top:110px;right:3%;width:220px;height:50px;opacity:.85}
 @media(max-width:767px){.on-about-hero:after{top:84px;right:-90px;width:170px;height:36px}}
+/* Nav logo: red badge sits fully inside the pill (final, single source of truth) */
+.on-nav .on-logo{position:static;transform:none;left:auto;top:auto;width:104px;height:60px;margin:0;padding:0;border:0;background:none;border-radius:12px;box-shadow:0 0 0 1.5px #f6f0e3;overflow:hidden;justify-self:center;align-self:center;display:block}
+.on-nav .on-logo img{display:block;width:100%;height:100%;object-fit:cover;border-radius:0}
+.on-nav{min-height:80px}
+@media(max-width:767px){.on-nav{min-height:60px}.on-nav .on-logo{width:76px;height:44px;border-radius:9px}}
