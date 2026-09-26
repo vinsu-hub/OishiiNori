@@ -1,13 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ArrowLeft, Send, Star } from "lucide-react";
 import { useLocation } from "wouter";
 import { submitReview, uploadReviewPhoto } from "@/lib/api";
 
 const MAX_LENGTH = 600;
 
-function toast(message: string, type: "success" | "error" | "info" = "info") {
-  (window as any).toast?.(message, type);
-}
 
 function generateId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -30,6 +27,9 @@ export default function Review() {
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [sent, setSent] = useState(false);
+  const [status, setStatus] = useState('');
+  const statusRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (status || sent) { (document.activeElement as HTMLElement)?.blur(); statusRef.current?.scrollIntoView({ block: 'center', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); } }, [status, sent]);
   // One id per page load, resent unchanged on every retry of this same
   // attempt -- same idempotency-key convention the rest of this project's
   // public write endpoints already use.
@@ -46,17 +46,19 @@ export default function Review() {
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (rating < 1) {
-      toast("Please pick a star rating", "error");
+      setStatus("Please pick a star rating");
       return;
     }
     if (!isAnonymous && !customerName.trim()) {
-      toast("Please enter your name, or choose to post anonymously", "error");
+      setStatus("Please enter your name, or choose to post anonymously");
       return;
     }
     if (!body.trim()) {
-      toast("Please write a short review", "error");
+      setStatus("Please write a short review");
       return;
     }
+    if (submitting) return;
+    setStatus('');
     setSubmitting(true);
     try {
       const result = await submitReview({
@@ -72,24 +74,23 @@ export default function Review() {
         } catch (uploadError) {
           // The review itself was already recorded -- don't lose it, just
           // let the customer know the photo specifically didn't attach.
-          toast(
+          setStatus(
             uploadError instanceof Error
               ? `Review submitted, but the photo didn't attach: ${uploadError.message}`
-              : "Review submitted, but the photo didn't attach",
-            "error"
+              : "Review submitted, but the photo didn't attach"
           );
         }
       }
       setSent(true);
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Failed to submit review", "error");
+      setStatus(e instanceof Error ? e.message : "Failed to submit review");
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#f3eddb", color: "#232321", fontFamily: '"DM Sans", sans-serif' }}>
+    <div className="review-page" style={{ minHeight: "100vh", background: "#f3eddb", color: "#232321", fontFamily: '"DM Sans", sans-serif' }}>
       <div style={{ maxWidth: 560, margin: "0 auto", padding: "48px 24px 80px" }}>
         <style>{`
           .review-back {
@@ -104,26 +105,27 @@ export default function Review() {
           .review-counter { text-align: right; font-size: 11px; color: #6b6357; margin-top: -8px; }
         `}</style>
 
-        <button onClick={() => setLocation("/")} className="review-back">
+        <a className="on-skip" href="#main-content">Skip to content</a><main tabIndex={-1} id="main-content"><button onClick={() => setLocation("/")} className="review-back">
           <ArrowLeft size={14} /> Back to Oishii Nori
         </button>
 
         <h1 style={{ fontFamily: '"Bebas Neue", sans-serif', fontSize: 44, color: "#a51f26", margin: "0 0 8px" }}>
           Leave a review
         </h1>
-        <p style={{ fontSize: 14, lineHeight: 1.7, color: "#3f3a33", marginBottom: 28 }}>
+        <p style={{ fontSize: 16, lineHeight: 1.7, color: "#3f3a33", marginBottom: 28 }}>
           Tell us how your visit went. A team member reviews every submission before it's kept on
           file — this isn't posted publicly.
         </p>
 
+        <div ref={statusRef} aria-live="polite">{status && <p className="review-status" role="alert">{status}</p>}</div>
         {sent ? (
-          <div
+          <div role="status"
             style={{
               background: "#fff8e8",
               border: "1px solid #e7d9ad",
               borderRadius: 8,
               padding: "18px 20px",
-              fontSize: 14,
+              fontSize: 16,
               lineHeight: 1.6,
               color: "#3f3a33",
             }}
@@ -131,14 +133,14 @@ export default function Review() {
             Thanks for the feedback — arigato! A team member will review it shortly.
           </div>
         ) : (
-          <form className="contact-form" onSubmit={handleSubmit}>
+          <form className="contact-form" aria-busy={submitting} onSubmit={handleSubmit}>
             <div className="review-toggle">
               <label>
-                <input type="radio" checked={!isAnonymous} onChange={() => setIsAnonymous(false)} />
+                <input type="radio" name="identity" checked={!isAnonymous} onChange={() => setIsAnonymous(false)} />
                 Show my name
               </label>
               <label>
-                <input type="radio" checked={isAnonymous} onChange={() => setIsAnonymous(true)} />
+                <input type="radio" name="identity" checked={isAnonymous} onChange={() => setIsAnonymous(true)} />
                 Post anonymously
               </label>
             </div>
@@ -148,7 +150,7 @@ export default function Review() {
                 Name
                 <input
                   required
-                  name="name"
+                  name="name" autoComplete="name" enterKeyHint="next"
                   placeholder="Your name"
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
@@ -156,13 +158,13 @@ export default function Review() {
               </label>
             )}
 
-            <label>
-              Rating
+            <fieldset style={{ border: 0, padding: 0, margin: 0 }}><legend>Rating</legend>
               <div className="review-stars">
                 {[1, 2, 3, 4, 5].map((value) => (
                   <button
                     key={value}
                     type="button"
+                    aria-pressed={rating === value}
                     aria-label={`${value} star${value === 1 ? "" : "s"}`}
                     onMouseEnter={() => setHoverRating(value)}
                     onMouseLeave={() => setHoverRating(0)}
@@ -176,7 +178,7 @@ export default function Review() {
                   </button>
                 ))}
               </div>
-            </label>
+            </fieldset>
 
             <label>
               Your review
@@ -215,7 +217,7 @@ export default function Review() {
             </button>
           </form>
         )}
-      </div>
+      </main></div>
     </div>
   );
 }

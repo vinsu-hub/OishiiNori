@@ -15,7 +15,7 @@ export default function LegalPageLayout({ title, children }: { title: string; ch
         fontFamily: '"DM Sans", sans-serif',
       }}
     >
-      <div style={{ maxWidth: 720, margin: "0 auto", padding: "48px 24px 80px" }}>
+      <a className="on-skip" href="#main-content">Skip to content</a><main tabIndex={-1} id="main-content" style={{ maxWidth: 720, margin: "0 auto", padding: "48px 24px 80px" }}>
         <style>{`
           .legal-back {
             display: inline-flex; align-items: center; gap: 8px;
@@ -24,18 +24,18 @@ export default function LegalPageLayout({ title, children }: { title: string; ch
           }
           .legal-disclaimer {
             background: #fff8e8; border: 1px solid #e7d9ad; border-radius: 8px;
-            padding: 14px 16px; font-size: 13px; line-height: 1.6; color: #6b6357;
+            padding: 14px 16px; font-size: 14px; line-height: 1.6; color: #6b6357;
           }
           .legal-body h2 { font-size: 18px; margin: 28px 0 8px; color: #232321; }
-          .legal-body p, .legal-body li { font-size: 14px; line-height: 1.7; color: #3f3a33; }
+          .legal-body p, .legal-body li { font-size: 16px; line-height: 1.7; color: #3f3a33; }
           .legal-body ul { padding-left: 20px; }
-          .legal-body a { color: #a51f26; }
+          .legal-body a { color: #a51f26; display:inline-flex; align-items:center; min-height:44px; min-width:44px; margin:4px; overflow-wrap:anywhere; }
         `}</style>
         <h1 style={{ fontFamily: '"Bebas Neue", sans-serif', fontSize: 44, color: "#a51f26", margin: "0 0 20px" }}>
           {title}
         </h1>
         <div className="legal-body">{children}</div>
-      </div>
+      </main>
     </div>
   );
 }
