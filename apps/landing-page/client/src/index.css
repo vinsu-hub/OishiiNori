@@ -310,3 +310,24 @@ input:not([type=radio]):not([type=checkbox]),textarea,select{font-size:16px!impo
 .on-catering-highlight-card{flex:0 0 auto;width:min(78vw,300px);scroll-snap-align:start}
 .on-catering-highlight-card .on-photo{aspect-ratio:4/3;border-radius:10px;box-shadow:0 8px 20px #0002}
 @media(max-width:767px){.on-catering-highlight{padding:40px 0 36px}.on-catering-highlight-head{padding:0 22px}.on-catering-highlight-card{width:70vw}}
+
+/* Real spreads, shared tables, and the crew behind the cravings. */
+.on-big-orders{background:var(--on-red);color:var(--on-paper)}
+.on-photo-band-head{position:relative;isolation:isolate;min-width:0}
+.on-photo-band-head h2{font-size:clamp(40px,4.5vw,64px)}
+.on-photo-band-head:before{content:'';position:absolute;top:36px;left:-14px;width:180px;height:24px;background:currentColor;opacity:.15;transform:rotate(-9deg);z-index:-1;clip-path:polygon(0 25%,20% 5%,45% 15%,75% 0,100% 20%,95% 80%,60% 90%,25% 75%,0 100%)}
+.on-big-orders .on-eyebrow{color:inherit}
+.on-big-orders-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;margin-top:32px}
+.on-big-order-card{min-width:0}.on-big-order-card .on-photo{aspect-ratio:4/3;border-radius:10px;box-shadow:0 8px 20px #0002}
+.on-real-gatherings{background:#e9dfca;padding-bottom:48px}
+.on-real-gatherings .on-photo-band-head{padding-bottom:24px}
+.on-site .on-photo-strip-hint{font-weight:700;margin-bottom:0}
+.on-gatherings-strip{overflow-x:auto;scroll-snap-type:x proximity;scroll-padding:clamp(24px,5.8vw,84px);margin:0 16px;outline-offset:4px}
+.on-gatherings-track{display:flex;gap:20px;padding:0 clamp(8px,4.7vw,68px) 16px;width:max-content}
+.on-gathering-card{width:clamp(260px,28vw,380px);scroll-snap-align:start;flex-shrink:0}
+.on-gathering-card .on-photo{aspect-ratio:4/5;border-radius:10px;box-shadow:0 8px 20px #0002}.on-gathering-card img{object-position:center}
+.on-gallery-grid.on-company-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.on-company-grid .on-photo{aspect-ratio:4/3;border-radius:10px}.on-company-grid img{object-position:center}
+.on-crew-photo{margin:28px 0 0;max-width:440px}.on-crew-photo .on-photo{aspect-ratio:4/3;border-radius:10px;box-shadow:0 8px 20px #0002}.on-crew-photo img{object-position:center 42%}
+.on-crew-photo figcaption{font-size:12px;font-weight:800;letter-spacing:.12em;margin-top:12px;color:var(--on-red)}
+@media(max-width:767px){.on-big-orders-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.on-real-gatherings{padding-bottom:28px}.on-gatherings-track{gap:16px}.on-gathering-card{width:72vw}.on-gallery-grid.on-company-grid{grid-template-columns:1fr;gap:16px}.on-crew-photo{max-width:100%}}
