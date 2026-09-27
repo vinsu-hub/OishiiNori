@@ -113,8 +113,8 @@ export default function Review() {
           Leave a review
         </h1>
         <p style={{ fontSize: 16, lineHeight: 1.7, color: "#3f3a33", marginBottom: 28 }}>
-          Tell us how your visit went. A team member reviews every submission before it's kept on
-          file — this isn't posted publicly.
+          How was your Oishii? Tell our kitchen what you enjoyed and what we could do better.
+          Your feedback goes to our team and isn’t posted publicly.
         </p>
 
         <div ref={statusRef} aria-live="polite">{status && <p className="review-status" role="alert">{status}</p>}</div>

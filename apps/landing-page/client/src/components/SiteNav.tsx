@@ -43,7 +43,7 @@ export default function SiteNav({ home = false }: { home?: boolean }) {
     return () => window.removeEventListener('keydown', close);
   }, [open]);
   const anchor = (id: string) => `${home ? '' : '/'}#${id}`;
-  const links = [['HOME', '/'], ['MENU', '/our-menu'], ['ABOUT', '/about'], ['REVIEWS', '/review'], ['BRANCHES', anchor('find-us')], ['CATERING', '/catering']];
+  const links = [['HOME', '/'], ['MENU', '/our-menu'], ['ABOUT', '/about'], ['REVIEWS', '/review'], ['FIND US', anchor('find-us')], ['CATERING', '/catering']];
   return <><header ref={header} className={`on-header ${scrolled ? 'on-scrolled' : ''}`}><a className="on-skip" href="#main-content">Skip to content</a><div className="on-nav">
     <button ref={toggle} className="on-toggle" aria-label={open ? 'Close navigation' : 'Open navigation'} aria-expanded={open} aria-controls="site-navigation" onClick={() => setOpen(!open)}>{open ? <X /> : <Menu />}</button>
     <nav id="site-navigation" className={`on-links ${open ? 'is-open' : ''}`} aria-label="Main navigation">{links.map(([label, href]) => <a key={label} className={location === href ? 'is-active' : undefined} aria-current={location === href ? 'page' : undefined} href={href} onClick={event => { setOpen(false); if (home && label === 'HOME') { event.preventDefault(); window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); } }}>{label}</a>)}</nav>

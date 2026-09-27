@@ -331,3 +331,31 @@ input:not([type=radio]):not([type=checkbox]),textarea,select{font-size:16px!impo
 .on-crew-photo{margin:28px 0 0;max-width:440px}.on-crew-photo .on-photo{aspect-ratio:4/3;border-radius:10px;box-shadow:0 8px 20px #0002}.on-crew-photo img{object-position:center 42%}
 .on-crew-photo figcaption{font-size:12px;font-weight:800;letter-spacing:.12em;margin-top:12px;color:var(--on-red)}
 @media(max-width:767px){.on-big-orders-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.on-real-gatherings{padding-bottom:28px}.on-gatherings-track{gap:16px}.on-gathering-card{width:72vw}.on-gallery-grid.on-company-grid{grid-template-columns:1fr;gap:16px}.on-crew-photo{max-width:100%}}
+
+/* Photo bands share the same rhythm, framing, and accessible scroll affordance. */
+.on-catering-highlight-head{padding-top:0;padding-bottom:0;max-width:1440px}
+.on-catering-highlight-head .on-photo-strip-hint{margin-top:18px}
+.on-catering-highlight-strip{display:block;mask-image:none;-webkit-mask-image:none;padding:0 0 16px;scroll-padding:clamp(24px,5.8vw,84px);outline-offset:-4px}
+.on-catering-highlight-track{display:flex;gap:20px;width:max-content;padding:0 clamp(24px,5.8vw,84px)}
+.on-catering-highlight-strip,.on-gatherings-strip{scrollbar-width:thin;scrollbar-color:#a31914 #d8cbb1;scroll-behavior:smooth;-webkit-overflow-scrolling:touch}
+.on-catering-highlight-card{width:clamp(260px,28vw,380px)}
+.on-gathering-card .on-photo{aspect-ratio:4/3}
+.on-company-grid .on-photo,.on-catering-gallery-grid .on-photo{border-radius:10px;box-shadow:0 8px 20px #0002}
+.on-crew-photo figcaption{font-size:14px;letter-spacing:.12em}
+.on-big-orders :focus-visible,.on-serve-strip :focus-visible,.on-catering-band :focus-visible,.on-about-gather :focus-visible,.on-order :focus-visible{outline-color:var(--on-paper)}
+.on-form input:focus-visible,.on-form textarea:focus-visible,.review-page .contact-form input:focus-visible,.review-page .contact-form textarea:focus-visible{outline:3px solid #a31914;outline-offset:3px}
+.review-page .submit-button{background:#cc1713;color:#fff;border-radius:3px;font-weight:800;letter-spacing:.025em;transition:background .2s,transform .2s}
+.review-page .submit-button:hover{background:#a51210}
+@media(max-width:767px){
+ .on-catering-highlight-head{padding-left:24px;padding-right:24px}
+ .on-catering-highlight-card{width:72vw}
+ .on-catering-highlight-track{gap:16px}
+ .on-site form :is(input,textarea,button){scroll-margin-bottom:100px}
+}
+@media(prefers-reduced-motion:reduce){.on-catering-highlight-strip,.on-gatherings-strip{scroll-behavior:auto}}
+
+/* Keep the food spread distinct from the adjoining guest gallery. */
+.on-big-orders-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+/* The brush heading must fit its narrow editorial column at tablet widths. */
+@media(min-width:768px){.on-section-title h2{font-size:clamp(36px,4.6vw,70px)}}
+@media(max-width:767px){.on-about-hero .on-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.on-about-hero .on-actions .on-button{padding:12px 8px}}
