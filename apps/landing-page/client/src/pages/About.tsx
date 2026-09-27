@@ -6,9 +6,9 @@ import FoodPhoto from '@/components/FoodPhoto';
 import { fetchBusinessHours, type BusinessHours } from '@/lib/api';
 import { formatTime12h } from '@/lib/utils';
 
-export default function About() {
+export default function About({ initialData }: { initialData?: { hours: BusinessHours | null } } = {}) {
   const revealRef = useReveal();
-  const [hours, setHours] = useState<BusinessHours | null>(null);
+  const [hours, setHours] = useState<BusinessHours | null>(initialData?.hours ?? null);
   useEffect(() => {
     document.title = 'About | Oishii Nori';
     let active = true;

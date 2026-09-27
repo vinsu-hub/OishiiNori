@@ -18,8 +18,8 @@ function Router() {
       <Route path={"/privacy"} component={Privacy} />
       <Route path={"/terms"} component={Terms} />
       <Route path={"/review"} component={Review} />
-      <Route path="/about" component={About} />
-      <Route path="/our-menu" component={OurMenu} />
+      <Route path="/about">{() => <About />}</Route>
+      <Route path="/our-menu">{() => <OurMenu />}</Route>
       <Route path={"/catering"} component={Catering} />
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}

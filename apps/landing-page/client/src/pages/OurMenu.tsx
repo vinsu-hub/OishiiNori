@@ -17,12 +17,12 @@ function priceLabel(product: ApiProduct) {
   const prices = product.sizes.map(size => size.price).filter(price => typeof price === 'number' && Number.isFinite(price) && price >= 0);
   return prices.length ? `${product.sizes.length > 1 ? 'from ' : ''}₱${Math.min(...prices).toLocaleString('en-PH', { maximumFractionDigits: 2 })}` : null;
 }
-export default function OurMenu() {
+export default function OurMenu({ initialData }: { initialData?: { products: ApiProduct[] } } = {}) {
   const revealRef = useReveal();
   const search = useSearch();
   const requested = new URLSearchParams(search).get('cat') || 'All';
-  const [products, setProducts] = useState<ApiProduct[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [products, setProducts] = useState<ApiProduct[]>(initialData?.products.filter(product => product.active) ?? []);
+  const [loading, setLoading] = useState(!initialData);
   const [error, setError] = useState(false);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
