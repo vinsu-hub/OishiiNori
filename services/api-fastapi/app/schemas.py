@@ -1694,3 +1694,38 @@ class PublicBusinessHoursResponse(BaseModel):
     open_time: time
     close_time: time
     closed_weekdays: list[int]
+
+
+# ---------------------------------------------------------------------------
+# Job applicants ("Join Our Crew" careers form on the Landing Page)
+# ---------------------------------------------------------------------------
+
+ApplicantStatus = Literal["new", "reviewed", "contacted", "rejected", "hired"]
+
+
+class CreateApplicantRequest(BaseModel):
+    full_name: str = Field(min_length=1, max_length=120)
+    phone: str = Field(min_length=3, max_length=40)
+    email: str = Field(min_length=3, max_length=200, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    position_interest: str | None = Field(default=None, max_length=120)
+    message: str | None = Field(default=None, max_length=2000)
+    # Honeypot -- real applicants never fill this hidden field.
+    website: str | None = None
+
+
+class ApplicantOut(BaseModel):
+    id: str
+    full_name: str
+    phone: str
+    email: str
+    position_interest: str | None = None
+    message: str | None = None
+    resume_photo_url: str | None = None
+    status: ApplicantStatus
+    decided_by: str | None = None
+    decided_at: datetime | None = None
+    created_at: datetime
+
+
+class UpdateApplicantRequest(BaseModel):
+    status: ApplicantStatus

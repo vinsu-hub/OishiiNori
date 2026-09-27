@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from app.routers import (
     analytics,
+    applicants,
     business_days,
     dashboard_summary,
     deliveries,
@@ -122,6 +123,7 @@ app.include_router(deliveries.router)
 app.include_router(payment_methods.router)
 app.include_router(reviews.router)
 app.include_router(inquiries.router)
+app.include_router(applicants.router)
 
 
 @app.get("/health")

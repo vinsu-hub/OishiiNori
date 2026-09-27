@@ -2006,3 +2006,31 @@ export function fetchInquiries(filters?: { status?: InquiryStatus; kind?: Inquir
 export function updateInquiry(id: string, status: InquiryStatus): Promise<ApiInquiry> {
   return request(`/inquiries/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
 }
+
+// ---------------------------------------------------------------------------
+// Job applicants ("Join Our Crew" careers form -> this inbox)
+// ---------------------------------------------------------------------------
+
+export type ApplicantStatus = 'new' | 'reviewed' | 'contacted' | 'rejected' | 'hired';
+
+export interface ApiApplicant {
+  id: string;
+  full_name: string;
+  phone: string;
+  email: string;
+  position_interest: string | null;
+  message: string | null;
+  resume_photo_url: string | null;
+  status: ApplicantStatus;
+  decided_by: string | null;
+  decided_at: string | null;
+  created_at: string;
+}
+
+export function fetchApplicants(status?: ApplicantStatus): Promise<ApiApplicant[]> {
+  return request(`/applicants${status ? `?status=${status}` : ''}`);
+}
+
+export function updateApplicant(id: string, status: ApplicantStatus): Promise<ApiApplicant> {
+  return request(`/applicants/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
+}

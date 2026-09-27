@@ -283,3 +283,21 @@ input:not([type=radio]):not([type=checkbox]),textarea,select{font-size:16px!impo
 .on-site .on-hero-art .on-photo img{width:100%;height:100%;object-fit:cover;object-position:50% 4%;padding:0}
 }
 @media(min-width:768px) and (max-width:1000px){.on-site .on-hero{grid-template-columns:47% 53%}.on-site .on-hero-art .on-photo img{object-position:62% 6%}}
+
+/* Crew applications and the real catering gallery. */
+.on-careers{background:#e9dfca;border-top:1px solid var(--on-line)}
+.on-careers-copy{position:relative;isolation:isolate;min-width:0}
+.on-careers-copy:before{content:'';position:absolute;left:-28px;top:36px;width:150px;height:20px;background:var(--on-red);opacity:.2;z-index:-1;transform:rotate(-12deg);clip-path:polygon(0 25%,20% 5%,45% 15%,75% 0,100% 20%,95% 80%,60% 90%,25% 75%,0 100%)}
+.on-careers h2{font-size:clamp(48px,5.6vw,80px)}
+.on-careers-form{min-width:0;align-content:start}
+.on-careers-form fieldset{border:0;padding:0;margin:0;min-width:0;display:grid;gap:18px}
+.on-careers-form label{overflow-wrap:anywhere}
+.on-careers-form input[type=file]{font-size:16px;width:100%;overflow:hidden}
+.on-careers-form .on-button:disabled{opacity:.65;cursor:wait}
+.on-careers-warning{border-left-color:#986414;background:#fff3d6}
+.on-gallery-grid.on-catering-gallery-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:20px}
+.on-catering-gallery-grid .on-photo{aspect-ratio:4/3;min-width:0}
+.on-catering-gallery-grid img{object-fit:cover;object-position:center}
+.on-gallery-controls{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;margin-top:28px}
+@media(max-width:1100px){.on-gallery-grid.on-catering-gallery-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:767px){.on-gallery-grid.on-catering-gallery-grid{gap:12px}.on-careers .on-inquiry{gap:32px}.on-gallery-controls .on-button{width:100%}}

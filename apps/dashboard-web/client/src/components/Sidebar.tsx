@@ -40,6 +40,7 @@ import {
   Undo2,
   Star,
   Mail,
+  UserPlus,
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -164,6 +165,9 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
       : []),
     ...(isManagerOrExecutive || hasGrant('reviews')
       ? [{ icon: Star, label: 'Customer Reviews', href: '/reviews' }]
+      : []),
+    ...(isManagerOrExecutive || hasGrant('applicants')
+      ? [{ icon: UserPlus, label: 'Applicants', href: '/applicants' }]
       : []),
     ...(isManagerOrExecutive || hasGrant('inquiries')
       ? [{ icon: Mail, label: 'Inquiries', href: '/inquiries' }]

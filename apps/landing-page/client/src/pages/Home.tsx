@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import SiteNav from '@/components/SiteNav';
 import SiteFooter from '@/components/SiteFooter';
 import InquiryForm from '@/components/InquiryForm';
+import CareersForm from '@/components/CareersForm';
 import FoodPhoto from '@/components/FoodPhoto';
 import { MapView } from '@/components/Map';
 import { type ApiProduct, type BusinessHours, fetchBusinessHours, fetchMenu } from '@/lib/api';
@@ -49,5 +50,6 @@ export default function Home({ initialData }: { initialData?: HomeInitialData } 
     <section id="faq" className="on-faq on-container"><h2>GOOD TO KNOW.</h2><div>{[['Do you take reservations?', 'Use the Reserve button to request a table online.'], ['What are your hours?', hoursLabel], ['Where are you located?', 'Pedro Guevara Ave., Santa Cruz, Laguna 4009, Philippines.'], ["What’s on the menu?", 'Sushi, ramen, katsu, snacks, and cafe drinks. Explore our full online menu.']].map(([question, answer]) => <details key={question}><summary>{question}</summary><p>{answer}</p></details>)}</div></section>
     <section id="catering-cta" className="on-catering-band"><div className="on-container"><span lang="ja">みんなで</span><h2>BIG GATHERINGS.<br />BOLD CRAVINGS.</h2><p>Events, parties, corporate get-togethers. Talk to us about sushi boats and group orders for your next occasion.</p><a className="on-button" href="/catering">Explore catering <span className="on-arrow" aria-hidden="true">↗</span></a></div></section>
     <section id="find-us" className="on-find on-container"><div className="on-map-panel"><p className="on-eyebrow">FIND US</p><h2>OISHII NORI<br /><span>SANTA CRUZ</span></h2><p className="on-address"><span aria-hidden="true">●</span> Pedro Guevara Ave.<br />Santa Cruz, Laguna 4009, Philippines</p><p className="on-hours">Kitchen hours · {hoursLabel}</p><MapView className="on-map" {...shopLocation} zoom={17} /><a className="on-map-link" href="https://maps.app.goo.gl/9oACBZo6tUdzyabK7" target="_blank" rel="noreferrer">Open in Maps <span className="on-arrow" aria-hidden="true">↗</span></a></div><div id="contact"><h2>CONTACT US.</h2><p>A question, a craving, or something to share? Drop us a line.</p><InquiryForm kind="contact" /></div></section>
+    <section id="careers" className="on-careers"><div className="on-container on-inquiry"><div className="on-careers-copy"><p className="on-eyebrow">GOOD FOOD TAKES GOOD PEOPLE</p><h2>JOIN OUR<br /><span>CREW.</span></h2><p>Interested in being part of Oishii Nori? Tell us a little about yourself and the work you’d like to do — front-of-house, kitchen crew, or riding with our deliveries.</p><p>Send an application for our team to review. We’ll get in touch if there’s a suitable opportunity.</p></div><CareersForm /></div></section>
   </main><SiteFooter hours={hoursLabel} /></div></Router>;
 }

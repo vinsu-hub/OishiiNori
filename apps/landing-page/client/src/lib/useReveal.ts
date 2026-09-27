@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-const targets = '.on-intro > div, .on-intro > p, .on-section-title h2, .on-seller, .on-category-heading, .on-category-grid > a, .on-experience-heading, .on-experience-copy, .on-order > div, .on-faq h2, .on-catering-band .on-container, .on-map-panel, #contact, .on-serve-strip .on-container, .on-gallery h2, .on-gallery-grid, .on-about-find > div, .on-menu-heading, .on-menu-card, .on-occasions h2, .on-occasions article, .on-inquiry > div, .on-inquiry > form';
+const targets = '.on-intro > div, .on-intro > p, .on-section-title h2, .on-seller, .on-category-heading, .on-category-grid > a, .on-experience-heading, .on-experience-copy, .on-order > div, .on-faq h2, .on-catering-band .on-container, .on-map-panel, #contact, .on-serve-strip .on-container, .on-gallery h2, .on-gallery-grid, .on-about-find > div, .on-menu-heading, .on-menu-card, .on-occasions h2, .on-occasions article, .on-inquiry > div, .on-inquiry > form, .on-careers-copy';
 
 /** Visible in SSR/no-JS; only offscreen elements are armed after mount. */
 export function useReveal() {

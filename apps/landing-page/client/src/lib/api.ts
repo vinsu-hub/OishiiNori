@@ -162,3 +162,40 @@ export interface SubmitInquiryPayload {
 export function submitInquiry(payload: SubmitInquiryPayload): Promise<{ ok: boolean }> {
   return request('/public/inquiries', { method: 'POST', body: JSON.stringify(payload) });
 }
+
+// --- Careers ("Join Our Crew" application form) --------------------------
+
+export interface SubmitApplicantPayload {
+  full_name: string;
+  phone: string;
+  email: string;
+  position_interest?: string;
+  message?: string;
+  // Honeypot -- leave empty; rendered as a hidden field.
+  website?: string;
+}
+
+export interface ApplicantSubmitResult {
+  id: string;
+  status: 'new' | 'reviewed' | 'contacted' | 'rejected' | 'hired';
+}
+
+export function submitApplicant(payload: SubmitApplicantPayload): Promise<ApplicantSubmitResult> {
+  return request('/public/applicants', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+// Strictly jpg/png -- no PDF. The backend enforces this too; this is a fast,
+// friendly client-side check, not the real gate.
+export async function uploadApplicantPhoto(applicantId: string, file: File): Promise<ApplicantSubmitResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await fetch(`${API_BASE_URL}/public/applicants/${applicantId}/photo`, {
+    method: 'POST',
+    body: formData,
+  });
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => null);
+    throw new Error(errBody?.detail || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<ApplicantSubmitResult>;
+}
