@@ -27,7 +27,7 @@ const SHOP_ADDRESS = {
   addressCountry: 'PH',
 };
 const SHOP_GEO = { lat: 14.278476, lng: 121.4158777 };
-const SITE_URL = 'https://oishii-nori-landing.vercel.app';
+const SITE_URL = 'https://www.oishiinori.com';
 const HERO_IMAGE = `${SITE_URL}/products/oishii-baked-sushi.jpg`;
 
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -72,7 +72,7 @@ function buildJsonLd(hours) {
     },
     geo: { '@type': 'GeoCoordinates', latitude: SHOP_GEO.lat, longitude: SHOP_GEO.lng },
     ...(openingHours ? { openingHoursSpecification: openingHours } : {}),
-    menu: `${SITE_URL}/#menu`,
+    menu: `${SITE_URL}/our-menu`,
     acceptsReservations: true,
   };
 

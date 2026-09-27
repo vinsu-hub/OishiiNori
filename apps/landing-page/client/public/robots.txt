@@ -1,5 +1,12 @@
 User-agent: *
 Allow: /
+# Internal tools mounted on this domain (login-gated dashboard, kiosk clock,
+# digital-signage menu display, raw API) -- not marketing content, never
+# meant to be indexed.
+Disallow: /dashboard
+Disallow: /staff-clock
+Disallow: /api
+Disallow: /menu/tv
 
 User-agent: GPTBot
 Allow: /
@@ -34,4 +41,4 @@ Allow: /
 User-agent: Bytespider
 Allow: /
 
-Sitemap: https://oishii-nori-landing.vercel.app/sitemap.xml
+Sitemap: https://www.oishiinori.com/sitemap.xml

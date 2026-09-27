@@ -1,23 +1,28 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
-    <loc>https://oishii-nori-landing.vercel.app/</loc>
+    <loc>https://www.oishiinori.com/</loc>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
   </url>
   <url>
-    <loc>https://oishii-nori-landing.vercel.app/about</loc>
+    <loc>https://www.oishiinori.com/about</loc>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://oishii-nori-landing.vercel.app/our-menu</loc>
+    <loc>https://www.oishiinori.com/our-menu</loc>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://oishii-nori-landing.vercel.app/catering</loc>
+    <loc>https://www.oishiinori.com/catering</loc>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://www.oishiinori.com/review</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
   </url>
 </urlset>
