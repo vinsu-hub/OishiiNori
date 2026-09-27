@@ -301,3 +301,12 @@ input:not([type=radio]):not([type=checkbox]),textarea,select{font-size:16px!impo
 .on-gallery-controls{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;margin-top:28px}
 @media(max-width:1100px){.on-gallery-grid.on-catering-gallery-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:767px){.on-gallery-grid.on-catering-gallery-grid{gap:12px}.on-careers .on-inquiry{gap:32px}.on-gallery-controls .on-button{width:100%}}
+/* Catering: highlighted "catering set up" strip, above the full gallery */
+.on-catering-highlight{background:var(--on-paper-2,#efe6d3);border-top:1px solid var(--on-line);border-bottom:1px solid var(--on-line);padding:56px 0 48px}
+.on-catering-highlight-head{max-width:640px;margin-bottom:28px}
+.on-catering-highlight-head h2{font-size:clamp(38px,4.5vw,56px);margin:6px 0 12px}
+.on-catering-highlight-head p{font-size:15px;margin:0;max-width:48ch}
+.on-catering-highlight-strip{display:flex;gap:16px;overflow-x:auto;padding:0 4vw 8px;scroll-snap-type:x proximity;scroll-padding:4vw;scroll-behavior:smooth;-webkit-overflow-scrolling:touch;mask-image:linear-gradient(90deg,transparent,#000 3%,#000 97%,transparent);-webkit-mask-image:linear-gradient(90deg,transparent,#000 3%,#000 97%,transparent)}
+.on-catering-highlight-card{flex:0 0 auto;width:min(78vw,300px);scroll-snap-align:start}
+.on-catering-highlight-card .on-photo{aspect-ratio:4/3;border-radius:10px;box-shadow:0 8px 20px #0002}
+@media(max-width:767px){.on-catering-highlight{padding:40px 0 36px}.on-catering-highlight-head{padding:0 22px}.on-catering-highlight-card{width:70vw}}
