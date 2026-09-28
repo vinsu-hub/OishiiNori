@@ -11,6 +11,8 @@ Usage:
     python bridge.py --once          # one poll cycle, then exit
     python bridge.py --test-print    # render a sample ticket to file, no
                                       # backend/printer needed -- see README.md
+    python bridge.py --setup         # local web page: scan ports, test
+                                      # print, save BT_PORT -- see README.md
 """
 
 from __future__ import annotations
@@ -253,6 +255,11 @@ def main() -> None:
     parser.add_argument(
         "--test-print", action="store_true", help="Render a sample ticket to file, no backend/printer needed"
     )
+    parser.add_argument(
+        "--setup",
+        action="store_true",
+        help="Open a local web page to scan for the printer's port, test print, and save it",
+    )
     args = parser.parse_args()
 
     config = load_config()
@@ -260,6 +267,12 @@ def main() -> None:
 
     if args.test_print:
         run_test_print(config)
+        return
+
+    if args.setup:
+        from setup_ui import run_setup_ui
+
+        run_setup_ui(config)
         return
 
     try:

@@ -46,51 +46,62 @@ Fill in:
 - `SUPABASE_URL` / `SUPABASE_ANON_KEY` -- same values `services/api-fastapi/.env.local` or the
   dashboard's `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` use.
 - `BRIDGE_EMAIL` / `BRIDGE_PASSWORD` -- the account from step 1a.
-- `BT_PORT` -- see §2 below, once the printer is paired.
+- `BT_PORT` -- leave as-is; §2 below sets this for you, no manual editing needed.
 
-## 2. Pairing the XP-58H over Bluetooth
+## 2. Pairing the XP-58H, then pointing the bridge at it
 
-The XP-58H (also has USB, but this bridge uses Bluetooth SPP so it can sit anywhere near the
-kitchen station rather than tethered to one machine). Pairing itself is OS-level -- Python
-doesn't manage it, it just opens whatever serial port the OS exposes once paired.
+Pairing itself is always OS-level, for either connection type -- Bluetooth or USB -- no app
+(this one included) can do that handshake for you:
 
-### Windows
+- **Bluetooth:** pair the XP-58H in the device's own Bluetooth settings (Windows: Settings ->
+  Bluetooth & devices -> Add device; Android: Settings -> Connected devices; put the printer in
+  pairing mode first -- usually holding its feed button while powering on, check the printer's
+  manual).
+- **USB:** just plug it in. Windows will install a driver automatically for this class of
+  printer; if it doesn't, install the Xprinter driver package from the printer's manual/box.
 
-1. Settings -> Bluetooth & devices -> Add device -- put the XP-58H in pairing mode (usually
-   holding its feed button while powering on; check the printer's manual) and pair it.
-2. Settings -> Bluetooth & devices -> Devices -> click the paired printer -> **More Bluetooth
-   settings** -> **COM Ports** tab. You'll see an **Outgoing** COM port (e.g. `COM5`) -- that's
-   `BT_PORT` in your `.env`.
-3. If no COM port appears, remove and re-pair the device -- Windows sometimes needs the SPP
-   profile explicitly re-negotiated.
+Once paired/plugged in, **run the setup page** instead of hunting for a COM port by hand:
 
-### Linux
+```
+python bridge.py --setup
+```
 
-1. `bluetoothctl`
-   ```
-   scan on
-   # note the printer's MAC address, e.g. AA:BB:CC:DD:EE:FF
-   pair AA:BB:CC:DD:EE:FF
-   trust AA:BB:CC:DD:EE:FF
-   scan off
-   exit
-   ```
-2. Bind it to an rfcomm device:
-   ```
-   sudo rfcomm bind 0 AA:BB:CC:DD:EE:FF
-   ```
-   This creates `/dev/rfcomm0` -- that's `BT_PORT`. (To make this survive a reboot, add an entry
-   to `/etc/bluetooth/rfcomm.conf` or a udev rule -- specifics vary by distro.)
+This opens a local page in your browser with a **Scan for ports** button -- it lists every
+serial port the OS currently exposes (this covers both a paired Bluetooth printer and most USB
+thermal printers, since this class of printer typically exposes a virtual serial port either
+way). Click **Test print** next to the one you think is the printer to confirm it (prints a
+short "OISHII NORI / Test print OK" ticket), then **Use this printer** to save it into `.env` --
+no manual file editing. Restart the bridge afterward to pick up the change.
 
-### Either OS
+If the printer never appears in the scan after pairing/plugging in, try Scan again (some OSes
+take a moment to expose the port); a printer with *no* virtual serial port at all -- pure
+USB-printer-class, no COM/tty -- won't show up here and needs a different backend than this
+bridge currently implements.
 
-`BT_BAUDRATE` defaults to `9600`, the common default for these Bluetooth SPP thermal printers.
-If tickets print garbled, try `19200` or `38400`.
+`BT_BAUDRATE` (also set by the setup page) defaults to `9600`, the common default for these
+printers. If tickets print garbled, try `19200` or `38400` from the setup page's dropdown.
+
+### Linux (manual fallback)
+
+The setup page's port scan works on Linux too, but pairing still needs `bluetoothctl` first:
+```
+bluetoothctl
+scan on
+# note the printer's MAC address, e.g. AA:BB:CC:DD:EE:FF
+pair AA:BB:CC:DD:EE:FF
+trust AA:BB:CC:DD:EE:FF
+scan off
+exit
+```
+Some distros also need it explicitly bound to an rfcomm device before it shows up as a serial
+port: `sudo rfcomm bind 0 AA:BB:CC:DD:EE:FF` (creates `/dev/rfcomm0`; to survive a reboot, add an
+entry to `/etc/bluetooth/rfcomm.conf` or a udev rule -- specifics vary by distro).
 
 ## 3. Running
 
 ```
 python bridge.py --test-print    # sanity-check ticket formatting, no printer/backend needed
+python bridge.py --setup         # scan for the printer's port, test print, save it (see above)
 python bridge.py --once          # one poll cycle then exit -- good for a first live test
 python bridge.py                 # runs continuously until Ctrl+C
 ```
@@ -137,3 +148,4 @@ and never again once printed, even if it stays in `preparing` for a while or the
 | `ticket.py` | ESC/POS ticket layout (works against a real printer or `--test-print`'s Dummy profile) |
 | `state.py` | SQLite dedupe store (`printed_tickets.db`) so nothing double-prints |
 | `config.py` | Loads `.env` |
+| `setup_ui.py` | `--setup`'s local web page: scan ports, test print, save `BT_PORT`/`BT_BAUDRATE` |
