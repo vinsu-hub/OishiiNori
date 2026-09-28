@@ -26,7 +26,7 @@ from datetime import datetime, timedelta, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from api_client import build_product_index, fetch_active_kitchen_transactions, fetch_products
+from api_client import build_product_index, fetch_active_kitchen_transactions, fetch_products, post_heartbeat
 from auth import BridgeAuth
 from config import Config, load_config, require_live_fields
 from state import PrintedTicketStore
@@ -111,6 +111,15 @@ def _opened_at(transaction: dict) -> datetime:
     return datetime.fromisoformat(raw.replace("Z", "+00:00"))
 
 
+def _report_heartbeat(config: Config, auth: BridgeAuth, *, ok: bool, order_number=None, error=None) -> None:
+    """Best-effort only -- never let a heartbeat-reporting failure affect
+    the actual print loop; just log it and move on."""
+    try:
+        post_heartbeat(config, auth, ok=ok, printed_order_number=order_number, error_message=error)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Failed to report heartbeat: %r", e)
+
+
 def poll_once(
     config: Config,
     auth: BridgeAuth,
@@ -122,6 +131,7 @@ def poll_once(
         transactions = fetch_active_kitchen_transactions(config, auth)
     except Exception as e:  # noqa: BLE001 -- a network blip must not kill the loop
         logger.error("Failed to fetch kitchen orders: %r", e)
+        _report_heartbeat(config, auth, ok=False, error=f"Failed to fetch kitchen orders: {e}")
         return
 
     # Ignore stale queued orders (e.g. from a previous day that was never
@@ -131,10 +141,15 @@ def poll_once(
 
     pending = [t for t in transactions if not store.is_printed(t["id"])]
     if not pending:
+        # Still alive and polling successfully -- report so the dashboard's
+        # "last seen" doesn't go stale just because there's nothing to print.
+        _report_heartbeat(config, auth, ok=True)
         return
     logger.info("%d order(s) to print", len(pending))
 
     product_index = product_cache.get()
+    last_printed_order_number = None
+    last_error = None
     for transaction in pending:
         # A held item's product_size_id might not be in the cache yet
         # (a brand-new product) -- refresh once per cycle, not per item.
@@ -150,10 +165,19 @@ def poll_once(
                 datetime.now(timezone.utc).isoformat(),
             )
             logger.info("Printed order %s (transaction %s)", transaction.get("order_number"), transaction["id"])
+            last_printed_order_number = transaction.get("order_number")
         except Exception as e:  # noqa: BLE001 -- printer off/out of range/etc; retry next cycle
             logger.error("Failed to print transaction %s: %r", transaction["id"], e)
             printer_conn.close_after_failure()
+            last_error = f"{e}"
             # Deliberately not marked printed -- stays eligible next cycle.
+
+    # A failure this cycle is the more urgent thing to surface -- report
+    # that over a same-cycle success if both happened.
+    if last_error is not None:
+        _report_heartbeat(config, auth, ok=False, error=last_error)
+    else:
+        _report_heartbeat(config, auth, ok=True, order_number=last_printed_order_number)
 
 
 def run(config: Config, once: bool) -> None:

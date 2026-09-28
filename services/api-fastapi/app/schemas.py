@@ -1729,3 +1729,26 @@ class ApplicantOut(BaseModel):
 
 class UpdateApplicantRequest(BaseModel):
     status: ApplicantStatus
+
+
+# ---------------------------------------------------------------------------
+# Kitchen printer bridge status (singleton row -- kitchen-print-bridge's
+# heartbeat, surfaced on dashboard-web's Printer Setup tab)
+# ---------------------------------------------------------------------------
+
+
+class KitchenPrinterHeartbeat(BaseModel):
+    status: Literal["ok", "error"]
+    # Set when status == "ok" and this cycle printed a ticket -- omitted on
+    # a plain "still alive, nothing to print" heartbeat.
+    printed_order_number: int | None = None
+    # Set when status == "error" -- what the bridge's own exception said.
+    error_message: str | None = Field(default=None, max_length=2000)
+
+
+class KitchenPrinterStatusOut(BaseModel):
+    last_heartbeat_at: datetime | None = None
+    last_print_at: datetime | None = None
+    last_print_order_number: int | None = None
+    last_error: str | None = None
+    last_error_at: datetime | None = None

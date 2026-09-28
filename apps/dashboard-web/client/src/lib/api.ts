@@ -2034,3 +2034,19 @@ export function fetchApplicants(status?: ApplicantStatus): Promise<ApiApplicant[
 export function updateApplicant(id: string, status: ApplicantStatus): Promise<ApiApplicant> {
   return request(`/applicants/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
 }
+
+// ---------------------------------------------------------------------------
+// Kitchen printer bridge status (kitchen-print-bridge's heartbeat -> this)
+// ---------------------------------------------------------------------------
+
+export interface KitchenPrinterStatus {
+  last_heartbeat_at: string | null;
+  last_print_at: string | null;
+  last_print_order_number: number | null;
+  last_error: string | null;
+  last_error_at: string | null;
+}
+
+export function fetchKitchenPrinterStatus(): Promise<KitchenPrinterStatus> {
+  return request('/kitchen-printer/status');
+}

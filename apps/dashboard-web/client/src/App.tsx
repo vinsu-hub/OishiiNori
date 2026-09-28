@@ -47,6 +47,7 @@ const Employees = lazyWithReload(() => import('./pages/Employees'), 'Employees')
 const BusinessDayReport = lazyWithReload(() => import('./pages/BusinessDayReport'), 'BusinessDayReport');
 const RefundApproval = lazyWithReload(() => import('./pages/RefundApproval'), 'RefundApproval');
 const Reviews = lazyWithReload(() => import('./pages/Reviews'), 'Reviews');
+const PrinterSetup = lazyWithReload(() => import('./pages/PrinterSetup'), 'PrinterSetup');
 const Applicants = lazyWithReload(() => import('./pages/Applicants'), 'Applicants');
 const Inquiries = lazyWithReload(() => import('./pages/Inquiries'), 'Inquiries');
 const Delivery = lazyWithReload(() => import('./pages/Delivery'), 'Delivery');
@@ -100,6 +101,7 @@ function Router() {
         <Route path={'/business-day-report'} component={BusinessDayReport} />
         <Route path={'/refund-approval'} component={RefundApproval} />
         <Route path={'/reviews'} component={Reviews} />
+        <Route path={'/printer-setup'} component={PrinterSetup} />
         <Route path={'/applicants'} component={Applicants} />
         <Route path={'/inquiries'} component={Inquiries} />
         <Route path={'/delivery'} component={Delivery} />

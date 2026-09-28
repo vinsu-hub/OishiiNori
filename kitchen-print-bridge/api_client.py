@@ -31,6 +31,24 @@ def _get(config: Config, auth: BridgeAuth, path: str, params: dict | None = None
     return r
 
 
+def _post(config: Config, auth: BridgeAuth, path: str, json_body: dict) -> requests.Response:
+    r = requests.post(
+        f"{config.api_base_url}{path}",
+        json=json_body,
+        headers=auth.auth_header(),
+        timeout=30,
+    )
+    if r.status_code == 401:
+        r = requests.post(
+            f"{config.api_base_url}{path}",
+            json=json_body,
+            headers=auth.auth_header(force_refresh=True),
+            timeout=30,
+        )
+    r.raise_for_status()
+    return r
+
+
 def fetch_active_kitchen_transactions(config: Config, auth: BridgeAuth) -> list[dict]:
     """Orders the kitchen still has to make: `queued` (just charged at the
     POS / approved from the online queue) plus `preparing`. Printing on
@@ -46,6 +64,28 @@ def fetch_active_kitchen_transactions(config: Config, auth: BridgeAuth) -> list[
 
 def fetch_products(config: Config, auth: BridgeAuth) -> list[dict]:
     return _get(config, auth, "/products").json()
+
+
+def post_heartbeat(
+    config: Config,
+    auth: BridgeAuth,
+    *,
+    ok: bool,
+    printed_order_number: int | None = None,
+    error_message: str | None = None,
+) -> None:
+    """Reports this cycle's outcome to /kitchen-printer/heartbeat so
+    dashboard-web's Printer Setup tab can show whether the bridge is alive,
+    without needing any direct network path to this machine. Best-effort --
+    a heartbeat failure (network blip, backend down) must never crash or
+    stall the actual print loop, so the caller wraps this in try/except and
+    only logs."""
+    body = {"status": "ok" if ok else "error"}
+    if ok and printed_order_number is not None:
+        body["printed_order_number"] = printed_order_number
+    if not ok:
+        body["error_message"] = (error_message or "Unknown error")[:2000]
+    _post(config, auth, "/kitchen-printer/heartbeat", body)
 
 
 def build_product_index(products: list[dict]) -> dict[str, dict]:
