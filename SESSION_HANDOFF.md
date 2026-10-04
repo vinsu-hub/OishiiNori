@@ -110,7 +110,13 @@
   - any other URL redirects to `/kitchen-display`
   - the server refuses `POST /transactions`, void and refund requests for kitchen accounts
 - **Role picker:** Employees → Add employee / Edit access use role cards (Cashier/Staff, Kitchen, Stocker, Rider, Manager). Executive is never offered, and the server refuses creating, promoting to, or demoting an executive.
-- **Remaining:** create the shared "Kitchen Tablet" account (role kitchen) once 0060 is applied.
+- 0060 applied (2026-10-05). The shared **Kitchen Tablet** account was created (EMP-FCCE, `kitchen.tablet@oishiinori.com`, temp password, forced change). Its login is in the user's `~/Downloads/kitchen-tablet-login.txt`, not in the repo. Verified live: the kitchen account's charge, void and refund attempts are refused (403), and it can read kitchen orders.
+- **Executive accounts (2026-10-05):**
+  - The old shared `admin` / `admin123` account is now **Joe Castalone** (`joecastalone@oishiinori.com`, EXEC-001). Same user id, so its history is kept.
+  - New **Sarah Jane** (`sarahjane@oishiinori.com`, EXEC-002) created directly (Employees can't create executives).
+  - Both use the client-chosen password, set without a forced change.
+  - `admin` / `admin123` no longer works. QA Executive is untouched.
+- **Fixed:** `app/permissions.py` GRANTABLE_PAGES was missing `printer-setup`, `applicants` and `inquiries`. The dashboard offered them, so any Edit access save that included one failed with 400.
 
 ### Customer order slip + tablet setup guide (2026-10-04, built with 3 Codex workers via Orca)
 - **Receipt (order slip):** the POS receipt (`components/pos/Receipt.tsx`, both the browser-print and RawBT ESC/POS versions) now prints:

@@ -18,6 +18,12 @@ GRANTABLE_PAGES: dict[str, str] = {
     "business-day-report": "Business Day Report",
     "refund-approval": "Refund Approval",
     "reviews": "Customer Reviews",
+    # These three tabs' endpoints already accept a grant (require_role_or_grant)
+    # and dashboard-web's checklist offers them, but they were missing here,
+    # so granting any of them made the whole Edit access save fail with 400.
+    "printer-setup": "Printer Setup",
+    "applicants": "Applicants",
+    "inquiries": "Inquiries",
     "loss-log": "Loss Log",
     "utility-log": "Utility Log",
     "pos-management": "POS Management",
