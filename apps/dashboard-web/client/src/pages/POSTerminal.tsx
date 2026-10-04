@@ -67,7 +67,12 @@ import {
   posTableStatus,
 } from '@/lib/api';
 import { formatCurrency, formatTime12h, formatTimestamp12h } from '@/lib/utils';
-import { ReceiptDialog, type ReceiptData } from '@/components/pos/Receipt';
+import {
+  ReceiptDialog,
+  receiptBusinessFromSettings,
+  type ReceiptBusiness,
+  type ReceiptData,
+} from '@/components/pos/Receipt';
 
 interface CartLineAddon {
   addon_id: string;
@@ -153,6 +158,13 @@ export default function POSTerminal() {
   // overwritten as soon as the real fetch below resolves, just avoids a
   // flash of "0% tax" in the cart preview before that completes.
   const [vatRate, setVatRate] = useState(0.12);
+  const [receiptBusiness, setReceiptBusiness] = useState<ReceiptBusiness>({
+    name: null,
+    address: null,
+    phone: null,
+    tin: null,
+    footer: null,
+  });
   const [loading, setLoading] = useState(true);
 
   // WS-13: Business Day cycle -- the POS is locked (overlay below) until
@@ -284,6 +296,7 @@ export default function POSTerminal() {
   const [guestCount, setGuestCount] = useState(2);
   const [paymentMethod, setPaymentMethod] = useState<TransactionPaymentMethod | null>(null);
   const [cardType, setCardType] = useState<TransactionCardType | null>(null);
+  const [cashReceived, setCashReceived] = useState('');
   const [cardTypePromptOpen, setCardTypePromptOpen] = useState(false);
   // Independent of any discount's own vat_exempt -- lets a cashier book an
   // order non-VAT with no VAT-exempt discount applied.
@@ -403,6 +416,7 @@ export default function POSTerminal() {
         setProducts(p);
         setDiscountTypes(d);
         setVatRate(settings.vat_rate);
+        setReceiptBusiness(receiptBusinessFromSettings(settings));
         setAddons(a);
       })
       .catch((e) => toast.error(`Failed to load menu: ${e.message}`))
@@ -497,35 +511,6 @@ export default function POSTerminal() {
   const selectedTableLabel =
     selectedTable?.label ?? (tableNumber ? `Table ${tableNumber}` : null);
   const overCapacity = selectedTable != null && guestCount > selectedTable.capacity_max;
-
-  // Everything that must be true before a sale can be charged. Discount, guest
-  // count, and Owner's Request are deliberately not here -- they're optional.
-  const chargeBlockers = useMemo(() => {
-    const b: string[] = [];
-    if (cart.length === 0) b.push('Add at least one item');
-    if (orderType === 'dine_in' && !tableNumber.trim()) b.push('Pick a table');
-    if (tableBlocked) b.push('Table is reserved — manager override required');
-    if (orderType === 'delivery') {
-      if (!deliveryCustomerName.trim()) b.push('Enter the customer name');
-      if (!deliveryCustomerPhone.trim()) b.push('Enter a phone number');
-      if (!deliveryAddress.trim()) b.push('Enter the delivery address');
-      if (!deliveryBarangay) b.push('Pick a barangay');
-    }
-    if (!paymentMethod) b.push('Select a payment method');
-    if (paymentMethod === 'card' && !cardType) b.push('Select debit or credit');
-    return b;
-  }, [
-    cart.length,
-    orderType,
-    tableNumber,
-    tableBlocked,
-    deliveryCustomerName,
-    deliveryCustomerPhone,
-    deliveryAddress,
-    deliveryBarangay,
-    paymentMethod,
-    cardType,
-  ]);
 
   const subtotal = useMemo(
     () =>
@@ -649,6 +634,40 @@ export default function POSTerminal() {
   const previewTaxable = subtotal - previewDiscountAmount;
   const previewTax = selectedDiscount?.vat_exempt || vatOverride === 'non_vat' ? 0 : previewTaxable * vatRate;
   const previewTotal = previewTaxable + previewTax;
+  const cashReceivedAmount = Number(cashReceived);
+  // Rounded to centavos so "Exact" matches the printed total and change never
+  // shows as -P0.00 from a fraction-of-a-centavo preview difference.
+  const cashTotal = Math.round((previewTotal + (orderType === 'delivery' ? selectedDeliveryFee ?? 0 : 0)) * 100) / 100;
+  const cashReceivedIsSufficient = Number.isFinite(cashReceivedAmount) && cashReceivedAmount >= cashTotal;
+
+  const chargeBlockers = useMemo(() => {
+    const b: string[] = [];
+    if (cart.length === 0) b.push('Add at least one item');
+    if (orderType === 'dine_in' && !tableNumber.trim()) b.push('Pick a table');
+    if (tableBlocked) b.push('Table is reserved — manager override required');
+    if (orderType === 'delivery') {
+      if (!deliveryCustomerName.trim()) b.push('Enter the customer name');
+      if (!deliveryCustomerPhone.trim()) b.push('Enter a phone number');
+      if (!deliveryAddress.trim()) b.push('Enter the delivery address');
+      if (!deliveryBarangay) b.push('Pick a barangay');
+    }
+    if (!paymentMethod) b.push('Select a payment method');
+    if (paymentMethod === 'card' && !cardType) b.push('Select debit or credit');
+    if (paymentMethod === 'cash' && !cashReceivedIsSufficient) b.push('Enter the cash received');
+    return b;
+  }, [
+    cart.length,
+    orderType,
+    tableNumber,
+    tableBlocked,
+    deliveryCustomerName,
+    deliveryCustomerPhone,
+    deliveryAddress,
+    deliveryBarangay,
+    paymentMethod,
+    cardType,
+    cashReceivedIsSufficient,
+  ]);
 
   function addToCart(product: ApiProduct, size: ApiProductSize) {
     if (size.availability === 'unavailable') {
@@ -786,6 +805,7 @@ export default function POSTerminal() {
     setCart([]);
     setDiscountTypeId('none');
     setVatOverride('vat');
+    setCashReceived('');
     clearOwnerRequest();
   }
 
@@ -891,6 +911,18 @@ export default function POSTerminal() {
         deliveryFee,
         totalAmount: transaction.total_amount + deliveryFee,
         paymentMethod: transaction.payment_method,
+        business: receiptBusiness,
+        cashierName: user.name ?? null,
+        reference: transaction.id.slice(0, 8).toUpperCase(),
+        subtotal,
+        discountLabel: selectedDiscount ? `${selectedDiscount.name} (${selectedDiscount.percentage}%)` : null,
+        vatExempt: selectedDiscount?.vat_exempt || vatOverride === 'non_vat',
+        cashTendered: paymentMethod === 'cash' ? cashReceivedAmount : null,
+        changeDue:
+          paymentMethod === 'cash'
+            ? Math.max(0, Math.round((cashReceivedAmount - (transaction.total_amount + deliveryFee)) * 100) / 100)
+            : null,
+        itemCount: cart.reduce((sum, line) => sum + line.quantity, 0),
         delivery:
           orderType === 'delivery'
             ? {
@@ -914,6 +946,7 @@ export default function POSTerminal() {
       setAddonTo(null);
       setPaymentMethod(null);
       setCardType(null);
+      setCashReceived('');
       setDeliveryCustomerName('');
       setDeliveryCustomerPhone('');
       setDeliveryAddress('');
@@ -935,6 +968,7 @@ export default function POSTerminal() {
         setTableNumber('');
         setPaymentMethod(null);
         setCardType(null);
+        setCashReceived('');
       } else {
         toast.error(e instanceof Error ? e.message : 'Failed to create transaction');
         // A failed charge invalidates whatever was staged for Owner's Request --
@@ -1626,14 +1660,17 @@ export default function POSTerminal() {
                       if (paymentMethod === m) {
                         setPaymentMethod(null);
                         setCardType(null);
+                        setCashReceived('');
                         return;
                       }
                       if (m === 'card') {
+                        setCashReceived('');
                         setCardTypePromptOpen(true);
                         return;
                       }
                       setPaymentMethod(m);
                       setCardType(null);
+                      setCashReceived('');
                     }}
                     className={`text-sm py-3 rounded border capitalize ${
                       paymentMethod === m
@@ -1652,6 +1689,50 @@ export default function POSTerminal() {
                 <p className="mt-1 text-xs text-destructive">Required before charging.</p>
               )}
             </div>
+
+            {paymentMethod === 'cash' && (
+              <div className="space-y-2 rounded-md border bg-muted/30 p-3">
+                <Label htmlFor="cash-received" className="text-xs">Amount received <span className="text-destructive">*</span></Label>
+                <Input
+                  id="cash-received"
+                  type="number"
+                  inputMode="decimal"
+                  min={0}
+                  step="0.01"
+                  placeholder="0.00"
+                  value={cashReceived}
+                  onChange={(e) => setCashReceived(e.target.value)}
+                  className="h-12 text-base"
+                />
+                <div className="grid grid-cols-4 gap-2">
+                  {[
+                    { label: 'Exact', amount: cashTotal },
+                    { label: '₱200', amount: 200 },
+                    { label: '₱500', amount: 500 },
+                    { label: '₱1,000', amount: 1000 },
+                  ].map(({ label, amount }) => (
+                    <Button
+                      key={label}
+                      type="button"
+                      variant="outline"
+                      className="h-11 px-2 text-xs"
+                      onClick={() => setCashReceived(String(amount))}
+                    >
+                      {label}
+                    </Button>
+                  ))}
+                </div>
+                {cashReceived && Number.isFinite(cashReceivedAmount) && (
+                  <p
+                    className={`text-sm font-medium ${cashReceivedIsSufficient ? 'text-foreground' : 'text-destructive'}`}
+                  >
+                    {cashReceivedIsSufficient
+                      ? `Change: ${formatCurrency(cashReceivedAmount - cashTotal)}`
+                      : `Short by ${formatCurrency(cashTotal - cashReceivedAmount)}`}
+                  </p>
+                )}
+              </div>
+            )}
 
             <Button
               variant={ownerRequestConfirmed ? 'default' : 'outline'}

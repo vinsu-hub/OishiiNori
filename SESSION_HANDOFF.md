@@ -101,6 +101,21 @@
 - **Onboarding PDF** (credentials + how-to + roles + table links) was generated to the user's `~/Downloads/Oishii-Nori-Staff-Onboarding.pdf`. It is **not** in the repo and is the only copy of the temp passwords; executives can also see them in Employees → View credentials until each person changes theirs.
 - **Remaining:** each of the 7 logs in once and sets their own password.
 
+### Customer order slip + tablet setup guide (2026-10-04, built with 3 Codex workers via Orca)
+- **Receipt (order slip):** the POS receipt (`components/pos/Receipt.tsx`, both the browser-print and RawBT ESC/POS versions) now prints:
+  - shop header and **ORDER SLIP**
+  - a large **order number** (the same `transaction.order_number` the TV queue board shows), with "Watch the screen…" guidance
+  - order type, time, cashier, ref
+  - items, subtotal, discount (named), delivery fee, TOTAL
+  - VATable / VAT 12% or VAT-exempt sales
+  - payment method, with **cash tendered + change** for cash
+  - the delivery block
+  - the footer and **"THIS IS NOT AN OFFICIAL RECEIPT"** (the POS is not BIR-accredited)
+- **Shop details:** Settings → **Receipt details** (manager+) edits `business_settings.receipt_*` (migration **0059**; the user must run it in the SQL editor). VAT/hours stay executive-only.
+- **POS cash:** an "Amount received" field with Exact / ₱200 / ₱500 / ₱1,000 buttons and live change. Charge is blocked until enough cash is entered. Tendered/change are receipt-only, not stored.
+- **Guide:** `TABLET_PRINTER_SETUP.md` (also copied to the user's Downloads).
+- **Orca note:** Codex 0.160 never passes Orca's agent-readiness check, so `worker-start --agent codex` times out. The workaround: `terminal create` → `task-create` → `dispatch --return-preamble` → `codex "<preamble>"` typed into that terminal. `worker_done` then arrives normally.
+
 ### Pre-launch reset (2026-10-04, launch Tuesday 2026-10-06)
 - Ran `services/api-fastapi/scripts/reset_for_launch.py --apply`, which cleared all demo/test history:
   - orders: transactions, QR/online orders, deliveries, refunds, business days; order numbers restart

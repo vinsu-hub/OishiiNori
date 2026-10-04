@@ -1392,6 +1392,12 @@ class BusinessSettingsOut(BaseModel):
     closed_weekdays: list[int]
     updated_at: datetime
     updated_by: str | None = None
+    # Receipt (order slip) details -- migration 0059; None until set.
+    receipt_business_name: str | None = None
+    receipt_address: str | None = None
+    receipt_phone: str | None = None
+    receipt_tin: str | None = None
+    receipt_footer: str | None = None
 
 
 class BusinessSettingsUpdate(BaseModel):
@@ -1399,6 +1405,12 @@ class BusinessSettingsUpdate(BaseModel):
     open_time: time | None = None
     close_time: time | None = None
     closed_weekdays: list[int] | None = None
+    # An empty string clears the field.
+    receipt_business_name: str | None = Field(default=None, max_length=120)
+    receipt_address: str | None = Field(default=None, max_length=240)
+    receipt_phone: str | None = Field(default=None, max_length=60)
+    receipt_tin: str | None = Field(default=None, max_length=40)
+    receipt_footer: str | None = Field(default=None, max_length=240)
 
 
 # ---------------------------------------------------------------------------

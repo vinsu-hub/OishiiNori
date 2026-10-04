@@ -5,9 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, Printer, Receipt as ReceiptIcon, AlertTriangle, RefreshCw } from 'lucide-react';
-import { fetchKitchenPrinterStatus, type KitchenPrinterStatus } from '@/lib/api';
+import { fetchBusinessSettings, fetchKitchenPrinterStatus, type KitchenPrinterStatus } from '@/lib/api';
 import { formatDateTime12h } from '@/lib/utils';
-import { printReceipt, type ReceiptData } from '@/components/pos/Receipt';
+import { printReceipt, receiptBusinessFromSettings, type ReceiptData } from '@/components/pos/Receipt';
 import { getReceiptMode, setReceiptMode, type ReceiptMode } from '@/lib/printerPrefs';
 
 const POLL_MS = 15_000;
@@ -50,6 +50,15 @@ const SAMPLE_RECEIPT: ReceiptData = {
   totalAmount: 957,
   paymentMethod: 'test_print',
   delivery: null,
+  business: { name: 'Oishii Nori', address: null, phone: null, tin: null, footer: 'Thank you! Please come again.' },
+  cashierName: 'Sample Cashier',
+  reference: 'SAMPLE01',
+  subtotal: 1007,
+  discountLabel: null,
+  vatExempt: false,
+  cashTendered: 1000,
+  changeDue: 43,
+  itemCount: 6,
 };
 
 /** Kitchen ticket printer status and the POS receipt printer's test print,
@@ -64,6 +73,7 @@ export default function PrinterSetup() {
   const [loading, setLoading] = useState(true);
   const [testPrinting, setTestPrinting] = useState(false);
   const [receiptMode, setReceiptModeState] = useState<ReceiptMode>(getReceiptMode);
+  const [receiptBusiness, setReceiptBusiness] = useState(SAMPLE_RECEIPT.business);
 
   const changeReceiptMode = (mode: ReceiptMode) => {
     setReceiptMode(mode);
@@ -82,13 +92,19 @@ export default function PrinterSetup() {
     const interval = setInterval(load, POLL_MS);
     return () => clearInterval(interval);
   }, [load]);
+  useEffect(() => {
+    // Best-effort: the sample still prints with the default header if this fails.
+    fetchBusinessSettings()
+      .then((settings) => setReceiptBusiness(receiptBusinessFromSettings(settings)))
+      .catch(() => {});
+  }, []);
 
   const state = connectionState(status?.last_heartbeat_at ?? null);
 
   const handleTestPrint = () => {
     setTestPrinting(true);
     try {
-      printReceipt({ ...SAMPLE_RECEIPT, openedAt: new Date().toISOString() });
+      printReceipt({ ...SAMPLE_RECEIPT, business: receiptBusiness, openedAt: new Date().toISOString() });
       toast.success(
         receiptMode === 'rawbt'
           ? 'Sent to RawBT -- the receipt should print now.'

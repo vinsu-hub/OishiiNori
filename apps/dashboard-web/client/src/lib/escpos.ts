@@ -17,6 +17,7 @@ const ASCII_REPLACEMENTS: Record<string, string> = {
   '”': '"',
   '…': '...',
   '₱': 'P', // peso sign
+  '·': '-', // middle dot, e.g. "Dine-in · Table 8"
 };
 
 export function asciiSafe(text: string): string {

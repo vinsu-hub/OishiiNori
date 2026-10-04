@@ -1565,6 +1565,12 @@ export interface ApiBusinessSettings {
   closed_weekdays: number[];
   updated_at: string;
   updated_by: string | null;
+  // Receipt (order slip) details, Settings -> Receipt details (migration 0059).
+  receipt_business_name?: string | null;
+  receipt_address?: string | null;
+  receipt_phone?: string | null;
+  receipt_tin?: string | null;
+  receipt_footer?: string | null;
 }
 
 export function fetchBusinessSettings(): Promise<ApiBusinessSettings> {
@@ -1572,7 +1578,17 @@ export function fetchBusinessSettings(): Promise<ApiBusinessSettings> {
 }
 
 export function updateBusinessSettings(
-  body: Partial<{ vat_rate: number; open_time: string; close_time: string; closed_weekdays: number[] }>
+  body: Partial<{
+    vat_rate: number;
+    open_time: string;
+    close_time: string;
+    closed_weekdays: number[];
+    receipt_business_name: string;
+    receipt_address: string;
+    receipt_phone: string;
+    receipt_tin: string;
+    receipt_footer: string;
+  }>
 ): Promise<ApiBusinessSettings> {
   return request('/settings/business', { method: 'PATCH', body: JSON.stringify(body) });
 }

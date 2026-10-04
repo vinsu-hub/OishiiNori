@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Textarea } from '@/components/ui/textarea';
 import { fetchBusinessSettings, updateBusinessSettings } from '@/lib/api';
 
 const WEEKDAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -46,6 +47,8 @@ export default function Settings() {
           </CardContent>
         </Card>
 
+        {(user?.role === 'manager' || user?.role === 'executive') && <ReceiptDetailsCard />}
+
         {user?.role === 'executive' && (
           <>
             <BusinessSettingsCard />
@@ -54,6 +57,108 @@ export default function Settings() {
         )}
       </div>
     </DashboardLayout>
+  );
+}
+
+const RECEIPT_FIELDS = [
+  { key: 'name', label: 'Business name', placeholder: 'Oishii Nori' },
+  { key: 'address', label: 'Address', placeholder: 'Street, barangay, city', multiline: true },
+  { key: 'phone', label: 'Phone', placeholder: '0917 123 4567' },
+  { key: 'tin', label: 'TIN', placeholder: '000-000-000-000' },
+  { key: 'footer', label: 'Footer message', placeholder: 'Thank you! Please come again.' },
+] as const;
+
+type ReceiptDetails = Record<(typeof RECEIPT_FIELDS)[number]['key'], string>;
+
+/** Header/footer printed on every customer order slip (manager+). */
+function ReceiptDetailsCard() {
+  const [details, setDetails] = useState<ReceiptDetails>({ name: '', address: '', phone: '', tin: '', footer: '' });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    fetchBusinessSettings()
+      .then((settings) =>
+        setDetails({
+          name: settings.receipt_business_name ?? '',
+          address: settings.receipt_address ?? '',
+          phone: settings.receipt_phone ?? '',
+          tin: settings.receipt_tin ?? '',
+          footer: settings.receipt_footer ?? '',
+        })
+      )
+      .catch((e) => toast.error(`Failed to load receipt details: ${e instanceof Error ? e.message : 'Unknown error'}`))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await updateBusinessSettings({
+        receipt_business_name: details.name,
+        receipt_address: details.address,
+        receipt_phone: details.phone,
+        receipt_tin: details.tin,
+        receipt_footer: details.footer,
+      });
+      toast.success('Receipt details saved');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save receipt details');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card className="max-w-xl">
+      <CardHeader>
+        <CardTitle className="font-corp-display">Receipt details</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {loading ? (
+          <p className="text-sm text-muted-foreground">Loading...</p>
+        ) : (
+          <>
+            {RECEIPT_FIELDS.map((field) => {
+              const id = `receipt-${field.key}`;
+              const onChange = (value: string) => setDetails((d) => ({ ...d, [field.key]: value }));
+              return (
+                <div key={field.key} className="space-y-1">
+                  <Label htmlFor={id}>{field.label}</Label>
+                  {'multiline' in field ? (
+                    <Textarea
+                      id={id}
+                      rows={2}
+                      placeholder={field.placeholder}
+                      value={details[field.key]}
+                      onChange={(e) => onChange(e.target.value)}
+                    />
+                  ) : (
+                    <Input
+                      id={id}
+                      placeholder={field.placeholder}
+                      value={details[field.key]}
+                      onChange={(e) => onChange(e.target.value)}
+                    />
+                  )}
+                </div>
+              );
+            })}
+            <p className="text-xs text-muted-foreground">
+              Printed on every customer order slip. Leave blank to hide a line.
+            </p>
+            <Button disabled={saving} onClick={handleSave}>
+              {saving ? 'Saving...' : 'Save changes'}
+            </Button>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
