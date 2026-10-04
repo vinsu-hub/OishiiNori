@@ -4,13 +4,39 @@ import { DashboardLayout } from '@/components/DashboardLayout';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Printer, Receipt as ReceiptIcon, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Loader2, Printer, Receipt as ReceiptIcon, AlertTriangle, RefreshCw, Tablet } from 'lucide-react';
 import { fetchBusinessSettings, fetchKitchenPrinterStatus, type KitchenPrinterStatus } from '@/lib/api';
 import { formatDateTime12h } from '@/lib/utils';
 import { printReceipt, receiptBusinessFromSettings, type ReceiptData } from '@/components/pos/Receipt';
-import { getReceiptMode, setReceiptMode, type ReceiptMode } from '@/lib/printerPrefs';
+import {
+  getReceiptMode,
+  getTabletRole,
+  setReceiptMode,
+  setTabletRole,
+  type ReceiptMode,
+  type TabletRole,
+} from '@/lib/printerPrefs';
+import { useAuth } from '@/contexts/AuthContext';
 
 const POLL_MS = 15_000;
+
+const TABLET_ROLES: { value: TabletRole; label: string; detail: string }[] = [
+  {
+    value: 'cashier',
+    label: 'Cashier counter',
+    detail: 'Prints customer order slips only. Kitchen tickets can never be turned on here.',
+  },
+  {
+    value: 'kitchen',
+    label: 'Kitchen',
+    detail: 'Prints kitchen tickets only (always on). Customer slips are blocked and POS cannot charge sales.',
+  },
+  {
+    value: 'other',
+    label: 'Other device',
+    detail: 'Office PC or phone: nothing prints unless switched on per page.',
+  },
+];
 // The bridge reports every poll cycle (default 20s, kitchen-print-bridge/.env
 // POLL_INTERVAL_SECONDS) -- these bands are a few cycles' worth of grace
 // before calling it "delayed" or "offline", so one slow cycle doesn't flash red.
@@ -72,7 +98,15 @@ export default function PrinterSetup() {
   const [status, setStatus] = useState<KitchenPrinterStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [testPrinting, setTestPrinting] = useState(false);
+  const { user } = useAuth();
   const [receiptMode, setReceiptModeState] = useState<ReceiptMode>(getReceiptMode);
+  const [tabletRole, setTabletRoleState] = useState<TabletRole>(getTabletRole);
+
+  const changeTabletRole = (role: TabletRole) => {
+    setTabletRole(role);
+    setTabletRoleState(role);
+    toast.success(`This tablet is now set as: ${TABLET_ROLES.find((r) => r.value === role)?.label}`);
+  };
   const [receiptBusiness, setReceiptBusiness] = useState(SAMPLE_RECEIPT.business);
 
   const changeReceiptMode = (mode: ReceiptMode) => {
@@ -104,7 +138,7 @@ export default function PrinterSetup() {
   const handleTestPrint = () => {
     setTestPrinting(true);
     try {
-      printReceipt({ ...SAMPLE_RECEIPT, business: receiptBusiness, openedAt: new Date().toISOString() });
+      printReceipt({ ...SAMPLE_RECEIPT, business: receiptBusiness, openedAt: new Date().toISOString() }, user?.role);
       toast.success(
         receiptMode === 'rawbt'
           ? 'Sent to RawBT -- the receipt should print now.'
@@ -124,6 +158,38 @@ export default function PrinterSetup() {
           <h1 className="text-2xl font-semibold">Printer Setup</h1>
           <p className="text-muted-foreground text-sm">Connection and verification for both printers used in the kitchen and at the register.</p>
         </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Tablet className="w-5 h-5" aria-hidden="true" />
+              This tablet is…
+            </CardTitle>
+            <CardDescription>
+              Locks what this device may print, so the kitchen printer can never print a customer slip. Saved on this
+              device only — set it once on each tablet.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Tablet role">
+              {TABLET_ROLES.map((r) => (
+                <button
+                  key={r.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={tabletRole === r.value}
+                  onClick={() => changeTabletRole(r.value)}
+                  className={`min-h-24 rounded-md border-2 p-3 text-left transition ${
+                    tabletRole === r.value ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted'
+                  }`}
+                >
+                  <div className="font-semibold">{r.label}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">{r.detail}</div>
+                </button>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-start justify-between gap-4">

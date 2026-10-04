@@ -3,6 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useInventoryAlerts } from '@/contexts/InventoryAlertsContext';
 import { useLocation } from 'wouter';
 import { DashboardLayout } from '@/components/DashboardLayout';
+import { getTabletRole } from '@/lib/printerPrefs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertCircle } from 'lucide-react';
 
@@ -15,13 +16,19 @@ export default function Home() {
   // reference's Home.tsx role router; manager/employee keep this welcome
   // card unchanged (out of scope -- only the executive tab was missing
   // content).
+  // The kitchen tablet (Printer Setup lock) and kitchen accounts land
+  // straight on Kitchen Display.
+  const kitchenHome = user?.role === 'kitchen' || getTabletRole() === 'kitchen';
+
   React.useEffect(() => {
-    if (user?.role === 'executive') {
+    if (kitchenHome) {
+      navigate('/kitchen-display');
+    } else if (user?.role === 'executive') {
       navigate('/command-center');
     }
-  }, [user, navigate]);
+  }, [user, navigate, kitchenHome]);
 
-  if (user?.role === 'executive') {
+  if (kitchenHome || user?.role === 'executive') {
     return null;
   }
 

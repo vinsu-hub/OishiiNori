@@ -32,7 +32,7 @@ import {
   type TicketProductIndex,
 } from '@/lib/kitchenTicket';
 import { sendToRawBT } from '@/lib/rawbt';
-import { getKitchenPrintOnAccept, setKitchenPrintOnAccept } from '@/lib/printerPrefs';
+import { getKitchenPrintOnAccept, getTabletRole, setKitchenPrintOnAccept } from '@/lib/printerPrefs';
 import { POLL_INTERVAL_MS, toIsoDatePH, todayIsoPH } from '@/lib/constants';
 import { formatTimestamp12h } from '@/lib/utils';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
@@ -138,6 +138,9 @@ export default function KitchenDisplay() {
   // Per-device: only the kitchen tablet paired with the ticket printer turns
   // this on. Tickets print when an order is accepted (see handleAdvance).
   const [printOn, setPrintOn] = useState(getKitchenPrintOnAccept);
+  // Tablet lock (Printer Setup): fixed on for the kitchen tablet, fixed off
+  // for the cashier tablet -- only an "other" device has a free toggle.
+  const tabletRole = getTabletRole();
   const seenQueuedIdsRef = useRef<Set<string> | null>(null);
   const seenOverdueIdsRef = useRef<Set<string>>(new Set());
 
@@ -220,6 +223,10 @@ export default function KitchenDisplay() {
 
   /** Must run synchronously inside a tap -- Chrome only opens RawBT from a user gesture. */
   function printTicket(order: TicketOrder, index: TicketProductIndex = ticketIndex): boolean {
+    if (tabletRole === 'cashier') {
+      toast.error('This is the cashier tablet — kitchen tickets print in the kitchen.');
+      return false;
+    }
     try {
       sendToRawBT(kitchenTicketEscpos(order, index));
     } catch (e) {
@@ -393,16 +400,28 @@ export default function KitchenDisplay() {
                 ))}
               </SelectContent>
             </Select>
-            <Button
-              className="min-h-10"
-              variant={printOn ? 'default' : 'outline'}
-              aria-pressed={printOn}
-              onClick={togglePrinting}
-              title="Print a kitchen ticket through RawBT whenever an order is accepted on this tablet"
-            >
-              <Printer className="w-4 h-4" aria-hidden="true" />
-              {printOn ? 'Printing tickets' : 'Print tickets on this tablet'}
-            </Button>
+            {tabletRole === 'kitchen' ? (
+              <span className="inline-flex min-h-10 items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground">
+                <Printer className="w-4 h-4" aria-hidden="true" />
+                Kitchen tablet — tickets print here
+              </span>
+            ) : tabletRole === 'cashier' ? (
+              <span className="inline-flex min-h-10 items-center gap-2 rounded-md border px-3 text-sm text-muted-foreground">
+                <Printer className="w-4 h-4" aria-hidden="true" />
+                Cashier tablet — tickets print in the kitchen
+              </span>
+            ) : (
+              <Button
+                className="min-h-10"
+                variant={printOn ? 'default' : 'outline'}
+                aria-pressed={printOn}
+                onClick={togglePrinting}
+                title="Print a kitchen ticket through RawBT whenever an order is accepted on this tablet"
+              >
+                <Printer className="w-4 h-4" aria-hidden="true" />
+                {printOn ? 'Printing tickets' : 'Print tickets on this tablet'}
+              </Button>
+            )}
             {printOn && (
               <Button
                 className="min-h-10"

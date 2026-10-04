@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'wouter';
 import { toast } from 'sonner';
 import { DashboardLayout } from '@/components/DashboardLayout';
+import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -63,6 +64,8 @@ const KITCHEN_STATUS_VALUES: KitchenStatus[] = ['queued', 'preparing', 'ready', 
 const PAGE_SIZE = 10;
 
 export default function OrderQueue() {
+  // Kitchen accounts see order status only -- voids and refunds are cashier work.
+  const readOnly = useAuth().user?.role === 'kitchen';
   const [, navigate] = useLocation();
   const [transactions, setTransactions] = useState<ApiTransaction[]>([]);
   const [products, setProducts] = useState<ApiProduct[]>([]);
@@ -337,12 +340,12 @@ export default function OrderQueue() {
               </div>
               <div className="flex items-center gap-3">
                 <span className="font-semibold">{formatCurrency(t.total_amount)}</span>
-                {t.status === 'open' && t.kitchen_status === 'queued' && (
+                {!readOnly && t.status === 'open' && t.kitchen_status === 'queued' && (
                   <Button variant="destructive" size="sm" onClick={() => setVoidTarget(t)}>
                     Void
                   </Button>
                 )}
-                {t.status === 'open' && (t.kitchen_status === 'preparing' || t.kitchen_status === 'ready') && (
+                {!readOnly && t.status === 'open' && (t.kitchen_status === 'preparing' || t.kitchen_status === 'ready') && (
                   <Button variant="outline" size="sm" onClick={() => setRefundTarget(t)}>
                     Refund
                   </Button>

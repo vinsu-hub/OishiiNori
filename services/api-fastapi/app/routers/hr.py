@@ -744,6 +744,9 @@ def list_employees(user: CurrentUser = Depends(get_current_user)):
 @router.post("/employees", response_model=EmployeeCreatedResponse)
 def create_employee(body: EmployeeCreate, user: CurrentUser = Depends(get_current_user)):
     require_role_or_grant(user, "employees", "manager", "executive")
+    # Onboarding never creates owner accounts.
+    if body.role == "executive":
+        raise HTTPException(status_code=403, detail="Executive accounts can't be created from Employees")
     _validate_and_authorize_grants(user, body.extra_pages)
     supabase = get_supabase()
 
@@ -940,12 +943,16 @@ def set_employee_access(
     same executive-only-grant guardrail as create_employee."""
     require_role_or_grant(user, "employees", "manager", "executive")
     supabase = get_supabase()
-    existing = supabase.table("profiles").select("id").eq("id", employee_id).maybe_single().execute()
+    existing = supabase.table("profiles").select("id, role").eq("id", employee_id).maybe_single().execute()
     if not existing or not existing.data:
         raise HTTPException(status_code=404, detail="Employee not found")
 
     update: dict = {}
-    if body.role is not None:
+    if body.role is not None and body.role != existing.data["role"]:
+        # Executive (owner) access is never handed out or taken away from the
+        # Employees page -- same rule as create_employee.
+        if "executive" in (body.role, existing.data["role"]):
+            raise HTTPException(status_code=403, detail="The Executive role can't be assigned or changed here")
         update["role"] = body.role
     if body.extra_pages is not None:
         if not _profile_extra_pages_supported_check(supabase):

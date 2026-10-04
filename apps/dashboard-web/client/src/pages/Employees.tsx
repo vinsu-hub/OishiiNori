@@ -33,6 +33,62 @@ import {
 } from '@/lib/api';
 import { GRANTABLE_PAGES, EXECUTIVE_ONLY_GRANTS } from '@/lib/permissions';
 
+// Roles offered when onboarding or editing staff. Executive (owner) is
+// deliberately not here -- the backend refuses it from this page too.
+const ONBOARDING_ROLES: { value: UserRole; label: string; who: string; sees: string }[] = [
+  {
+    value: 'employee',
+    label: 'Cashier / Staff',
+    who: 'Counter and floor staff',
+    sees: 'POS Terminal, Table Orders, Order Queue, Kitchen Display, Reservations',
+  },
+  {
+    value: 'kitchen',
+    label: 'Kitchen',
+    who: 'Kitchen crew and the kitchen tablet',
+    sees: 'Kitchen Display and Order Queue only — no POS, no customer slips',
+  },
+  { value: 'stocker', label: 'Stocker', who: 'Receives and counts stock', sees: 'Stock & Inventory only' },
+  { value: 'rider', label: 'Rider', who: 'Delivers orders', sees: 'Delivery only' },
+  {
+    value: 'manager',
+    label: 'Manager',
+    who: 'Runs the shift',
+    sees: 'Everything a cashier has, plus stock, staff, payroll, refunds and reports',
+  },
+];
+
+function RolePicker({
+  value,
+  onChange,
+  labelledBy,
+}: {
+  value: UserRole;
+  onChange: (role: UserRole) => void;
+  labelledBy: string;
+}) {
+  return (
+    <div role="radiogroup" aria-labelledby={labelledBy} className="grid gap-2 sm:grid-cols-2">
+      {ONBOARDING_ROLES.map((r) => (
+        <button
+          key={r.value}
+          type="button"
+          role="radio"
+          aria-checked={value === r.value}
+          onClick={() => onChange(r.value)}
+          className={`rounded-md border-2 p-3 text-left transition ${
+            value === r.value ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted'
+          }`}
+        >
+          <div className="font-semibold">{r.label}</div>
+          <div className="text-xs text-muted-foreground">{r.who}</div>
+          <div className="mt-1 text-xs">{r.sees}</div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function groupGrantablePages(): [string, typeof GRANTABLE_PAGES][] {
   const groups: Record<string, typeof GRANTABLE_PAGES> = {};
   const order: string[] = [];
@@ -410,22 +466,11 @@ export default function Employees() {
               <Label>Full name</Label>
               <Input value={fullName} onChange={(e) => setFullName(e.target.value)} />
             </div>
+            <div className="space-y-1">
+              <Label id="add-role-label">Role — what will this person do?</Label>
+              <RolePicker value={role} onChange={setRole} labelledBy="add-role-label" />
+            </div>
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label>Role</Label>
-                <Select value={role} onValueChange={(v) => setRole(v as UserRole)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="employee">Employee</SelectItem>
-                    <SelectItem value="manager">Manager</SelectItem>
-                    <SelectItem value="executive">Executive</SelectItem>
-                    <SelectItem value="stocker">Stocker</SelectItem>
-                    <SelectItem value="rider">Rider</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
               <div className="space-y-1">
                 <Label>Department</Label>
                 <Select value={department} onValueChange={(v) => setDepartment(v as Department | 'none')}>
@@ -603,19 +648,14 @@ export default function Employees() {
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1">
-              <Label>Role</Label>
-              <Select value={accessRole} onValueChange={(v) => setAccessRole(v as UserRole)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="employee">Employee</SelectItem>
-                  <SelectItem value="manager">Manager</SelectItem>
-                  <SelectItem value="executive">Executive</SelectItem>
-                  <SelectItem value="stocker">Stocker</SelectItem>
-                  <SelectItem value="rider">Rider</SelectItem>
-                </SelectContent>
-              </Select>
+              <Label id="access-role-label">Role</Label>
+              {accessTarget?.role === 'executive' ? (
+                <p className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
+                  Executive (owner) — this role can't be changed here.
+                </p>
+              ) : (
+                <RolePicker value={accessRole} onChange={setAccessRole} labelledBy="access-role-label" />
+              )}
             </div>
             <div className="space-y-1">
               <Label>Additional tab access</Label>

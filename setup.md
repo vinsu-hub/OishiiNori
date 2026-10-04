@@ -148,6 +148,20 @@ Each staff member has their own **employee ID** (e.g. `EMP-30F5`), a **login ema
 3. They're taken straight to **Set your own password**: at least 8 characters, and not the temporary one.
 4. After that they use their own password every time.
 
+## Choosing a role
+
+When adding someone in Employees → **Add employee**, pick the card that matches their job:
+
+| Role | For | Sees |
+|---|---|---|
+| Cashier / Staff | Counter and floor staff | POS Terminal, Table Orders, Order Queue, Kitchen Display, Reservations |
+| Kitchen | Kitchen crew and the kitchen tablet | Kitchen Display and Order Queue only (no POS, no customer slips) |
+| Stocker | Receives and counts stock | Stock & Inventory |
+| Rider | Delivers orders | Delivery |
+| Manager | Runs the shift | Everything a cashier has, plus stock, staff, payroll, refunds and reports |
+
+**Executive (owner)** is never offered here and can't be assigned or removed from the Employees page.
+
 ## Time in / time out
 
 1. Open **https://www.oishiinori.com/staff-clock** on the shared clock device.

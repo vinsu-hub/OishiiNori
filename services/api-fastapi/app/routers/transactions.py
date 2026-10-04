@@ -690,6 +690,9 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
     re-verification happen here; the actual insert/deduction/discount logic
     lives in _create_transaction_row, shared with digital-menu order
     approval."""
+    # The kitchen tablet / kitchen crew never charge sales (tablet lock).
+    if user.role == "kitchen":
+        raise HTTPException(status_code=403, detail="Kitchen accounts can't charge sales")
     supabase = get_supabase()
     existing_id = check_idempotency_key(supabase, body.idempotency_key, "POST /transactions")
     if existing_id:
@@ -1172,6 +1175,8 @@ def void_transaction(
     orders only; anything past that (preparing/ready/completed) must go
     through a Refund request instead (see refunds.py), which an
     admin/executive approves via void_transaction_core directly."""
+    if user.role == "kitchen":
+        raise HTTPException(status_code=403, detail="Kitchen accounts can't void orders")
     supabase = get_supabase()
 
     transaction = _fetch_transaction_with_items(supabase, transaction_id)

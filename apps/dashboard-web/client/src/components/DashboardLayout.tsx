@@ -11,6 +11,8 @@ interface DashboardLayoutProps {
   headerExtra?: React.ReactNode;
 }
 
+const KITCHEN_ALLOWED_PATHS = ['/kitchen-display', '/order-queue', '/help', '/settings'];
+
 function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = React.useState(
     () => typeof window !== 'undefined' && window.matchMedia(query).matches
@@ -27,7 +29,7 @@ function useMediaQuery(query: string): boolean {
 
 export function DashboardLayout({ children, title, headerExtra }: DashboardLayoutProps) {
   const { isAuthenticated, loading, user } = useAuth();
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(
     () => typeof window !== 'undefined' && localStorage.getItem('sidebarCollapsed') === 'true'
@@ -45,6 +47,13 @@ export function DashboardLayout({ children, title, headerExtra }: DashboardLayou
       navigate('/login');
     }
   }, [isAuthenticated, loading, navigate]);
+
+  // Kitchen accounts only ever see Kitchen Display / Order Queue / Help /
+  // Settings -- typing another URL (e.g. /pos) lands back on Kitchen Display.
+  const kitchenBlocked = user?.role === 'kitchen' && !KITCHEN_ALLOWED_PATHS.includes(location);
+  React.useEffect(() => {
+    if (kitchenBlocked) navigate('/kitchen-display');
+  }, [kitchenBlocked, navigate]);
 
   const toggleSidebarCollapsed = () => {
     if (narrow) {
@@ -69,7 +78,7 @@ export function DashboardLayout({ children, title, headerExtra }: DashboardLayou
     );
   }
 
-  if (!isAuthenticated) {
+  if (!isAuthenticated || kitchenBlocked) {
     return null;
   }
 

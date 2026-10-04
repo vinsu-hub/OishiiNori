@@ -150,7 +150,7 @@ export function fetchHealth(): Promise<{ status: string }> {
 export type KitchenStation = 'sushi_bar' | 'sushi_bar_oven' | 'hot_line' | 'salad_cold_bar' | 'cafe_bar';
 export type ProductAvailability = 'available' | 'low_stock' | 'unavailable';
 export type Department = 'kitchen' | 'cafe';
-export type UserRole = 'employee' | 'manager' | 'executive' | 'stocker' | 'rider';
+export type UserRole = 'employee' | 'manager' | 'executive' | 'stocker' | 'rider' | 'kitchen';
 
 export interface ApiProductSize {
   id: string;

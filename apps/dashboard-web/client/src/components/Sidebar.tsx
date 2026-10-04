@@ -84,6 +84,7 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
   // needs the Delivery tab (built in Phase 6; /delivery is a stub until then).
   const isStocker = user.role === 'stocker';
   const isRider = user.role === 'rider';
+  const isKitchen = user.role === 'kitchen';
   // Individually-granted extra tabs (profiles.extra_pages) -- additive on
   // top of the role tiers above, e.g. a cashier granted just 'refund-approval'.
   const hasGrant = (pageKey: string) => user.extraPages.includes(pageKey);
@@ -224,6 +225,16 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
     { icon: Settings, label: 'Settings', href: '/settings' },
   ];
 
+  // Kitchen (crew + the shared Kitchen Tablet account): Kitchen Display and
+  // read-only Order Queue only -- no POS, so the kitchen tablet can't charge
+  // a sale or print a customer slip.
+  const kitchenItems: NavItem[] = [
+    { icon: ChefHat, label: 'Kitchen Display', href: '/kitchen-display' },
+    { icon: ListOrdered, label: 'Order Queue', href: '/order-queue' },
+    { icon: HelpCircle, label: 'Help', href: '/help' },
+    { icon: Settings, label: 'Settings', href: '/settings' },
+  ];
+
   // Rider: the Delivery tab only (built in Phase 6), plus Settings/Help.
   const riderItems: NavItem[] = [
     { icon: Truck, label: 'Delivery', href: '/delivery' },
@@ -333,6 +344,8 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
             </>
           ) : isRider ? (
             riderItems.map((item) => renderNavButton(item, location === item.href, isCollapsed, onNavigate))
+          ) : isKitchen ? (
+            kitchenItems.map((item) => renderNavButton(item, location === item.href, isCollapsed, onNavigate))
           ) : (
             <>
               {beforeStockItems.map((item) => renderNavButton(item, location === item.href, isCollapsed, onNavigate))}

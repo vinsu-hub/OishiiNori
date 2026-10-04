@@ -38,6 +38,8 @@ def _decorate(supabase, rows: list[dict]) -> list[dict]:
 
 @router.post("/refunds", response_model=RefundOut)
 def create_refund(body: RefundCreateRequest, user: CurrentUser = Depends(get_current_user)):
+    if user.role == "kitchen":
+        raise HTTPException(status_code=403, detail="Kitchen accounts can't request refunds")
     supabase = get_supabase()
     tx_result = (
         supabase.table("transactions")

@@ -6,7 +6,7 @@ Use this guide to set up the cashier tablet, kitchen tablet, their printers, and
 
 | Tablet | Printer label | What it prints | When it prints |
 |---|---|---|---|
-| CASHIER — POS Terminal | RECEIPT | Customer order slip | The cashier taps "Print receipt" after "Charge". |
+| CASHIER — POS Terminal | RECEIPT | Customer order slip | The cashier taps "Print order slip" after "Charge". |
 | KITCHEN — Kitchen Display | KITCHEN | Kitchen prep ticket | A kitchen staff member taps "Accept" on an order. |
 
 Both printers are Xprinter XP-58H thermal printers. They use 58 mm paper and can connect by Bluetooth or USB. This guide uses Bluetooth and the free RawBT app.
@@ -78,29 +78,38 @@ Do this for both RawBT and Chrome.
 8. If this was denied, open the Security app, then Permissions, then App chain launch (the name can vary), and allow Chrome to open RawBT.
 9. Set Display, Sleep to Never, or to the longest available time while the tablet is plugged in.
 
-## Turn on printing in the dashboard
+## Lock each tablet to its job, then turn on printing
+
+Each tablet is locked to one job in "Printer Setup" → "This tablet is…". The lock is what guarantees the KITCHEN printer can never print a customer slip, and the cashier tablet can never print kitchen tickets. Only a manager can open Printer Setup.
+
+| Lock | What it allows | What it blocks |
+|---|---|---|
+| Cashier counter | Customer order slips | Kitchen tickets (the toggle on Kitchen Display is removed) |
+| Kitchen | Kitchen tickets, always on | Customer slips ("Print order slip" is replaced by a message) and charging sales on POS |
+| Other device | Nothing unless switched on per page | — |
 
 ### CASHIER: customer order-slip printing
 
-1. On CASHIER, open the dashboard in Chrome.
-2. Open "Printer Setup".
-3. Under "POS Receipt Printer", select "RawBT (Android tablet)".
-4. Tap "Print test receipt".
-5. Check that the sample prints on RECEIPT. If it does, the cashier is ready.
+1. On CASHIER, sign in with a cashier or manager account.
+2. Open "Printer Setup" (a manager signs in for this step).
+3. Under "This tablet is…", tap "Cashier counter".
+4. Under "POS Receipt Printer", select "RawBT (Android tablet)".
+5. Tap "Print test receipt" and check that the sample prints on RECEIPT.
 
-After a real sale, tap "Charge". On the sale-complete screen, tap "Print receipt" once. The printed customer order slip has a large order number. It says "This is not an official receipt"; it is an order slip for the customer.
+After a real sale, tap "Charge". On the sale-complete screen, tap "Print order slip" once. The slip has a large order number and says "This is not an official receipt".
 
 ### KITCHEN: prep-ticket printing
 
-1. On KITCHEN, open the dashboard in Chrome.
-2. Open "Kitchen Display".
-3. Tap "Print tickets on this tablet". It changes to "Printing tickets".
-4. Tap "Test ticket".
-5. Check that the sample prints on KITCHEN.
+1. On KITCHEN, a manager signs in and opens "Printer Setup".
+2. Under "This tablet is…", tap "Kitchen".
+3. Sign out, then sign in with the **Kitchen Tablet** account (its employee ID and password are on the separate login sheet). On first sign-in it asks for a new password; choose one and give it only to kitchen leads.
+4. The tablet opens straight to "Kitchen Display", showing "Kitchen tablet — tickets print here".
+5. Tap "Test ticket" and check that the sample prints on KITCHEN.
+6. Leave the tablet signed in.
 
 When staff tap "Accept", the order moves to preparing and the kitchen ticket prints. If paper jams or a ticket is missing, use "Reprint ticket" on an order that is preparing or ready.
 
-The setting is stored on the device. Do not turn on kitchen printing on another tablet or computer.
+The Kitchen Tablet account can only see Kitchen Display and Order Queue. It cannot open POS, charge sales, void orders, request refunds or print customer slips, even if someone types another address.
 
 ## Set up the TV queue board
 
@@ -113,7 +122,7 @@ The large order number on the customer order slip is the same number shown on th
 ## Daily order flow
 
 1. Cashier takes the order and taps "Charge".
-2. Cashier taps "Print receipt" and gives the order slip to the customer.
+2. Cashier taps "Print order slip" and gives the order slip to the customer.
 3. Customer watches the TV queue board for the large order number.
 4. Kitchen sees the order in "Kitchen Display" and taps "Accept". The KITCHEN ticket prints and the number appears under "Now Preparing".
 5. When the food is ready, kitchen taps "Mark Ready". The number moves to "Now Serving".
@@ -129,6 +138,7 @@ The large order number on the customer order slip is the same number shown on th
 | Printing stopped after a Xiaomi or RawBT update | Open RawBT, reconnect to the correct printer, and check Autostart, No restrictions, background pop-ups, the recents lock, and Chrome permission to open RawBT. Test again. |
 | A kitchen ticket is missing or paper jammed | Fix the paper or jam, then tap "Reprint ticket" on the preparing or ready order. |
 | "Online" appears in "Printer Setup" but no ticket prints | "Online" only means KITCHEN has "Kitchen Display" open with printing on. It does not confirm the printer connection. Tap "Test ticket" and check RawBT. |
+| "Print order slip" is missing and a red message says this is the kitchen tablet | This device is locked as Kitchen (or signed in as Kitchen Tablet). Customer slips only print at the cashier — that's the safeguard working. If this really is the cashier tablet, a manager sets Printer Setup → "This tablet is…" → "Cashier counter". |
 | The customer slip has wrong shop details | In the dashboard, open "Settings", then "Receipt details", and correct the details. Print a test receipt to confirm. |
 
 ## Optional: use USB for the KITCHEN printer

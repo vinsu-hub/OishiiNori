@@ -38,7 +38,7 @@ def _is_valid_ph_phone(raw: str) -> bool:
 # Enums (mirror the DB's Postgres enum / check-constraint values)
 # ---------------------------------------------------------------------------
 
-UserRole = Literal["employee", "manager", "executive", "stocker", "rider"]
+UserRole = Literal["employee", "manager", "executive", "stocker", "rider", "kitchen"]
 DepartmentType = Literal["kitchen", "cafe"]
 KitchenStation = Literal["sushi_bar", "sushi_bar_oven", "hot_line", "salad_cold_bar", "cafe_bar"]
 TransactionStatus = Literal["open", "closed", "voided"]

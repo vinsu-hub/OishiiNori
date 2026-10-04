@@ -101,6 +101,17 @@
 - **Onboarding PDF** (credentials + how-to + roles + table links) was generated to the user's `~/Downloads/Oishii-Nori-Staff-Onboarding.pdf`. It is **not** in the repo and is the only copy of the temp passwords; executives can also see them in Employees → View credentials until each person changes theirs.
 - **Remaining:** each of the 7 logs in once and sets their own password.
 
+### Tablet lock, Kitchen role, role picker (2026-10-05)
+- **Tablet lock:** Printer Setup → "This tablet is…" (Cashier counter / Kitchen / Other), stored per device (`lib/printerPrefs.ts` `getTabletRole`).
+  - Kitchen: ticket printing forced on, customer slips refused (`printReceipt` throws, `ReceiptDialog` shows a message), POS Charge blocked with a banner, Home → Kitchen Display.
+  - Cashier: kitchen-ticket printing forced off, and the toggle is removed.
+- **Kitchen role** (migration **0060**, `alter type user_role add value 'kitchen'`; **the user must run it**):
+  - sidebar shows Kitchen Display, Order Queue (no Void/Refund), Help, Settings
+  - any other URL redirects to `/kitchen-display`
+  - the server refuses `POST /transactions`, void and refund requests for kitchen accounts
+- **Role picker:** Employees → Add employee / Edit access use role cards (Cashier/Staff, Kitchen, Stocker, Rider, Manager). Executive is never offered, and the server refuses creating, promoting to, or demoting an executive.
+- **Remaining:** create the shared "Kitchen Tablet" account (role kitchen) once 0060 is applied.
+
 ### Customer order slip + tablet setup guide (2026-10-04, built with 3 Codex workers via Orca)
 - **Receipt (order slip):** the POS receipt (`components/pos/Receipt.tsx`, both the browser-print and RawBT ESC/POS versions) now prints:
   - shop header and **ORDER SLIP**

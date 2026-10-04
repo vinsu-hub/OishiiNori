@@ -21,7 +21,8 @@ import {
   wrapLine,
 } from '@/lib/escpos';
 import { sendToRawBT } from '@/lib/rawbt';
-import { getReceiptMode } from '@/lib/printerPrefs';
+import { getReceiptMode, KITCHEN_RECEIPT_BLOCKED_MESSAGE, printReceiptAllowed } from '@/lib/printerPrefs';
+import { useAuth } from '@/contexts/AuthContext';
 
 export interface ReceiptLine {
   name: string;
@@ -281,7 +282,9 @@ export function receiptEscpos(
   return p.cut().build();
 }
 
-export function printReceipt(r: ReceiptData): void {
+export function printReceipt(r: ReceiptData, userRole?: string | null): void {
+  // Tablet lock: the kitchen tablet's printer is the KITCHEN one.
+  if (!printReceiptAllowed(userRole)) throw new Error(KITCHEN_RECEIPT_BLOCKED_MESSAGE);
   if (getReceiptMode() === 'rawbt') {
     sendToRawBT(receiptEscpos(r));
     return;
@@ -320,6 +323,8 @@ export function ReceiptDialog({
   onClose: () => void;
 }) {
   const printButtonRef = useRef<HTMLButtonElement>(null);
+  const { user } = useAuth();
+  const canPrint = printReceiptAllowed(user?.role);
   return (
     <Dialog open={receipt !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent
@@ -359,23 +364,29 @@ export function ReceiptDialog({
           <Button className="min-h-11" variant="outline" onClick={onClose}>
             Close
           </Button>
-          <Button
-            ref={printButtonRef}
-            className="min-h-11 text-base"
-            onClick={() => {
-              if (!receipt) return;
-              try {
-                printReceipt(receipt);
-              } catch (e) {
-                toast.error(
-                  e instanceof Error ? e.message : 'Failed to print receipt',
-                );
-              }
-            }}
-          >
-            <Printer aria-hidden="true" />
-            Print order slip
-          </Button>
+          {!canPrint ? (
+            <p className="self-center text-sm font-medium text-destructive">
+              {KITCHEN_RECEIPT_BLOCKED_MESSAGE}
+            </p>
+          ) : (
+            <Button
+              ref={printButtonRef}
+              className="min-h-11 text-base"
+              onClick={() => {
+                if (!receipt) return;
+                try {
+                  printReceipt(receipt, user?.role);
+                } catch (e) {
+                  toast.error(
+                    e instanceof Error ? e.message : 'Failed to print receipt',
+                  );
+                }
+              }}
+            >
+              <Printer aria-hidden="true" />
+              Print order slip
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

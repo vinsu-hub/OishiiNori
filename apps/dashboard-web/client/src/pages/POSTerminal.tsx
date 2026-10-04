@@ -66,6 +66,7 @@ import {
   overrideTableBlock,
   posTableStatus,
 } from '@/lib/api';
+import { getTabletRole } from '@/lib/printerPrefs';
 import { formatCurrency, formatTime12h, formatTimestamp12h } from '@/lib/utils';
 import {
   ReceiptDialog,
@@ -640,8 +641,13 @@ export default function POSTerminal() {
   const cashTotal = Math.round((previewTotal + (orderType === 'delivery' ? selectedDeliveryFee ?? 0 : 0)) * 100) / 100;
   const cashReceivedIsSufficient = Number.isFinite(cashReceivedAmount) && cashReceivedAmount >= cashTotal;
 
+  // Tablet lock: the kitchen tablet (Printer Setup) and kitchen accounts
+  // never charge sales -- the kitchen printer must never print a customer slip.
+  const kitchenLocked = getTabletRole() === 'kitchen' || user?.role === 'kitchen';
+
   const chargeBlockers = useMemo(() => {
     const b: string[] = [];
+    if (kitchenLocked) b.push('Charge sales at the cashier');
     if (cart.length === 0) b.push('Add at least one item');
     if (orderType === 'dine_in' && !tableNumber.trim()) b.push('Pick a table');
     if (tableBlocked) b.push('Table is reserved — manager override required');
@@ -667,6 +673,7 @@ export default function POSTerminal() {
     paymentMethod,
     cardType,
     cashReceivedIsSufficient,
+    kitchenLocked,
   ]);
 
   function addToCart(product: ApiProduct, size: ApiProductSize) {
@@ -998,6 +1005,11 @@ export default function POSTerminal() {
     <DashboardLayout title="POS Terminal" headerExtra={businessDayButton}>
       <div className="relative flex h-full overflow-hidden">
         <div className="flex-1 overflow-auto p-6">
+          {kitchenLocked && (
+            <div role="alert" className="mb-3 rounded-md border border-red-300 bg-red-50 px-4 py-3 text-sm font-medium text-red-900">
+              This is the kitchen tablet. Charge sales at the cashier — customer slips can't print here.
+            </div>
+          )}
           <div className="flex items-center gap-3 mb-3">
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
