@@ -101,6 +101,18 @@
 - **Onboarding PDF** (credentials + how-to + roles + table links) was generated to the user's `~/Downloads/Oishii-Nori-Staff-Onboarding.pdf`. It is **not** in the repo and is the only copy of the temp passwords; executives can also see them in Employees → View credentials until each person changes theirs.
 - **Remaining:** each of the 7 logs in once and sets their own password.
 
+### Pre-launch reset (2026-10-04, launch Tuesday 2026-10-06)
+- Ran `services/api-fastapi/scripts/reset_for_launch.py --apply`, which cleared all demo/test history:
+  - orders: transactions, QR/online orders, deliveries, refunds, business days; order numbers restart
+  - reservations
+  - stock: stock movements cleared; every ingredient and station-item `current_stock` set to 0
+  - HR: attendance + payroll history
+  - other: utility logs, idempotency/rate-limit rows, printer status
+- Kept untouched: menu, recipes, tables, staff accounts, settings, discounts, delivery fees, holidays/pay rules.
+- Full backup (3,346 rows) is at the user's `~/Downloads/oishii-prelaunch-backup-2026-10-04.json`, outside the repo; it contains test customer names/phones.
+- **Consequence:** with zero stock, every item that has a recipe shows **Unavailable** on POS and the customer menu (136 of 212 sizes). **Opening stock must be entered (Receive Shipment / stock count) before Tuesday's service.**
+- The script can be re-run (dry run by default) if test orders are made before launch.
+
 ### Notes for whoever picks this up
 - **`claude-seo` plugin** (third-party, AgriciDaniel/claude-seo, pinned v2.4.0) is installed under `~/.claude/skills/seo*` and `~/.claude/agents/`. Its scripts need `CLAUDE_SEO_PYTHON=/opt/homebrew/bin/python3.12` set on each call — the default `python3` on this Mac is 3.9.
 - **Playwright:** the MCP browser screenshot tool sometimes hangs; `~/.claude/skills/seo/.venv/bin/python3` with `playwright` works as a fallback.
