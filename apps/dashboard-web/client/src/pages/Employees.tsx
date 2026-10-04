@@ -25,6 +25,7 @@ import {
   createEmployee,
   deleteEmployee,
   fetchEmployees,
+  resetEmployeePassword,
   setEmployeeActive,
   setEmployeePin,
   updateEmployeeAccess,
@@ -123,6 +124,25 @@ export default function Employees() {
   const [savingAccess, setSavingAccess] = useState(false);
 
   const [credsTarget, setCredsTarget] = useState<ApiEmployee | null>(null);
+
+  const [resetTarget, setResetTarget] = useState<ApiEmployee | null>(null);
+  const [resetting, setResetting] = useState(false);
+  const [resetResult, setResetResult] = useState<{ name: string; email: string | null; password: string } | null>(null);
+
+  const handleResetPassword = async () => {
+    if (!resetTarget) return;
+    setResetting(true);
+    try {
+      const { temporary_password } = await resetEmployeePassword(resetTarget.id);
+      setResetResult({ name: resetTarget.full_name ?? '', email: resetTarget.email ?? null, password: temporary_password });
+      setResetTarget(null);
+      load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to reset password');
+    } finally {
+      setResetting(false);
+    }
+  };
 
   const [editTarget, setEditTarget] = useState<ApiEmployee | null>(null);
   const [editFullName, setEditFullName] = useState('');
@@ -358,6 +378,11 @@ export default function Employees() {
                     <Button size="sm" variant="outline" onClick={() => setPinTarget(e)}>
                       Set PIN
                     </Button>
+                    {(callerIsExecutive || e.role !== 'executive') && (
+                      <Button size="sm" variant="outline" onClick={() => setResetTarget(e)}>
+                        Reset password
+                      </Button>
+                    )}
                     <Button size="sm" variant="outline" onClick={() => setActiveToggleTarget(e)}>
                       {e.active ? 'Deactivate' : 'Reactivate'}
                     </Button>
@@ -455,11 +480,58 @@ export default function Employees() {
           <div className="space-y-1 text-sm font-mono bg-muted rounded-md p-3">
             <p>Email: {credsTarget?.email || '--'}</p>
             <p>Employee #: {credsTarget?.employee_number || '--'}</p>
-            <p>Password: {credsTarget?.current_password || '--'}</p>
+            <p>
+              Password:{' '}
+              {credsTarget?.current_password ? (
+                <>
+                  {credsTarget.current_password}{' '}
+                  <span className="font-sans text-xs text-muted-foreground">(temporary -- must change on first login)</span>
+                </>
+              ) : (
+                <span className="font-sans text-muted-foreground">Changed by employee (not stored)</span>
+              )}
+            </p>
             <p>Kiosk PIN: {credsTarget?.current_pin || '--'}</p>
           </div>
           <DialogFooter>
             <Button onClick={() => setCredsTarget(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset password: confirm, then show the new temporary password once */}
+      <Dialog open={!!resetTarget} onOpenChange={(open) => !open && setResetTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reset password for {resetTarget?.full_name}?</DialogTitle>
+            <DialogDescription>
+              Their current password stops working. They get a new temporary password and must choose their own the
+              next time they sign in.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setResetTarget(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleResetPassword} disabled={resetting}>
+              {resetting ? 'Resetting...' : 'Reset password'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!resetResult} onOpenChange={(open) => !open && setResetResult(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New temporary password for {resetResult?.name}</DialogTitle>
+            <DialogDescription>Give this to them. They'll be asked to set their own password when they sign in.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1 text-sm font-mono bg-muted rounded-md p-3">
+            {resetResult?.email && <p>Email: {resetResult.email}</p>}
+            <p>Temporary password: {resetResult?.password}</p>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setResetResult(null)}>Done</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -569,12 +641,13 @@ export default function Employees() {
           <DialogHeader>
             <DialogTitle>Employee created</DialogTitle>
             <DialogDescription>
-              These credentials are shown once and cannot be retrieved again -- share them with {created?.full_name} now.
+              Share these with {created?.full_name}. The password is temporary -- they'll be asked to set their own the
+              first time they sign in (with this email or their employee #).
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-1 text-sm font-mono bg-muted rounded-md p-3">
             <p>Email: {created?.email}</p>
-            <p>Password: {created?.default_password}</p>
+            <p>Temporary password: {created?.default_password}</p>
             <p>Kiosk PIN: {created?.default_pin}</p>
             <p>Employee #: {created?.employee_number}</p>
           </div>

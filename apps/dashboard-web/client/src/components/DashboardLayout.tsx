@@ -3,6 +3,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useLocation } from 'wouter';
 import { Header } from '@/components/Header';
 import { Sidebar } from '@/components/Sidebar';
+import { ChangePasswordScreen } from '@/components/ChangePasswordScreen';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -11,7 +12,7 @@ interface DashboardLayoutProps {
 }
 
 export function DashboardLayout({ children, title, headerExtra }: DashboardLayoutProps) {
-  const { isAuthenticated, loading } = useAuth();
+  const { isAuthenticated, loading, user } = useAuth();
   const [, navigate] = useLocation();
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(
@@ -45,6 +46,11 @@ export function DashboardLayout({ children, title, headerExtra }: DashboardLayou
 
   if (!isAuthenticated) {
     return null;
+  }
+
+  // Still on a one-time temporary password: nothing else until it's replaced.
+  if (user?.mustChangePassword) {
+    return <ChangePasswordScreen />;
   }
 
   return (

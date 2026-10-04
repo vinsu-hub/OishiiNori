@@ -77,6 +77,27 @@
 - Until this is deployed, the live dashboard shows the new tables without the room drawing.
 - **Cashier alerts for QR table orders:** Table Orders is now in every cashier's sidebar (was manager/grant-only), with a pending-count badge. New `TableOrderAlertsContext` (mounted inside the router in `App.tsx`) polls pending `dine_in_qr` orders every 20s and, for each new one, plays `playTableOrderBeep()` and shows a persistent toast with **Review** → `/pending-orders`. No alert on Kitchen Display; none for riders/stockers; first load is a silent baseline. Verified with a mocked harness (baseline silent, new order chimes + toasts, Review navigates, kitchen quiet, rider never polls). Cashier still approves before the kitchen (client decision). Client steps are in `setup.md` → "Table QR Ordering".
 
+### Staff onboarding (2026-10-04)
+- **Roster check:** all 7 (Normelita Entereso EMP-3AAC, Mark De Leon EMP-30F5, Ruby May Garcia EMP-917F, Niña Vanessa Centeno EMP-4019, Gia Babierra EMP-F8A2, Gabriella Kazzandra Pajares EMP-0413, Blezzie Alcantara Pecaña EMP-88F7) exist, active, role employee, never signed in.
+- **Fixed:**
+  - `_slugify()` mangled "ñ" → emails `ni.a.vanessa.centeno@` / `blezzie.alcantara.peca.a@`. It now strips accents. `onboard_staff.py` renames those two.
+  - New/reset accounts get a unique temp password (`Nori-xxxx-NN`) and a random PIN instead of shared `oishii1234` / `1234`.
+- **Forced password change:**
+  - Migration `0058_must_change_password.sql` adds `profiles.must_change_password`. **The user must apply it in the Supabase SQL editor** (the local DB password in `.env.local` is out of date, so `apply_0058.py` can't connect).
+  - `DashboardLayout` shows `ChangePasswordScreen` until `POST /me/change-password` clears the flag. That call also nulls `current_password`, so a password the employee chose is never stored in plain text.
+  - `POST /employees/{id}/reset-password` (manager+, executives only for executive accounts).
+  - The forced change is enforced in the UI only; the API still accepts a temp-password session.
+- **Login by employee ID:** public, rate-limited `POST /auth/resolve-login` (`app/routers/login_lookup.py`) maps `EMP-xxxx` → email. `Login.tsx` accepts an ID, an email, or a bare username.
+- **Time clock fixes:**
+  - `kiosk.py`, `/attendance/me` and the attendance holiday lookup used UTC `date.today()`; they now use `today_ph()`.
+  - Night differential missed the part of a shift that starts after midnight (a 01:00–09:00 shift got 0 h); it now gets 5 h.
+  - Verified time in/out for all 7 against the live DB with the local API: wrong PIN → 401, PH date, working → completed, hours computed. Test shifts deleted.
+- **Still to do:**
+  1. Apply 0058.
+  2. Deploy.
+  3. `scripts/onboard_staff.py --apply --out <outside repo>.html` → print the slips, then delete the file.
+  4. Each person logs in once.
+
 ### Notes for whoever picks this up
 - **`claude-seo` plugin** (third-party, AgriciDaniel/claude-seo, pinned v2.4.0) is installed under `~/.claude/skills/seo*` and `~/.claude/agents/`. Its scripts need `CLAUDE_SEO_PYTHON=/opt/homebrew/bin/python3.12` set on each call — the default `python3` on this Mac is 3.9.
 - **Playwright:** the MCP browser screenshot tool sometimes hangs; `~/.claude/skills/seo/.venv/bin/python3` with `playwright` works as a fallback.

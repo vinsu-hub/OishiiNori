@@ -10,7 +10,7 @@ concept exists in this build (locked scope), unlike the SMFC reference.
 """
 
 import bcrypt
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
 from postgrest.exceptions import APIError
@@ -18,6 +18,7 @@ from postgrest.exceptions import APIError
 from app.attendance_utils import auto_close_stale_attendance, compute_attendance_breakdown, hr_table
 from app.auth import _profile_active_supported_check
 from app.deps import get_supabase
+from app.ph_time import today_ph
 from app.rate_limit import client_ip, enforce_rate_limit
 from app.schemas import (
     AttendanceLogResponse,
@@ -37,7 +38,7 @@ def _get_open_attendance(employee_id: str) -> dict | None:
         hr_table("attendance_logs")
         .select("*")
         .eq("employee_id", employee_id)
-        .eq("date", date.today().isoformat())
+        .eq("date", today_ph().isoformat())
         .eq("status", "working")
         .maybe_single()
         .execute()
@@ -50,7 +51,7 @@ def _get_completed_today(employee_id: str) -> dict | None:
         hr_table("attendance_logs")
         .select("id")
         .eq("employee_id", employee_id)
-        .eq("date", date.today().isoformat())
+        .eq("date", today_ph().isoformat())
         .eq("status", "completed")
         .maybe_single()
         .execute()
@@ -145,7 +146,7 @@ def kiosk_clock_in(body: KioskClockInRequest):
                     "employee_id": body.employee_id,
                     "kiosk_id": body.kiosk_id,
                     "clock_in": clock_in_time.isoformat(),
-                    "date": date.today().isoformat(),
+                    "date": today_ph().isoformat(),
                     "status": "working",
                 }
             )

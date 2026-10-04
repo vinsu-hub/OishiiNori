@@ -127,3 +127,29 @@ Each code opens `https://www.oishiinori.com/menu?table=N`, so the order arrives 
 - The kitchen tablet doesn't chime for orders waiting for approval, only once they're approved.
 - An order for a table number that doesn't exist is rejected, and the customer is asked to see a staff member.
 - Orders only go through while the business day is open.
+
+---
+
+# New Staff Onboarding
+
+Each staff member has their own **employee ID** (e.g. `EMP-30F5`), a **login email**, a **temporary password**, and a private **4-digit time-clock PIN**.
+
+## Giving someone their login
+
+- **New hire:** Employees → **Add employee**. The dialog shows their email, employee ID, temporary password and PIN. Write them down for the person.
+- **Forgot password:** Employees → **Reset password** on their row. It shows a new temporary password once.
+- **Forgot PIN:** Employees → **Set PIN**.
+- Executives can see a temporary password again in **View credentials**. Once the employee sets their own password, it shows *"Changed by employee"*. Their own password is never stored where anyone can read it.
+
+## First login (the employee does this)
+
+1. Open **https://www.oishiinori.com/dashboard**.
+2. Sign in with their **employee ID** (or email) and the **temporary password**.
+3. They're taken straight to **Set your own password**: at least 8 characters, and not the temporary one.
+4. After that they use their own password every time.
+
+## Time in / time out
+
+1. Open **https://www.oishiinori.com/staff-clock** on the shared clock device.
+2. Enter **employee ID + PIN**, then tap **Time in** at the start of the shift and **End today's work** at the end.
+3. One shift per day. A shift left open for 16+ hours is closed automatically and flagged for a manager to review.

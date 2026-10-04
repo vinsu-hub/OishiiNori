@@ -49,6 +49,22 @@ def _profile_extra_pages_supported_check(supabase) -> bool:
 _profile_credentials_supported: bool | None = None
 
 
+# Feature detection for migration 0058 (profiles.must_change_password) --
+# same fail-open-until-migrated pattern as above.
+_profile_must_change_supported: bool | None = None
+
+
+def _profile_must_change_supported_check(supabase) -> bool:
+    global _profile_must_change_supported
+    if _profile_must_change_supported is None:
+        try:
+            supabase.table("profiles").select("must_change_password").limit(1).execute()
+            _profile_must_change_supported = True
+        except Exception:
+            _profile_must_change_supported = False
+    return _profile_must_change_supported
+
+
 def _profile_credentials_supported_check(supabase) -> bool:
     global _profile_credentials_supported
     if _profile_credentials_supported is None:

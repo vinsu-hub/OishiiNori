@@ -20,6 +20,7 @@ from app.routers import (
     inventory_movements,
     kiosk,
     kitchen_printer,
+    login_lookup,
     loss_records,
     menu_admin,
     oishi_ai,
@@ -126,6 +127,7 @@ app.include_router(reviews.router)
 app.include_router(inquiries.router)
 app.include_router(applicants.router)
 app.include_router(kitchen_printer.router)
+app.include_router(login_lookup.router)
 
 
 @app.get("/health")

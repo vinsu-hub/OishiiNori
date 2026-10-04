@@ -62,7 +62,9 @@ def _night_window_overlap_hours(start: datetime, end: datetime) -> float:
     local_end = end + PH_UTC_OFFSET
 
     overlap_seconds = 0.0
-    cursor = local_start.replace(hour=0, minute=0, second=0, microsecond=0)
+    # Start from the previous day's window: a shift starting at, say, 01:00
+    # is inside the window that opened at 22:00 the night before.
+    cursor = local_start.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
     while cursor <= local_end:
         window_start = cursor.replace(hour=NIGHT_DIFF_START_HOUR, minute=0, second=0, microsecond=0)
         window_end = window_start + timedelta(hours=(24 - NIGHT_DIFF_START_HOUR) + NIGHT_DIFF_END_HOUR)
@@ -116,7 +118,9 @@ def compute_attendance_breakdown(clock_in_time: datetime, clock_out_time: dateti
     hours_worked = compute_hours_worked(clock_in_time, clock_out_time)
     regular_hours, overtime_hours = split_regular_and_overtime(hours_worked)
     night_diff_hours = compute_night_diff_hours(clock_in_time, clock_out_time)
-    day_scenario, holiday_id = resolve_day_scenario(clock_in_time.date(), is_rest_day)
+    # The PH calendar date the shift started on -- a 7 AM PH clock-in is still
+    # the previous day in UTC, which would look up the wrong holiday.
+    day_scenario, holiday_id = resolve_day_scenario((clock_in_time + PH_UTC_OFFSET).date(), is_rest_day)
     return {
         "hours_worked": hours_worked,
         "regular_hours": regular_hours,

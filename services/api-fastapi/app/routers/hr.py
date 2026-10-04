@@ -1,6 +1,7 @@
 import io
 import re
 import secrets
+import unicodedata
 import zipfile
 from datetime import date, datetime, timezone
 
@@ -15,6 +16,7 @@ from app.auth import (
     _profile_active_supported_check,
     _profile_credentials_supported_check,
     _profile_extra_pages_supported_check,
+    _profile_must_change_supported_check,
     get_current_user,
     require_role,
     require_role_or_grant,
@@ -22,6 +24,7 @@ from app.auth import (
 from app.permissions import EXECUTIVE_ONLY_GRANTS, GRANTABLE_PAGES
 from app.deps import get_supabase
 from app.payroll_pdf import build_payslip_pdf
+from app.ph_time import today_ph
 from app.schemas import (
     AttendanceLogResponse,
     EmployeeAccessUpdate,
@@ -40,16 +43,19 @@ from app.schemas import (
     PayrollOverrideResponse,
     PayrollRecordResponse,
     PayrollSummary,
+    ChangeOwnPasswordRequest,
+    PasswordResetResponse,
     SetPinRequest,
 )
 
 router = APIRouter(tags=["hr"])
 
-# Shared demo credential convention -- a manager-created account behaves the
-# same as a seeded one. JUDGMENT CALL: not specified by the task.
+# The old shared demo password. New and reset accounts now get a unique
+# temporary password (_temp_password) instead; this one is kept only so
+# POST /me/change-password can refuse it as a "new" password.
 _DEFAULT_PASSWORD = "oishii1234"
+# The old shared kiosk PIN; _random_pin() never hands it out again.
 _DEFAULT_PIN = "1234"
-_DEFAULT_PIN_HASH = bcrypt.hashpw(_DEFAULT_PIN.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 _FLAT_RULE = {"first_8hr_pct": 100.0, "ot_addon_pct": 0.0, "night_diff_addon_pct": 0.0}
 
@@ -60,7 +66,7 @@ def get_my_attendance(user: CurrentUser = Depends(get_current_user)):
         hr_table("attendance_logs")
         .select("*")
         .eq("employee_id", user.id)
-        .eq("date", date.today().isoformat())
+        .eq("date", today_ph().isoformat())
         .order("created_at", desc=True)
         .limit(1)
         .maybe_single()
@@ -657,8 +663,31 @@ def list_payroll_audit_log(
 
 
 def _slugify(name: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", ".", name.lower()).strip(".")
+    # Strip accents first so "Niña" becomes "nina", not "ni.a".
+    ascii_name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+    slug = re.sub(r"[^a-z0-9]+", ".", ascii_name.lower()).strip(".")
     return slug or "employee"
+
+
+# No look-alike characters (0/O, 1/l/I), so a temp password read off a
+# printed onboarding slip can be typed correctly the first time.
+_TEMP_PASSWORD_ALPHABET = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+
+def _random_pin() -> str:
+    """4-digit kiosk PIN, never the old shared 1234 or an obvious repeat."""
+    while True:
+        pin = f"{secrets.randbelow(10000):04d}"
+        if pin != _DEFAULT_PIN and len(set(pin)) > 1:
+            return pin
+
+
+def _temp_password() -> str:
+    """One-time onboarding/reset password, e.g. "Nori-k7Qm-28". The
+    employee must replace it on first login (must_change_password)."""
+    chunk = "".join(secrets.choice(_TEMP_PASSWORD_ALPHABET) for _ in range(4))
+    digits = "".join(secrets.choice("23456789") for _ in range(2))
+    return f"Nori-{chunk}-{digits}"
 
 
 def _validate_and_authorize_grants(user: CurrentUser, extra_pages: list[str]) -> None:
@@ -729,7 +758,9 @@ def create_employee(body: EmployeeCreate, user: CurrentUser = Depends(get_curren
     if email is None:
         raise HTTPException(status_code=500, detail="Could not generate a unique login email")
 
-    created = supabase.auth.admin.create_user({"email": email, "password": _DEFAULT_PASSWORD, "email_confirm": True})
+    temp_password = _temp_password()
+    pin = _random_pin()
+    created = supabase.auth.admin.create_user({"email": email, "password": temp_password, "email_confirm": True})
     user_id = created.user.id
 
     employee_number = None
@@ -752,15 +783,17 @@ def create_employee(body: EmployeeCreate, user: CurrentUser = Depends(get_curren
         "position": body.position,
         "pay_rate": body.pay_rate or 0,
         "employee_number": employee_number,
-        "kiosk_pin_hash": _DEFAULT_PIN_HASH,
+        "kiosk_pin_hash": bcrypt.hashpw(pin.encode("utf-8"), bcrypt.gensalt()).decode("utf-8"),
     }
     extra_pages_supported = _profile_extra_pages_supported_check(supabase)
     if extra_pages_supported and body.extra_pages:
         insert_row["extra_pages"] = body.extra_pages
     if _profile_credentials_supported_check(supabase):
         insert_row["email"] = email
-        insert_row["current_password"] = _DEFAULT_PASSWORD
-        insert_row["current_pin"] = _DEFAULT_PIN
+        insert_row["current_password"] = temp_password
+        insert_row["current_pin"] = pin
+    if _profile_must_change_supported_check(supabase):
+        insert_row["must_change_password"] = True
     supabase.table("profiles").insert(insert_row).execute()
 
     select_columns = "id, full_name, role, department, position, pay_rate, employee_number"
@@ -776,9 +809,62 @@ def create_employee(body: EmployeeCreate, user: CurrentUser = Depends(get_curren
     profile = profile_result.data
     profile.setdefault("extra_pages", [])
     profile["email"] = email
-    profile["default_password"] = _DEFAULT_PASSWORD
-    profile["default_pin"] = _DEFAULT_PIN
+    profile["default_password"] = temp_password
+    profile["default_pin"] = pin
     return profile
+
+
+@router.post("/employees/{employee_id}/reset-password", response_model=PasswordResetResponse)
+def reset_employee_password(employee_id: str, user: CurrentUser = Depends(get_current_user)):
+    """Gives the employee a fresh one-time temporary password (forgotten
+    password, or re-onboarding) and makes them set their own on next login."""
+    require_role_or_grant(user, "employees", "manager", "executive")
+    supabase = get_supabase()
+    existing = supabase.table("profiles").select("id, role").eq("id", employee_id).maybe_single().execute()
+    if not existing or not existing.data:
+        raise HTTPException(status_code=404, detail="Employee not found")
+    # A manager resetting an executive's password would be a way into the
+    # executive's account, so only another executive may.
+    if existing.data["role"] == "executive" and user.role != "executive":
+        raise HTTPException(status_code=403, detail="Only an executive can reset an executive's password")
+
+    temp_password = _temp_password()
+    supabase.auth.admin.update_user_by_id(employee_id, {"password": temp_password})
+    update: dict = {}
+    if _profile_credentials_supported_check(supabase):
+        update["current_password"] = temp_password
+    if _profile_must_change_supported_check(supabase):
+        update["must_change_password"] = True
+    if update:
+        supabase.table("profiles").update(update).eq("id", employee_id).execute()
+    return {"temporary_password": temp_password}
+
+
+@router.post("/me/change-password")
+def change_own_password(body: ChangeOwnPasswordRequest, user: CurrentUser = Depends(get_current_user)):
+    """The logged-in user replaces their (temporary) password. Clears
+    must_change_password, and nulls the stored plain-text copy: executives
+    can see a temp password for onboarding, never one the employee chose."""
+    supabase = get_supabase()
+    new_password = body.new_password
+    stored = None
+    if _profile_credentials_supported_check(supabase):
+        row = supabase.table("profiles").select("current_password").eq("id", user.id).maybe_single().execute()
+        stored = row.data.get("current_password") if row and row.data else None
+    if new_password in (_DEFAULT_PASSWORD, stored):
+        raise HTTPException(status_code=400, detail="Choose a new password -- not the temporary one you were given")
+    if new_password.strip() != new_password or len(new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters, with no leading or trailing spaces")
+
+    supabase.auth.admin.update_user_by_id(user.id, {"password": new_password})
+    update: dict = {}
+    if _profile_credentials_supported_check(supabase):
+        update["current_password"] = None
+    if _profile_must_change_supported_check(supabase):
+        update["must_change_password"] = False
+    if update:
+        supabase.table("profiles").update(update).eq("id", user.id).execute()
+    return {"status": "ok"}
 
 
 @router.patch("/employees/{employee_id}/pin")

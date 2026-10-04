@@ -1169,6 +1169,14 @@ class EmployeeCreatedResponse(BaseModel):
     extra_pages: list[str] = Field(default_factory=list)
 
 
+class PasswordResetResponse(BaseModel):
+    temporary_password: str
+
+
+class ChangeOwnPasswordRequest(BaseModel):
+    new_password: str = Field(min_length=8, max_length=72)
+
+
 class SetPinRequest(BaseModel):
     pin: str = Field(min_length=4, max_length=8)
 

@@ -8,6 +8,8 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
   loading: boolean;
+  /** Call after POST /me/change-password succeeds. */
+  markPasswordChanged: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -35,6 +37,14 @@ async function loadUser(authUserId: string, email: string): Promise<User> {
     throw new Error('No profile found for this account. Contact an administrator.');
   }
 
+  // must_change_password (migration 0058) -- same "allowed to fail" posture
+  // as extra_pages above, so login keeps working before it's applied.
+  const { data: flag } = await supabase
+    .from('profiles')
+    .select('must_change_password')
+    .eq('id', authUserId)
+    .maybeSingle();
+
   return {
     id: authUserId,
     name: profile.full_name ?? email.split('@')[0],
@@ -44,6 +54,7 @@ async function loadUser(authUserId: string, email: string): Promise<User> {
     employeeNumber: profile.employee_number,
     avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${email}`,
     extraPages: profile.extra_pages ?? [],
+    mustChangePassword: flag?.must_change_password === true,
   };
 }
 
@@ -98,6 +109,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         login,
         logout,
         loading,
+        markPasswordChanged: () => setUser((u) => (u ? { ...u, mustChangePassword: false } : u)),
       }}
     >
       {children}

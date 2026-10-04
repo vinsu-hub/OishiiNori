@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useLocation } from 'wouter';
 import { toast } from 'sonner';
 import { useAuth } from '@/contexts/AuthContext';
+import { resolveLoginEmail } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -22,7 +23,13 @@ export default function Login() {
     e.preventDefault();
     setSubmitting(true);
     try {
-      const loginEmail = email.includes('@') ? email : `${email}@oishiinori.com`;
+      const identifier = email.trim();
+      // Employee ID (EMP-30F5), full email, or just the part before the @.
+      const loginEmail = /^emp-[0-9a-f]{4}$/i.test(identifier)
+        ? await resolveLoginEmail(identifier)
+        : identifier.includes('@')
+          ? identifier
+          : `${identifier}@oishiinori.com`;
       await login(loginEmail, password);
       navigate('/');
     } catch (err) {
@@ -43,7 +50,7 @@ export default function Login() {
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="email">Username</Label>
+              <Label htmlFor="email">Email or employee ID</Label>
               <Input
                 id="email"
                 type="text"
@@ -51,6 +58,7 @@ export default function Login() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 autoComplete="username"
+                placeholder="e.g. EMP-30F5"
               />
             </div>
             <div className="space-y-2">

@@ -23,6 +23,9 @@ export interface User {
   // Individually-granted extra tabs beyond what `role` alone unlocks -- see
   // lib/permissions.ts's GRANTABLE_PAGES for the valid key set.
   extraPages: string[];
+  // New/reset account still on its one-time temporary password -- the
+  // dashboard shows only the Change Password screen until it's replaced.
+  mustChangePassword: boolean;
 }
 
 export const DEPARTMENT_CONFIG: Record<Department, { name: string; color: string }> = {

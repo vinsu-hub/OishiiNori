@@ -1112,6 +1112,41 @@ export function createEmployee(body: CreateEmployeeRequest): Promise<ApiEmployee
   return request('/employees', { method: 'POST', body: JSON.stringify(body) });
 }
 
+export function resetEmployeePassword(employeeId: string): Promise<{ temporary_password: string }> {
+  return request(`/employees/${employeeId}/reset-password`, { method: 'POST' });
+}
+
+export function changeOwnPassword(newPassword: string): Promise<{ status: string }> {
+  return request('/me/change-password', { method: 'POST', body: JSON.stringify({ new_password: newPassword }) });
+}
+
+/** Employee ID (EMP-xxxx) -> login email, before sign-in (no session yet). */
+export async function resolveLoginEmail(identifier: string): Promise<string> {
+  const response = await fetch(`${API_BASE_URL}/auth/resolve-login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identifier }),
+  });
+  if (response.status === 404) throw new Error('No active employee with that ID');
+  if (response.status === 429) throw new Error('Too many attempts -- wait a minute and try again');
+  if (!response.ok) throw new Error('Could not look up that employee ID');
+  return ((await response.json()) as { email: string }).email;
+}
+
+/** Pulls FastAPI's `detail` out of request()'s "API ... failed: 400 {json}" message. */
+export function apiErrorDetail(err: unknown, fallback: string): string {
+  if (!(err instanceof Error)) return fallback;
+  const json = err.message.slice(err.message.indexOf('{'));
+  try {
+    const detail = (JSON.parse(json) as { detail?: unknown }).detail;
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail) && detail[0]?.msg) return String(detail[0].msg);
+  } catch {
+    /* not JSON */
+  }
+  return err.message || fallback;
+}
+
 export function setEmployeePin(employeeId: string, pin: string): Promise<{ status: string }> {
   return request(`/employees/${employeeId}/pin`, { method: 'PATCH', body: JSON.stringify({ pin }) });
 }
