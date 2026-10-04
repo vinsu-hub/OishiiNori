@@ -1,8 +1,20 @@
 import React, { useCallback, useEffect, useReducer, useRef } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { Clock, User, LogIn, CheckCircle, XCircle, Loader2, Shield } from 'lucide-react';
+import {
+  ArrowLeft,
+  Check,
+  CheckCircle2,
+  Clock3,
+  Delete,
+  KeyRound,
+  LogIn,
+  LogOut,
+  RotateCcw,
+  ShieldCheck,
+  UserRound,
+  WifiOff,
+} from 'lucide-react';
 import { getOrCreateKioskId } from '@/lib/kioskId';
 import { initOfflineQueue } from '@/lib/offlineQueue';
 import {
@@ -19,9 +31,6 @@ declare global {
     toast?: (message: string, type?: 'success' | 'error' | 'info') => void;
   }
 }
-
-// Oishii Nori's kiosk.py has no break endpoints (unlike the SMFC reference
-// this is ported from) -- so this state machine has no ON_BREAK stage.
 type Stage =
   | 'IDLE'
   | 'CONFIRMING'
@@ -31,7 +40,6 @@ type Stage =
   | 'END_CONFIRM'
   | 'END_SUCCESS'
   | 'ALREADY_COMPLETED';
-
 interface State {
   stage: Stage;
   employeeNumber: string;
@@ -41,7 +49,6 @@ interface State {
   busy: boolean;
   error: string | null;
 }
-
 type Action =
   | { type: 'SET_EMPLOYEE_NUMBER'; value: string }
   | { type: 'SET_PIN'; value: string }
@@ -55,8 +62,8 @@ type Action =
   | { type: 'REQUEST_END_WORK' }
   | { type: 'CANCEL_END_WORK' }
   | { type: 'CLOCKED_OUT'; log: AttendanceLog }
+  | { type: 'DEMO_STATE'; stage: Stage; employee: KioskVerifyResult; log: AttendanceLog | null }
   | { type: 'RESET' };
-
 const initialState: State = {
   stage: 'IDLE',
   employeeNumber: '',
@@ -79,12 +86,11 @@ function reducer(state: State, action: Action): State {
       return { ...state, busy: false, error: action.error };
     case 'VERIFIED':
       return { ...state, stage: 'CONFIRMING', busy: false, employee: action.employee, log: action.log, error: null };
-    case 'CONTINUE_FROM_CONFIRM': {
+    case 'CONTINUE_FROM_CONFIRM':
       if (!state.employee) return state;
       if (state.employee.today_status === 'completed') return { ...state, stage: 'ALREADY_COMPLETED' };
       if (state.employee.today_status === 'working') return { ...state, stage: 'ACTIVE_WORK' };
       return { ...state, stage: 'PUNCH_IN' };
-    }
     case 'BUSY':
       return { ...state, busy: true, error: null };
     case 'ACTION_ERROR':
@@ -97,66 +103,141 @@ function reducer(state: State, action: Action): State {
       return { ...state, stage: 'ACTIVE_WORK' };
     case 'CLOCKED_OUT':
       return { ...state, stage: 'END_SUCCESS', busy: false, log: action.log, error: null };
+    case 'DEMO_STATE':
+      return {
+        ...state,
+        stage: action.stage,
+        employee: action.employee,
+        log: action.log,
+        employeeNumber: 'EMP-30F5',
+        pin: '1234',
+      };
     case 'RESET':
       return initialState;
-    default:
-      return state;
   }
 }
+const phTime = (date: Date | string) =>
+  new Intl.DateTimeFormat('en-PH', {
+    timeZone: 'Asia/Manila',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  }).format(new Date(date));
+const shortTime = (date: Date | string | null | undefined) =>
+  date
+    ? new Intl.DateTimeFormat('en-PH', {
+        timeZone: 'Asia/Manila',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      }).format(new Date(date))
+    : '—';
+const phDate = (date: Date) =>
+  new Intl.DateTimeFormat('en-PH', {
+    timeZone: 'Asia/Manila',
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  }).format(date);
+const hoursLabel = (hours: number | null | undefined) =>
+  hours == null ? '—' : `${Math.floor(hours)}h ${Math.round((hours % 1) * 60)}m`;
 
-function formatTime(dateStr: string | null | undefined) {
-  if (!dateStr) return '—';
-  return new Date(dateStr).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true });
+function Stepper({ stage }: { stage: Stage }) {
+  const step = stage === 'IDLE' ? 1 : stage === 'CONFIRMING' ? 2 : 3;
+  return (
+    <div className="kiosk-steps" aria-label={`Step ${step} of 3`}>
+      {['Verify', 'Review', 'Record time'].map((label, index) => (
+        <React.Fragment key={label}>
+          {index > 0 && <span className={step > index ? 'step-line done' : 'step-line'} />}
+          <span className={step >= index + 1 ? 'step active' : 'step'}>
+            <b>{index + 1}</b>
+            <i>{label}</i>
+          </span>
+        </React.Fragment>
+      ))}
+    </div>
+  );
 }
-
-function formatDate(date: Date) {
-  return date.toLocaleDateString('en-PH', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+function NumericKeypad({
+  pin,
+  onChange,
+  disabled,
+}: {
+  pin: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}) {
+  const push = (key: string) =>
+    onChange(key === 'back' ? pin.slice(0, -1) : key === 'clear' ? '' : `${pin}${key}`.slice(0, 8));
+  return (
+    <section className="keypad" aria-label="PIN keypad">
+      <div className="pin-dots" aria-label={`${pin.length} of 4 PIN digits entered`} aria-live="polite">
+        {[0, 1, 2, 3].map((n) => (
+          <span key={n} className={pin.length > n ? 'filled' : ''} />
+        ))}
+      </div>
+      <div className="key-grid">
+        {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
+          <button key={n} type="button" disabled={disabled} onClick={() => push(String(n))}>
+            {n}
+          </button>
+        ))}
+        <button type="button" className="key-clear" disabled={disabled} onClick={() => push('clear')}>
+          Clear
+        </button>
+        <button type="button" disabled={disabled} onClick={() => push('0')}>
+          0
+        </button>
+        <button
+          type="button"
+          className="key-icon"
+          disabled={disabled}
+          onClick={() => push('back')}
+          aria-label="Delete last PIN digit"
+        >
+          <Delete size={22} />
+        </button>
+      </div>
+    </section>
+  );
 }
-
-function hoursLabel(hours: number | null | undefined) {
-  if (hours === null || hours === undefined) return '—';
-  const h = Math.floor(hours);
-  const m = Math.round((hours - h) * 60);
-  return `${h}h ${m}m`;
+function Success({ title, detail, message }: { title: string; detail: string; message: string }) {
+  return (
+    <section className="kiosk-panel success-panel">
+      <span className="success-mark">
+        <CheckCircle2 />
+      </span>
+      <p className="eyebrow">TIME RECORDED</p>
+      <h1>{title}</h1>
+      <strong>{detail}</strong>
+      <p className="panel-copy">{message}</p>
+    </section>
+  );
 }
-
-const IDLE_TIMEOUT_MS = 30_000;
-const SUCCESS_DISMISS_MS = 2_500;
 
 export default function App() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [now, setNow] = React.useState(new Date());
   const kioskId = useRef(getOrCreateKioskId());
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
+  const reset = useCallback(() => dispatch({ type: 'RESET' }), []);
+  const bumpIdleTimer = useCallback(() => {
+    if (idleTimer.current) clearTimeout(idleTimer.current);
+    if (state.stage !== 'IDLE') idleTimer.current = setTimeout(reset, 30_000);
+  }, [state.stage, reset]);
   useEffect(() => {
     initOfflineQueue();
     const interval = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(interval);
   }, []);
-
-  const toast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'info') => {
-    window.toast?.(message, type);
-  }, []);
-
-  const reset = useCallback(() => dispatch({ type: 'RESET' }), []);
-
-  // Any state past IDLE auto-returns to IDLE after 30s of inactivity — the
-  // kiosk is shared, so it must always be ready for the next employee rather
-  // than sit on one person's screen.
-  const bumpIdleTimer = useCallback(() => {
-    if (idleTimer.current) clearTimeout(idleTimer.current);
-    if (state.stage === 'IDLE') return;
-    idleTimer.current = setTimeout(reset, IDLE_TIMEOUT_MS);
-  }, [state.stage, reset]);
-
   useEffect(() => {
     bumpIdleTimer();
     return () => {
       if (idleTimer.current) clearTimeout(idleTimer.current);
     };
   }, [bumpIdleTimer]);
-
   useEffect(() => {
     const handler = () => bumpIdleTimer();
     window.addEventListener('pointerdown', handler);
@@ -166,24 +247,75 @@ export default function App() {
       window.removeEventListener('keydown', handler);
     };
   }, [bumpIdleTimer]);
-
-  // Success screens auto-close after 2-3s regardless of the 30s idle timer.
   useEffect(() => {
     if (state.stage !== 'PUNCH_SUCCESS' && state.stage !== 'END_SUCCESS') return;
-    const timer = setTimeout(reset, SUCCESS_DISMISS_MS);
+    const timer = setTimeout(reset, 2_500);
     return () => clearTimeout(timer);
   }, [state.stage, reset]);
-
   useEffect(() => {
     if (state.stage !== 'ALREADY_COMPLETED') return;
-    const timer = setTimeout(reset, SUCCESS_DISMISS_MS + 1500);
+    const timer = setTimeout(reset, 4_000);
     return () => clearTimeout(timer);
   }, [state.stage, reset]);
-
+  // Development-only screenshot states; this condition is false in a production Vite build.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const demo = new URLSearchParams(window.location.search).get('demo');
+    if (!demo) return;
+    const employee = {
+      id: 'demo-employee',
+      full_name: 'Mika Santos',
+      position: 'Service Crew',
+      today_status:
+        demo === 'completed' ? 'completed' : demo === 'working' || demo === 'end' ? 'working' : 'not_started',
+      log: null,
+    } as KioskVerifyResult;
+    const log = {
+      id: 'demo-log',
+      employee_id: employee.id,
+      kiosk_id: 'demo',
+      clock_in: new Date(Date.now() - 4_920_000).toISOString(),
+      clock_out: null,
+      date: new Date().toISOString().slice(0, 10),
+      hours_worked: demo === 'out-success' ? 1.37 : null,
+      status: demo === 'out-success' ? 'completed' : 'working',
+      auto_closed: false,
+    } as AttendanceLog;
+    const stage: Stage =
+      demo === 'ready'
+        ? 'PUNCH_IN'
+        : demo === 'working'
+          ? 'ACTIVE_WORK'
+          : demo === 'end'
+            ? 'END_CONFIRM'
+            : demo === 'in-success'
+              ? 'PUNCH_SUCCESS'
+              : demo === 'out-success'
+                ? 'END_SUCCESS'
+                : demo === 'completed'
+                  ? 'ALREADY_COMPLETED'
+                  : 'IDLE';
+    if (demo === 'error')
+      dispatch({
+        type: 'VERIFY_ERROR',
+        error: 'We couldn’t verify that Employee ID and PIN. Please check them and try again.',
+      });
+    else
+      dispatch({
+        type: 'DEMO_STATE',
+        stage,
+        employee,
+        log: stage === 'PUNCH_IN' || stage === 'ALREADY_COMPLETED' ? null : log,
+      });
+  }, []);
+  const toast = useCallback(
+    (message: string, type: 'success' | 'error' | 'info' = 'info') => window.toast?.(message, type),
+    [],
+  );
   const handleVerify = async () => {
     const employeeNumber = state.employeeNumber.trim();
     if (!employeeNumber || state.pin.length < 4) {
-      dispatch({ type: 'VERIFY_ERROR', error: 'Enter your employee number and PIN' });
+      dispatch({ type: 'VERIFY_ERROR', error: 'Enter your employee number and 4-digit PIN to continue.' });
       return;
     }
     dispatch({ type: 'VERIFY_START' });
@@ -194,13 +326,11 @@ export default function App() {
       dispatch({ type: 'VERIFY_ERROR', error: err instanceof Error ? err.message : 'Verification failed' });
     }
   };
-
   const handlePunchIn = async () => {
     if (!state.employee) return;
     dispatch({ type: 'BUSY' });
     try {
-      const log = await kioskClockIn(state.employee.id, kioskId.current);
-      dispatch({ type: 'PUNCHED_IN', log });
+      dispatch({ type: 'PUNCHED_IN', log: await kioskClockIn(state.employee.id, kioskId.current) });
     } catch (err) {
       if (err instanceof QueuedOfflineError) {
         toast('Offline — clock-in queued, will sync automatically', 'info');
@@ -224,13 +354,11 @@ export default function App() {
       toast('Failed to clock in', 'error');
     }
   };
-
   const handleClockOut = async () => {
     if (!state.log) return;
     dispatch({ type: 'BUSY' });
     try {
-      const log = await kioskClockOut(state.log.id);
-      dispatch({ type: 'CLOCKED_OUT', log });
+      dispatch({ type: 'CLOCKED_OUT', log: await kioskClockOut(state.log.id) });
     } catch (err) {
       if (err instanceof QueuedOfflineError) {
         toast('Offline — clock-out queued, will sync automatically', 'info');
@@ -244,218 +372,273 @@ export default function App() {
       toast('Failed to clock out', 'error');
     }
   };
-
-  const elapsed = state.log?.clock_in ? now.getTime() - new Date(state.log.clock_in).getTime() : 0;
-  const elapsedH = Math.max(0, Math.floor(elapsed / 3600000)).toString().padStart(2, '0');
-  const elapsedM = Math.max(0, Math.floor((elapsed % 3600000) / 60000)).toString().padStart(2, '0');
-  const elapsedS = Math.max(0, Math.floor((elapsed % 60000) / 1000)).toString().padStart(2, '0');
-
+  const elapsed = state.log?.clock_in ? Math.max(0, now.getTime() - new Date(state.log.clock_in).getTime()) : 0;
+  const elapsedLabel = `${String(Math.floor(elapsed / 3_600_000)).padStart(2, '0')}:${String(Math.floor(elapsed / 60_000) % 60).padStart(2, '0')}:${String(Math.floor(elapsed / 1_000) % 60).padStart(2, '0')}`;
+  const greeting =
+    Number(
+      new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', hour: 'numeric', hourCycle: 'h23' }).format(now),
+    ) < 12
+      ? 'Good morning'
+      : 'Good afternoon';
+  const employeeName = (state.employee?.full_name ?? '').split(' ')[0];
   return (
-    <div className="min-h-screen bg-[--color-background] flex flex-col">
-      <header className="bg-card border-b border-[--color-border] px-6 py-4 shadow-l2-raised">
-        <div className="max-w-2xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full overflow-hidden flex items-center justify-center shadow-l2-raised">
-              <img src="/logo.jpg" alt="Oishii Nori" className="w-full h-full rounded-full object-cover" />
-            </div>
-            <div>
-              <h1 className="font-corp-display text-lg">Employee Attendance</h1>
-              <p className="text-xs text-muted-foreground">Oishii Nori</p>
-            </div>
-          </div>
-          <div className="text-right">
-            <p className="text-2xl font-corp-mono font-bold tabular-nums">
-              {now.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}
-            </p>
-            <p className="text-xs text-muted-foreground">{formatDate(now)}</p>
-          </div>
+    <div className="kiosk-shell">
+      <header className="kiosk-header">
+        <div className="brand">
+          <img src={`${import.meta.env.BASE_URL}logo.jpg`} alt="Oishii Nori" />
+          <span>
+            <b>Oishii Nori</b>
+            <small>Staff Clock</small>
+          </span>
+        </div>
+        <div className="hero-clock" aria-live="polite">
+          <time>{phTime(now)}</time>
+          <span>{phDate(now)} · Philippines</span>
         </div>
       </header>
-
-      <main className="flex-1 max-w-2xl mx-auto w-full p-6">
+      <main className="kiosk-main">
+        <section className="kiosk-intro">
+          <p>EMPLOYEE ATTENDANCE</p>
+          <Stepper stage={state.stage} />
+        </section>
         {state.stage === 'IDLE' && (
-          <Card className="border-l-4 border-l-primary">
-            <CardHeader>
-              <CardTitle className="font-corp-display flex items-center gap-2">
-                <Shield className="w-6 h-6 text-primary" />
-                Employee Attendance
-              </CardTitle>
-              <p className="text-sm text-muted-foreground font-corp-body mt-1">Verify your Employee ID to begin</p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Input
-                label="Employee Number"
-                type="text"
-                value={state.employeeNumber}
-                onChange={(e) => dispatch({ type: 'SET_EMPLOYEE_NUMBER', value: e.target.value })}
-                placeholder="Example: EMP-1001"
-                className="font-corp-mono text-lg"
-                autoFocus
-                onKeyDown={(e) => e.key === 'Enter' && handleVerify()}
-              />
-              <Input
-                label="PIN"
-                type="password"
-                inputMode="numeric"
-                value={state.pin}
-                onChange={(e) => dispatch({ type: 'SET_PIN', value: e.target.value.replace(/\D/g, '').slice(0, 8) })}
-                placeholder="••••"
-                className="font-corp-mono text-lg tracking-[0.4em]"
-                maxLength={8}
-                onKeyDown={(e) => e.key === 'Enter' && handleVerify()}
-              />
-              {state.error && <p className="text-sm text-destructive font-corp-body">{state.error}</p>}
-              <Button
-                variant="primary"
-                size="xl"
-                className="w-full"
-                onClick={handleVerify}
-                disabled={state.busy || !state.employeeNumber || state.pin.length < 4}
-              >
-                {state.busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle className="w-5 h-5" />}
-                <span className="font-corp-display text-lg">Continue</span>
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-
-        {state.stage === 'CONFIRMING' && state.employee && (
-          <Card className="border-l-4 border-l-primary">
-            <CardHeader>
-              <CardTitle className="font-corp-display">Welcome, {state.employee.full_name}</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid grid-cols-1 gap-3 text-sm font-corp-body">
-                <div className="flex justify-between border-b border-[--color-border] pb-2">
-                  <span className="text-muted-foreground">Employee ID</span>
-                  <span className="font-corp-mono">{state.employeeNumber}</span>
-                </div>
-                <div className="flex justify-between border-b border-[--color-border] pb-2">
-                  <span className="text-muted-foreground">Position</span>
-                  <span>{state.employee.position || 'Employee'}</span>
-                </div>
+          <section className="kiosk-panel verify-panel">
+            <div className="panel-heading">
+              <span className="icon-disc">
+                <ShieldCheck />
+              </span>
+              <div>
+                <h1>Clock in or out</h1>
+                <p>Enter your details to begin your shift.</p>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <Button variant="ghost" size="xl" onClick={reset}>
-                  Cancel
-                </Button>
-                <Button variant="primary" size="xl" onClick={() => dispatch({ type: 'CONTINUE_FROM_CONFIRM' })}>
-                  <span className="font-corp-display">Continue</span>
-                </Button>
+            </div>
+            <div className="verify-grid">
+              <div className="id-field">
+                <Input
+                  label="Employee ID"
+                  value={state.employeeNumber}
+                  onChange={(e) => dispatch({ type: 'SET_EMPLOYEE_NUMBER', value: e.target.value.toUpperCase() })}
+                  placeholder="EMP-30F5"
+                  autoCapitalize="characters"
+                  autoFocus
+                  className="kiosk-input font-corp-mono"
+                  onKeyDown={(e) => e.key === 'Enter' && handleVerify()}
+                />
+                <p className="field-help">Your Employee ID is on your staff record.</p>
               </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {state.stage === 'PUNCH_IN' && state.employee && (
-          <Card className="border-l-4 border-l-primary">
-            <CardHeader>
-              <CardTitle className="font-corp-display">
-                Good {now.getHours() < 12 ? 'Morning' : 'Afternoon'}, {state.employee.full_name}!
-              </CardTitle>
-              <p className="text-sm text-muted-foreground font-corp-body">Let's get started.</p>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="text-center p-6 bg-muted/30 rounded-xl">
-                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Current Time</p>
-                <p className="text-3xl font-corp-mono font-bold tabular-nums text-primary">
-                  {now.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}
-                </p>
+              <div>
+                <label className="pin-label">
+                  <KeyRound size={17} /> 4-digit PIN
+                </label>
+                <input
+                  className="sr-only"
+                  aria-label="4-digit PIN"
+                  value={state.pin}
+                  inputMode="none"
+                  onChange={(e) => dispatch({ type: 'SET_PIN', value: e.target.value.replace(/\D/g, '').slice(0, 8) })}
+                  onKeyDown={(e) => e.key === 'Enter' && handleVerify()}
+                />
+                <NumericKeypad
+                  pin={state.pin}
+                  onChange={(value) => dispatch({ type: 'SET_PIN', value })}
+                  disabled={state.busy}
+                />
               </div>
-              {state.error && <p className="text-sm text-destructive font-corp-body text-center">{state.error}</p>}
-              <Button variant="primary" size="xl" className="w-full" onClick={handlePunchIn} disabled={state.busy}>
-                {state.busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <LogIn className="w-5 h-5" />}
-                <span className="font-corp-display text-lg">Punch In</span>
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-
-        {state.stage === 'PUNCH_SUCCESS' && state.log && (
-          <Card className="border-l-4" style={{ borderLeftColor: '#1E7A4C' }}>
-            <CardContent className="p-8 text-center space-y-3">
-              <CheckCircle className="w-16 h-16 mx-auto text-success" />
-              <p className="text-xl font-corp-display font-bold">Punched In Successfully!</p>
-              <p className="text-3xl font-corp-mono font-bold text-primary">{formatTime(state.log.clock_in)}</p>
-              <p className="text-sm text-muted-foreground font-corp-body">Have a productive day!</p>
-            </CardContent>
-          </Card>
-        )}
-
-        {(state.stage === 'ACTIVE_WORK' || state.stage === 'END_CONFIRM') && state.employee && state.log && (
-          <Card className="border-l-4" style={{ borderLeftColor: '#1E7A4C' }}>
-            <CardHeader>
-              <CardTitle className="font-corp-display flex items-center gap-2">
-                <Clock className="w-6 h-6" style={{ color: '#1E7A4C' }} />
-                {state.stage === 'END_CONFIRM' ? "End Today's Work?" : `Good day, ${state.employee.full_name}!`}
-              </CardTitle>
-              <p className="text-sm text-muted-foreground font-corp-body">
-                {state.stage === 'END_CONFIRM' ? 'Please confirm to end your work session.' : 'You are currently clocked in.'}
+            </div>
+            {state.error && (
+              <p className="inline-alert" role="alert">
+                <WifiOff size={18} />
+                {state.error}
               </p>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid grid-cols-2 gap-4 text-center">
-                <div className="p-3 bg-muted/30 rounded-lg">
-                  <p className="text-xs text-muted-foreground font-corp-body">Time In</p>
-                  <p className="font-corp-mono font-bold">{formatTime(state.log.clock_in)}</p>
-                </div>
-                <div className="p-3 bg-muted/30 rounded-lg">
-                  <p className="text-xs text-muted-foreground font-corp-body">
-                    {state.stage === 'END_CONFIRM' ? 'Time Out (now)' : 'Working For'}
-                  </p>
-                  <p className="font-corp-mono font-bold tabular-nums">
-                    {state.stage === 'END_CONFIRM'
-                      ? formatTime(now.toISOString())
-                      : `${elapsedH}:${elapsedM}:${elapsedS}`}
-                  </p>
-                </div>
-              </div>
-              {state.error && <p className="text-sm text-destructive font-corp-body text-center">{state.error}</p>}
-              {state.stage === 'ACTIVE_WORK' ? (
-                <Button variant="outline" size="xl" className="w-full" onClick={() => dispatch({ type: 'REQUEST_END_WORK' })}>
-                  End Today's Work
-                </Button>
+            )}
+            <Button
+              variant="primary"
+              size="xl"
+              className="primary-action"
+              onClick={handleVerify}
+              disabled={state.busy || !state.employeeNumber || state.pin.length < 4}
+            >
+              {state.busy ? (
+                'Checking your details…'
               ) : (
-                <div className="grid grid-cols-2 gap-3">
-                  <Button variant="ghost" size="xl" onClick={() => dispatch({ type: 'CANCEL_END_WORK' })}>
-                    Cancel
-                  </Button>
-                  <Button variant="primary" size="xl" onClick={handleClockOut} disabled={state.busy}>
-                    {state.busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle className="w-5 h-5" />}
-                    Confirm
-                  </Button>
-                </div>
+                <>
+                  Continue <LogIn size={22} />
+                </>
               )}
-            </CardContent>
-          </Card>
+            </Button>
+          </section>
         )}
-
-        {state.stage === 'END_SUCCESS' && state.log && (
-          <Card className="border-l-4" style={{ borderLeftColor: '#1E7A4C' }}>
-            <CardContent className="p-8 text-center space-y-3">
-              <CheckCircle className="w-16 h-16 mx-auto text-success" />
-              <p className="text-xl font-corp-display font-bold">Today's Work Completed!</p>
-              <p className="text-xs text-muted-foreground uppercase tracking-wide">Total Hours</p>
-              <p className="text-3xl font-corp-mono font-bold text-primary">{hoursLabel(state.log.hours_worked)}</p>
-              <p className="text-sm text-muted-foreground font-corp-body">Thank you! Have a great day!</p>
-            </CardContent>
-          </Card>
-        )}
-
-        {state.stage === 'ALREADY_COMPLETED' && state.employee && (
-          <Card className="border-l-4 border-l-primary">
-            <CardContent className="p-8 text-center space-y-3">
-              <User className="w-16 h-16 mx-auto text-muted-foreground/40" />
-              <p className="text-xl font-corp-display font-bold">You're all done for today, {state.employee.full_name}!</p>
-              <p className="text-sm text-muted-foreground font-corp-body">See you on your next shift.</p>
-              <Button variant="ghost" size="lg" onClick={reset}>
-                <XCircle className="w-4 h-4 mr-2" />
-                Done
+        {state.stage === 'CONFIRMING' && state.employee && (
+          <section className="kiosk-panel decision-panel">
+            <span className="icon-disc">
+              <UserRound />
+            </span>
+            <p className="eyebrow">IDENTITY VERIFIED</p>
+            <h1>Welcome, {employeeName}.</h1>
+            <p className="panel-copy">Please make sure this is your profile before continuing.</p>
+            <dl className="identity-list">
+              <div>
+                <dt>Employee ID</dt>
+                <dd>{state.employeeNumber}</dd>
+              </div>
+              <div>
+                <dt>Position</dt>
+                <dd>{state.employee.position || 'Employee'}</dd>
+              </div>
+            </dl>
+            <div className="button-row">
+              <Button variant="ghost" size="xl" onClick={reset}>
+                Not me
               </Button>
-            </CardContent>
-          </Card>
+              <Button variant="primary" size="xl" onClick={() => dispatch({ type: 'CONTINUE_FROM_CONFIRM' })}>
+                Yes, continue <Check size={21} />
+              </Button>
+            </div>
+          </section>
+        )}
+        {state.stage === 'PUNCH_IN' && state.employee && (
+          <section className="kiosk-panel decision-panel">
+            <p className="eyebrow">READY TO START</p>
+            <h1>
+              {greeting}, {employeeName}.
+            </h1>
+            <p className="panel-copy">
+              You’re clocking in as <b>{state.employee.position || 'Employee'}</b>.
+            </p>
+            <div className="time-callout">
+              <span>YOUR TIME IN</span>
+              <strong>{shortTime(now)}</strong>
+              <small>{phDate(now)}</small>
+            </div>
+            {state.error && (
+              <p className="inline-alert" role="alert">
+                {state.error}
+              </p>
+            )}
+            <Button
+              variant="primary"
+              size="xl"
+              className="primary-action"
+              onClick={handlePunchIn}
+              disabled={state.busy}
+            >
+              {state.busy ? (
+                'Punching in…'
+              ) : (
+                <>
+                  Punch in now <LogIn size={22} />
+                </>
+              )}
+            </Button>
+            <button className="text-action" onClick={reset}>
+              Cancel
+            </button>
+          </section>
+        )}
+        {state.stage === 'PUNCH_SUCCESS' && state.log && (
+          <Success
+            title="You’re clocked in!"
+            detail={`Time in: ${shortTime(state.log.clock_in)}`}
+            message="Have a smooth shift. This screen will reset shortly."
+          />
+        )}
+        {state.stage === 'ACTIVE_WORK' && state.employee && state.log && (
+          <section className="kiosk-panel work-panel">
+            <p className="eyebrow">
+              <span className="live-dot" />
+              WORKING NOW
+            </p>
+            <h1>Have a good shift, {employeeName}.</h1>
+            <div className="elapsed">
+              <span>TIME AT WORK</span>
+              <strong>{elapsedLabel}</strong>
+              <small>Started at {shortTime(state.log.clock_in)}</small>
+            </div>
+            <div className="work-details">
+              <span>
+                <b>Time in</b>
+                {shortTime(state.log.clock_in)}
+              </span>
+              <span>
+                <b>Today</b>
+                {phDate(now)}
+              </span>
+            </div>
+            {state.error && (
+              <p className="inline-alert" role="alert">
+                {state.error}
+              </p>
+            )}
+            <Button
+              variant="outline"
+              size="xl"
+              className="end-action"
+              onClick={() => dispatch({ type: 'REQUEST_END_WORK' })}
+            >
+              End today’s work <LogOut size={22} />
+            </Button>
+          </section>
+        )}
+        {state.stage === 'END_CONFIRM' && state.employee && state.log && (
+          <section className="kiosk-panel decision-panel end-panel">
+            <p className="eyebrow">END SHIFT</p>
+            <h1>Ready to clock out?</h1>
+            <p className="panel-copy">Please review today’s time before confirming.</p>
+            <div className="end-summary">
+              <span>
+                <b>Time in</b>
+                {shortTime(state.log.clock_in)}
+              </span>
+              <span>
+                <b>Time out</b>
+                {shortTime(now)}
+              </span>
+              <strong>
+                {elapsedLabel}
+                <small>worked so far</small>
+              </strong>
+            </div>
+            <div className="button-row">
+              <Button variant="ghost" size="xl" onClick={() => dispatch({ type: 'CANCEL_END_WORK' })}>
+                <ArrowLeft size={21} /> Keep working
+              </Button>
+              <Button variant="primary" size="xl" onClick={handleClockOut} disabled={state.busy}>
+                {state.busy ? (
+                  'Ending shift…'
+                ) : (
+                  <>
+                    Confirm <Check size={21} />
+                  </>
+                )}
+              </Button>
+            </div>
+          </section>
+        )}
+        {state.stage === 'END_SUCCESS' && state.log && (
+          <Success
+            title="Today’s work is complete."
+            detail={`Total time: ${hoursLabel(state.log.hours_worked)}`}
+            message="Thank you for your work. Take care on the way home."
+          />
+        )}
+        {state.stage === 'ALREADY_COMPLETED' && state.employee && (
+          <section className="kiosk-panel decision-panel">
+            <span className="icon-disc muted">
+              <Clock3 />
+            </span>
+            <p className="eyebrow">ALL SET FOR TODAY</p>
+            <h1>You’ve already clocked out.</h1>
+            <p className="panel-copy">Thanks, {employeeName}. We’ll return to the start screen shortly.</p>
+            <Button variant="ghost" size="lg" onClick={reset}>
+              <RotateCcw size={18} /> Start over
+            </Button>
+          </section>
         )}
       </main>
+      <footer className="kiosk-footer">
+        <span>Shared staff kiosk</span>
+        <span>For assistance, please ask a manager.</span>
+      </footer>
     </div>
   );
 }
