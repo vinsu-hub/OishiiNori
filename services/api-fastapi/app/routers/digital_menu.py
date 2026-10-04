@@ -201,6 +201,21 @@ def submit_digital_order(body: CreateDigitalOrderRequest, request: Request):
     if body.order_channel == "dine_in_qr":
         if not body.table_number:
             raise HTTPException(status_code=400, detail="Table number is required for a QR table order")
+        # A table QR is just a URL, so an old/mistyped code or a hand-edited
+        # ?table=99 must not create an order for a table that doesn't exist.
+        known_table = (
+            supabase.table("tables")
+            .select("id")
+            .eq("pos_table_number", body.table_number)
+            .eq("active", True)
+            .limit(1)
+            .execute()
+        )
+        if not known_table.data:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Table {body.table_number} isn't one of our tables -- please ask a staff member for help",
+            )
     else:
         if not body.customer_name or not body.customer_phone:
             raise HTTPException(status_code=400, detail="Name and phone number are required")

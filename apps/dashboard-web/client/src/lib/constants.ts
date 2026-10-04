@@ -21,3 +21,11 @@ export function daysAgoIsoPH(days: number): string {
 export function toIsoDatePH(isoTimestamp: string): string {
   return new Date(new Date(isoTimestamp).getTime() + PH_UTC_OFFSET_MS).toISOString().slice(0, 10);
 }
+
+// Public customer menu on the production domain (landing-page rewrites /menu
+// to the customer-menu app). A table's QR code is this + ?table=<pos_table_number>.
+export const CUSTOMER_MENU_URL = 'https://www.oishiinori.com/menu';
+
+export function tableOrderUrl(tableNumber: number): string {
+  return `${CUSTOMER_MENU_URL}?table=${tableNumber}`;
+}

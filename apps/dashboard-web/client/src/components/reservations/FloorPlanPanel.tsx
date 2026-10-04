@@ -36,8 +36,9 @@ import {
   voidTransaction,
 } from '@/lib/api';
 import { formatCurrency, formatTime12h, formatTimestamp12h } from '@/lib/utils';
-import { POLL_INTERVAL_MS, todayIsoPH } from '@/lib/constants';
+import { POLL_INTERVAL_MS, tableOrderUrl, todayIsoPH } from '@/lib/constants';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
+import { DINING_ROOM_SIZE, DINING_ROOM_ZONE, DiningRoomBackdrop } from './DiningRoomBackdrop';
 
 const RESERVATION_PREP_BUFFER_MIN = 15; // must match reservations.py
 
@@ -405,6 +406,10 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
         maxX = Math.max(maxX, x + w + 48);
         maxY = Math.max(maxY, y + h + 56);
       }
+      if (zone === DINING_ROOM_ZONE) {
+        // The drawn room sets the canvas; tables dragged past it still extend it.
+        return { w: Math.max(DINING_ROOM_SIZE.w, maxX), h: Math.max(DINING_ROOM_SIZE.h, maxY) };
+      }
       return { w: Math.max(CANVAS_W, maxX), h: maxY + (zone === entranceZone ? 40 : 0) };
     },
     [tablesByZone, posOverride, entranceZone]
@@ -614,7 +619,16 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
         style={{ left: x, top: y, width: w, height: h }}
       >
         <ChairNubs shape={t.shape} />
-        <span className="font-semibold">{t.label}</span>
+        {t.pos_table_number != null ? (
+          <>
+            <span className="text-2xl font-extrabold leading-none" aria-label={t.label}>
+              {t.pos_table_number}
+            </span>
+            {t.label !== `Table ${t.pos_table_number}` && <span className="font-semibold">{t.label}</span>}
+          </>
+        ) : (
+          <span className="font-semibold">{t.label}</span>
+        )}
         <span className="text-[10px] font-medium opacity-70">{seatLabel(t)}</span>
         {d.openTxn && (
           <>
@@ -714,8 +728,9 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
                       className="relative"
                       style={{ width: dims.w, height: dims.h }}
                     >
+                      {zone === DINING_ROOM_ZONE && <DiningRoomBackdrop />}
                       {(tablesByZone[zone] ?? []).map(renderTable)}
-                      {zone === entranceZone && (
+                      {zone === entranceZone && zone !== DINING_ROOM_ZONE && (
                         <EntranceMarker x={dims.w - 150} y={dims.h - 52} />
                       )}
                     </div>
@@ -844,6 +859,20 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
                   {detail.floor_group}
                 </DialogDescription>
               </DialogHeader>
+              {detail.pos_table_number != null && (
+                <p className="-mt-2 text-xs text-muted-foreground">
+                  QR ordering link:{' '}
+                  <a
+                    className="break-all text-primary underline-offset-2 hover:underline"
+                    href={tableOrderUrl(detail.pos_table_number)}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {tableOrderUrl(detail.pos_table_number)}
+                  </a>{' '}
+                  · print it from the <span className="font-medium">Table QR Codes</span> tab
+                </p>
+              )}
 
               {detailDerived.openTxn ? (
                 <div className="space-y-2 text-sm">

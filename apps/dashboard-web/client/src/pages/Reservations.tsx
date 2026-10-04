@@ -7,14 +7,16 @@ import { Button } from '@/components/ui/button';
 import { RequestsPanel } from '@/components/reservations/RequestsPanel';
 import { TablesPanel } from '@/components/reservations/TablesPanel';
 import { FloorPlanPanel } from '@/components/reservations/FloorPlanPanel';
+import { TableQrSheet } from '@/components/reservations/TableQrSheet';
 import { todayIsoPH } from '@/lib/constants';
 
-type ReservationsTab = 'requests' | 'tables' | 'floor-plan';
+type ReservationsTab = 'requests' | 'tables' | 'floor-plan' | 'qr-codes';
 
 function resolveTab(search: string): ReservationsTab {
   const tab = new URLSearchParams(search).get('tab');
   if (tab === 'tables') return 'tables';
   if (tab === 'floor-plan') return 'floor-plan';
+  if (tab === 'qr-codes') return 'qr-codes';
   return 'requests';
 }
 
@@ -44,10 +46,11 @@ export default function Reservations() {
               <TabsTrigger value="requests">Requests</TabsTrigger>
               <TabsTrigger value="tables">Tables</TabsTrigger>
               <TabsTrigger value="floor-plan">Floor Plan</TabsTrigger>
+              <TabsTrigger value="qr-codes">Table QR Codes</TabsTrigger>
             </TabsList>
           </Tabs>
 
-          {activeTab !== 'tables' && (
+          {activeTab !== 'tables' && activeTab !== 'qr-codes' && (
             <div className="flex items-end gap-2">
               <div className="space-y-1">
                 <label className="text-xs text-muted-foreground">Day</label>
@@ -67,7 +70,7 @@ export default function Reservations() {
           )}
         </div>
 
-        {!isToday && activeTab !== 'tables' && (
+        {!isToday && activeTab !== 'tables' && activeTab !== 'qr-codes' && (
           <p className="text-xs text-amber-600">
             Viewing {dayLabel(selectedDay)} — live table state (open orders, overdue) only shows for today.
           </p>
@@ -84,6 +87,7 @@ export default function Reservations() {
         {/* Mounted only when active -- the SVG canvas + 1s tick shouldn't run
             in the background on the other tabs. */}
         {activeTab === 'floor-plan' && <FloorPlanPanel selectedDay={selectedDay} />}
+        {activeTab === 'qr-codes' && <TableQrSheet />}
       </div>
     </DashboardLayout>
   );
