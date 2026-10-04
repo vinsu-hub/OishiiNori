@@ -101,6 +101,21 @@
 - **Onboarding PDF** (credentials + how-to + roles + table links) was generated to the user's `~/Downloads/Oishii-Nori-Staff-Onboarding.pdf`. It is **not** in the repo and is the only copy of the temp passwords; executives can also see them in Employees → View credentials until each person changes theirs.
 - **Remaining:** each of the 7 logs in once and sets their own password.
 
+### Launch manuals, demo accounts, data gaps (2026-10-05)
+- **Demo/test accounts deactivated:** Cashier, Rider, QA Employee, QA Manager, QA Executive (`active=false`, kept for history). The API refuses them (403). Live checks now use Joe's account or throwaway accounts.
+- **Live journey as Joe:** all 16 dashboard pages at tablet and phone sizes; no console errors, no failed requests, no horizontal scroll.
+- **Manuals** (generated from live data to the user's `~/Downloads`, not in the repo):
+  - `Oishii-Nori-Executive-Manual.pdf` (17 pp): briefing, launch checklist, role/access matrix, roster (no passwords), feature list, how POS deducts stock, stock system + opening stock, daily running order, decisions, appendices.
+  - `Oishii-Nori-Staff-Manual.pdf` (16 pp): role guides A–E and 8 login slips with live temp passwords + PINs, each verified to log in.
+- **Launch data gaps** (listed in the Executive Manual):
+  - 71 of 207 sellable sizes have no recipe (all Takoyaki, Sides, Maki Rolls, Donburi, Curry, Gohan, oBento, Salmon Box)
+  - 109 of 112 ingredients have no unit cost
+  - 0 reorder thresholds
+  - 13 ingredients and 59 station items need review
+  - 0 consumption rules
+  - Senior discount is 15% (law: 20% + VAT-exempt); Student is marked VAT-exempt
+- **Brag:** `brag-output/brag-plan.md` is the finalized /brag Step-2 plan (app-store tone, 20 s, 6 scenes: QR → cashier chime → Accept/ticket → stock deducts → TV Now Serving → floor plan logo). Not rendered.
+
 ### Tablet lock, Kitchen role, role picker (2026-10-05)
 - **Tablet lock:** Printer Setup → "This tablet is…" (Cashier counter / Kitchen / Other), stored per device (`lib/printerPrefs.ts` `getTabletRole`).
   - Kitchen: ticket printing forced on, customer slips refused (`printReceipt` throws, `ReceiptDialog` shows a message), POS Charge blocked with a banner, Home → Kitchen Display.

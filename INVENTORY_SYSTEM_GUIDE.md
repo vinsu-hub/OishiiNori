@@ -3,6 +3,8 @@
 **Audience:** kitchen staff, cashiers, managers, executives
 **Last updated:** 2026-08-25 (this update: Station Items' New Stocks/Beginning/Usage/Ending are now auto-computed from sales, deliveries, and losses — the same automation Recipe Ingredients already had — with a per-field "flag as wrong" correction instead of manual typing; see sections 2 and 4)
 
+> **2026-10-05 note — current names and access.** Stock pages are now manager/executive/stocker (others by an "Stock & Inventory" tab grant). In the sidebar they are **Overview, Ingredient Stock** (was "Recipe Ingredients"), **Station Items, Receive Shipment, Alerts, Variance Log, EOD Stock Count (VS)**; Table Orders replaced "Pending Orders". Recipes are edited in **Menu Editing → item → Recipe**. Opening stock after the pre-launch reset is loaded through **Receive Shipment**. The Executive Manual PDF (generated outside the repo) has the up-to-date walkthrough.
+
 This guide explains how inventory now works in the Oishii Nori Command Suite — what the system already tracks automatically, and the few manual touchpoints that remain. The short version: **you no longer need to count every ingredient by hand every day.** The system watches stock levels continuously as sales happen, and manual counting is now a periodic accuracy check, not the primary way stock gets tracked.
 
 ---
