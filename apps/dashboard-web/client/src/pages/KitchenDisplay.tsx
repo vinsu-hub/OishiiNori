@@ -349,8 +349,8 @@ export default function KitchenDisplay() {
   return (
     <DashboardLayout title="Kitchen Display">
       <div className="p-6 space-y-4">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-          <div className="grid flex-1 grid-cols-2 gap-3 xl:mr-4 xl:grid-cols-4">
+        <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
+          <div className="grid flex-1 grid-cols-2 gap-3 md:grid-cols-4 2xl:mr-4">
             {KITCHEN_STATUSES.map((status) => (
               <Card key={status}>
                 <CardContent className="py-3">

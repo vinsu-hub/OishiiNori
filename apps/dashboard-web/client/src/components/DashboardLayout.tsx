@@ -11,6 +11,20 @@ interface DashboardLayoutProps {
   headerExtra?: React.ReactNode;
 }
 
+function useMediaQuery(query: string): boolean {
+  const [matches, setMatches] = React.useState(
+    () => typeof window !== 'undefined' && window.matchMedia(query).matches
+  );
+  React.useEffect(() => {
+    const mql = window.matchMedia(query);
+    const onChange = () => setMatches(mql.matches);
+    onChange();
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  }, [query]);
+  return matches;
+}
+
 export function DashboardLayout({ children, title, headerExtra }: DashboardLayoutProps) {
   const { isAuthenticated, loading, user } = useAuth();
   const [, navigate] = useLocation();
@@ -18,6 +32,13 @@ export function DashboardLayout({ children, title, headerExtra }: DashboardLayou
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(
     () => typeof window !== 'undefined' && localStorage.getItem('sidebarCollapsed') === 'true'
   );
+  // Tablet widths (the Xiaomi POS/kitchen tablets, especially in portrait):
+  // a full 256px sidebar squeezes POS's menu grid and the floor plan to a
+  // sliver, so start collapsed to icons there. Tapping the toggle still
+  // expands it for this session; the saved desktop preference is untouched.
+  const narrow = useMediaQuery('(max-width: 1199px)');
+  const [narrowExpanded, setNarrowExpanded] = React.useState(false);
+  const effectiveCollapsed = narrow ? !narrowExpanded : sidebarCollapsed;
 
   React.useEffect(() => {
     if (!loading && !isAuthenticated) {
@@ -26,6 +47,10 @@ export function DashboardLayout({ children, title, headerExtra }: DashboardLayou
   }, [isAuthenticated, loading, navigate]);
 
   const toggleSidebarCollapsed = () => {
+    if (narrow) {
+      setNarrowExpanded((prev) => !prev);
+      return;
+    }
     setSidebarCollapsed((prev) => {
       const next = !prev;
       localStorage.setItem('sidebarCollapsed', String(next));
@@ -56,7 +81,7 @@ export function DashboardLayout({ children, title, headerExtra }: DashboardLayou
   return (
     <div className="flex h-screen bg-background">
       <Sidebar
-        collapsed={sidebarCollapsed}
+        collapsed={effectiveCollapsed}
         onToggleCollapse={toggleSidebarCollapsed}
         mobileOpen={mobileNavOpen}
         onCloseMobile={() => setMobileNavOpen(false)}

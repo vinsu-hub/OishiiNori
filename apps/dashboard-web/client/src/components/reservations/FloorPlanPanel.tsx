@@ -51,14 +51,15 @@ const ZOOM_MAX = 1.5;
 const ZOOM_STEP = 0.1;
 const ZOOM_KEY = 'floorplan-zoom';
 
-function readZoom(): number {
+function readZoom(): number | null {
   try {
-    const v = Number(sessionStorage.getItem(ZOOM_KEY));
-    if (v >= ZOOM_MIN && v <= ZOOM_MAX) return v;
+    const raw = sessionStorage.getItem(ZOOM_KEY);
+    const v = Number(raw);
+    if (raw !== null && v >= ZOOM_MIN && v <= ZOOM_MAX) return v;
   } catch {
     /* private mode / storage disabled */
   }
-  return 1;
+  return null;
 }
 
 // Display-only minimum footprint so the label + seat count + order info fit.
@@ -253,7 +254,10 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
   const [switchTableOpen, setSwitchTableOpen] = useState(false);
   const [switchTableChoice, setSwitchTableChoice] = useState('');
   const [switchingTable, setSwitchingTable] = useState(false);
-  const [zoom, setZoom] = useState<number>(readZoom);
+  const [zoom, setZoom] = useState<number>(() => readZoom() ?? 1);
+  // No zoom chosen yet this session: fit the room to the screen width once
+  // the tables load (the drawn dining room is taller/wider than a tablet).
+  const fittedRef = useRef(readZoom() !== null);
   const [activeZone, setActiveZone] = useState<string | null>(null);
 
   // Optimistic positions during a drag, keyed by table id.
@@ -416,6 +420,16 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
   );
 
   const unverifiedCount = useMemo(() => tables.filter((t) => t.needs_layout_review).length, [tables]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (fittedRef.current || !el || zones.length === 0) return;
+    fittedRef.current = true;
+    const widest = Math.max(...zones.map((z) => zoneDims(z).w));
+    // 32px = the canvas wrapper's p-4 padding on both sides.
+    const fit = Math.floor(((el.clientWidth - 32) / widest) * 20) / 20;
+    setZoom(Math.min(1, Math.max(ZOOM_MIN, fit)));
+  }, [zones, zoneDims]);
 
   function jumpToZone(zone: string) {
     setActiveZone(zone);

@@ -1316,7 +1316,7 @@ export default function POSTerminal() {
           </div>
           {orderType === 'dine_in' && (
             <Select value={tableNumber} onValueChange={setTableNumber} disabled={!!addonTo}>
-              <SelectTrigger className="w-full h-8 text-sm font-bold bg-red-600 text-white border-red-600 hover:bg-red-700 focus:ring-red-600">
+              <SelectTrigger className="w-full h-8 text-sm font-bold bg-red-600 text-white border-red-600 hover:bg-red-700 focus:ring-red-600 data-[placeholder]:text-white [&_svg]:text-white [&_svg]:opacity-90">
                 <SelectValue placeholder="Pick a table" />
               </SelectTrigger>
               <SelectContent>
