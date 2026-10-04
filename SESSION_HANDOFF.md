@@ -116,6 +116,7 @@
   - New **Sarah Jane** (`sarahjane@oishiinori.com`, EXEC-002) created directly (Employees can't create executives).
   - Both use the client-chosen password, set without a forced change.
   - `admin` / `admin123` no longer works. QA Executive is untouched.
+- **Settings → Change password** for every account. A normal change requires the current password, verified server-side with a Supabase password grant; the forced first-login change doesn't. Rate-limited to 10 per 10 minutes per user.
 - **Fixed:** `app/permissions.py` GRANTABLE_PAGES was missing `printer-setup`, `applicants` and `inquiries`. The dashboard offered them, so any Edit access save that included one failed with 400.
 
 ### Customer order slip + tablet setup guide (2026-10-04, built with 3 Codex workers via Orca)

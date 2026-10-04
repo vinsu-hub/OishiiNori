@@ -1116,8 +1116,13 @@ export function resetEmployeePassword(employeeId: string): Promise<{ temporary_p
   return request(`/employees/${employeeId}/reset-password`, { method: 'POST' });
 }
 
-export function changeOwnPassword(newPassword: string): Promise<{ status: string }> {
-  return request('/me/change-password', { method: 'POST', body: JSON.stringify({ new_password: newPassword }) });
+/** currentPassword is required for a normal change from Settings; the forced
+ * first-login change (still on a temporary password) omits it. */
+export function changeOwnPassword(newPassword: string, currentPassword?: string): Promise<{ status: string }> {
+  return request('/me/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ new_password: newPassword, current_password: currentPassword ?? null }),
+  });
 }
 
 /** Employee ID (EMP-xxxx) -> login email, before sign-in (no session yet). */

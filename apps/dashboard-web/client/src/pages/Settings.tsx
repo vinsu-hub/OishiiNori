@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
-import { fetchBusinessSettings, updateBusinessSettings } from '@/lib/api';
+import { apiErrorDetail, changeOwnPassword, fetchBusinessSettings, updateBusinessSettings } from '@/lib/api';
 
 const WEEKDAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -47,6 +47,8 @@ export default function Settings() {
           </CardContent>
         </Card>
 
+        <ChangePasswordCard />
+
         {(user?.role === 'manager' || user?.role === 'executive') && <ReceiptDetailsCard />}
 
         {user?.role === 'executive' && (
@@ -57,6 +59,90 @@ export default function Settings() {
         )}
       </div>
     </DashboardLayout>
+  );
+}
+
+const MIN_PASSWORD_LENGTH = 8;
+
+/** Every account can change its own login password here. The server checks
+ * the current password, so a signed-in tablet left unattended can't be used
+ * to take the account over. */
+function ChangePasswordCard() {
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const tooShort = next.length > 0 && next.length < MIN_PASSWORD_LENGTH;
+  const mismatch = confirm.length > 0 && confirm !== next;
+  const canSave = current.length > 0 && next.length >= MIN_PASSWORD_LENGTH && confirm === next && !saving;
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    if (!canSave) return;
+    setSaving(true);
+    try {
+      await changeOwnPassword(next, current);
+      toast.success('Password changed -- use it the next time you sign in.');
+      setCurrent('');
+      setNext('');
+      setConfirm('');
+    } catch (err) {
+      toast.error(apiErrorDetail(err, 'Could not change your password'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Card className="max-w-xl">
+      <CardHeader>
+        <CardTitle className="font-corp-display">Change password</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleSave} className="space-y-3">
+          <div className="space-y-1">
+            <Label htmlFor="current-password">Current password</Label>
+            <Input
+              id="current-password"
+              type="password"
+              autoComplete="current-password"
+              value={current}
+              onChange={(e) => setCurrent(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="settings-new-password">New password</Label>
+            <Input
+              id="settings-new-password"
+              type="password"
+              autoComplete="new-password"
+              value={next}
+              onChange={(e) => setNext(e.target.value)}
+              aria-invalid={tooShort}
+            />
+            <p className={`text-xs ${tooShort ? 'text-destructive' : 'text-muted-foreground'}`}>
+              At least {MIN_PASSWORD_LENGTH} characters. Don't share it with anyone.
+            </p>
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="settings-confirm-password">Confirm new password</Label>
+            <Input
+              id="settings-confirm-password"
+              type="password"
+              autoComplete="new-password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              aria-invalid={mismatch}
+            />
+            {mismatch && <p className="text-xs text-destructive">Passwords don't match.</p>}
+          </div>
+          <Button type="submit" disabled={!canSave}>
+            {saving ? 'Saving...' : 'Change password'}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
   );
 }
 

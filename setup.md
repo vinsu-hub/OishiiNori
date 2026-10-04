@@ -162,6 +162,10 @@ When adding someone in Employees → **Add employee**, pick the card that matche
 
 **Executive (owner)** is never offered here and can't be assigned or removed from the Employees page.
 
+## Changing your password later
+
+Anyone can change their own password at any time: **Settings → Change password**. Enter your current password, then the new one twice. If you've forgotten your password, ask a manager for **Reset password** in Employees instead.
+
 ## Time in / time out
 
 1. Open **https://www.oishiinori.com/staff-clock** on the shared clock device.

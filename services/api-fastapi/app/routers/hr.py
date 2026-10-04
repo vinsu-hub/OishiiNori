@@ -1,4 +1,5 @@
 import io
+import os
 import re
 import secrets
 import unicodedata
@@ -6,6 +7,7 @@ import zipfile
 from datetime import date, datetime, timezone
 
 import bcrypt
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from postgrest.exceptions import APIError
@@ -24,6 +26,7 @@ from app.auth import (
 from app.permissions import EXECUTIVE_ONLY_GRANTS, GRANTABLE_PAGES
 from app.deps import get_supabase
 from app.payroll_pdf import build_payslip_pdf
+from app.rate_limit import enforce_rate_limit
 from app.ph_time import today_ph
 from app.schemas import (
     AttendanceLogResponse,
@@ -843,13 +846,44 @@ def reset_employee_password(employee_id: str, user: CurrentUser = Depends(get_cu
     return {"temporary_password": temp_password}
 
 
+def _password_is_correct(email: str, password: str) -> bool:
+    """Checks a password against Supabase Auth itself (a password grant)
+    rather than anything stored here -- passwords are only ever held there."""
+    try:
+        r = httpx.post(
+            f"{os.environ['SUPABASE_URL'].rstrip('/')}/auth/v1/token?grant_type=password",
+            headers={"apikey": os.environ["SUPABASE_SECRET_KEY"]},
+            json={"email": email, "password": password},
+            timeout=10,
+        )
+    except httpx.HTTPError:
+        raise HTTPException(status_code=503, detail="Couldn't check your current password -- try again")
+    return r.status_code == 200
+
+
 @router.post("/me/change-password")
 def change_own_password(body: ChangeOwnPasswordRequest, user: CurrentUser = Depends(get_current_user)):
-    """The logged-in user replaces their (temporary) password. Clears
-    must_change_password, and nulls the stored plain-text copy: executives
-    can see a temp password for onboarding, never one the employee chose."""
+    """The logged-in user replaces their password: the forced first-login
+    change from a temporary password, or a normal change from Settings, which
+    must confirm the current password so an unattended signed-in tablet can't
+    be used to take the account over. Clears must_change_password and nulls the
+    stored plain-text copy: executives can see a temp password for onboarding,
+    never one the employee chose."""
     supabase = get_supabase()
+    enforce_rate_limit(supabase, f"change-password:{user.id}", window_seconds=600, limit=10)
     new_password = body.new_password
+    forced = False
+    if _profile_must_change_supported_check(supabase):
+        flag = supabase.table("profiles").select("must_change_password").eq("id", user.id).maybe_single().execute()
+        forced = bool(flag and flag.data and flag.data.get("must_change_password"))
+    if not forced:
+        if not body.current_password:
+            raise HTTPException(status_code=400, detail="Enter your current password")
+        email = supabase.auth.admin.get_user_by_id(user.id).user.email
+        if not email or not _password_is_correct(email, body.current_password):
+            raise HTTPException(status_code=400, detail="Current password is incorrect")
+        if new_password == body.current_password:
+            raise HTTPException(status_code=400, detail="Choose a password different from your current one")
     stored = None
     if _profile_credentials_supported_check(supabase):
         row = supabase.table("profiles").select("current_password").eq("id", user.id).maybe_single().execute()

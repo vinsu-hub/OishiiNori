@@ -1175,6 +1175,9 @@ class PasswordResetResponse(BaseModel):
 
 class ChangeOwnPasswordRequest(BaseModel):
     new_password: str = Field(min_length=8, max_length=72)
+    # Required for a normal change from Settings; not needed for the forced
+    # first-login change (the user has just signed in with the temp password).
+    current_password: str | None = Field(default=None, max_length=72)
 
 
 class SetPinRequest(BaseModel):
