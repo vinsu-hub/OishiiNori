@@ -8,6 +8,7 @@ import { Loader2, Printer, Receipt as ReceiptIcon, AlertTriangle, RefreshCw } fr
 import { fetchKitchenPrinterStatus, type KitchenPrinterStatus } from '@/lib/api';
 import { formatDateTime12h } from '@/lib/utils';
 import { printReceipt, type ReceiptData } from '@/components/pos/Receipt';
+import { getReceiptMode, setReceiptMode, type ReceiptMode } from '@/lib/printerPrefs';
 
 const POLL_MS = 15_000;
 // The bridge reports every poll cycle (default 20s, kitchen-print-bridge/.env
@@ -62,6 +63,12 @@ export default function PrinterSetup() {
   const [status, setStatus] = useState<KitchenPrinterStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [testPrinting, setTestPrinting] = useState(false);
+  const [receiptMode, setReceiptModeState] = useState<ReceiptMode>(getReceiptMode);
+
+  const changeReceiptMode = (mode: ReceiptMode) => {
+    setReceiptMode(mode);
+    setReceiptModeState(mode);
+  };
 
   const load = useCallback(() => {
     fetchKitchenPrinterStatus()
@@ -82,7 +89,11 @@ export default function PrinterSetup() {
     setTestPrinting(true);
     try {
       printReceipt({ ...SAMPLE_RECEIPT, openedAt: new Date().toISOString() });
-      toast.success('Sent to the print dialog -- pick your receipt printer there.');
+      toast.success(
+        receiptMode === 'rawbt'
+          ? 'Sent to RawBT -- the receipt should print now.'
+          : 'Sent to the print dialog -- pick your receipt printer there.'
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to open the print dialog');
     } finally {
@@ -105,7 +116,10 @@ export default function PrinterSetup() {
                 <Printer className="w-5 h-5" aria-hidden="true" />
                 Kitchen Ticket Printer
               </CardTitle>
-              <CardDescription>The XP-58H next to the kitchen, driven by kitchen-print-bridge on its own machine.</CardDescription>
+              <CardDescription>
+                The XP-58H in the kitchen -- printed from the kitchen tablet (Android, via RawBT) or by
+                kitchen-print-bridge on a Windows machine.
+              </CardDescription>
             </div>
             <Button variant="outline" size="sm" onClick={load} disabled={loading}>
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
@@ -126,7 +140,7 @@ export default function PrinterSetup() {
                   <span className="text-sm text-muted-foreground">
                     {status?.last_heartbeat_at
                       ? `Last seen ${formatDateTime12h(status.last_heartbeat_at)}`
-                      : "This bridge has never reported in -- it may not be running, or hasn't been configured yet."}
+                      : 'Never reported in -- turn on "This tablet prints kitchen tickets" on the kitchen tablet, or start the bridge.'}
                   </span>
                 </div>
 
@@ -155,10 +169,16 @@ export default function PrinterSetup() {
                 )}
 
                 <div className="text-sm text-muted-foreground border-t pt-3">
-                  This status is reported by the bridge itself -- this page can't reach that machine
-                  directly. To connect, reconfigure, or test the printer's port, run{' '}
-                  <code className="rounded bg-muted px-1 py-0.5">python bridge.py --setup</code> on the
-                  machine next to the printer (see <code className="rounded bg-muted px-1 py-0.5">kitchen-print-bridge/README.md</code>).
+                  <p>
+                    <strong>Android kitchen tablet:</strong> "Online" means Kitchen Display is open with
+                    printing turned on. RawBT doesn't report back, so this can't confirm the printer itself
+                    is connected -- use Test ticket on Kitchen Display to check that.
+                  </p>
+                  <p className="mt-2">
+                    <strong>Windows bridge:</strong> to connect or test the printer's port, run{' '}
+                    <code className="rounded bg-muted px-1 py-0.5">python bridge.py --setup</code> on the
+                    machine next to the printer. Never use both for the same printer -- tickets would print twice.
+                  </p>
                 </div>
               </>
             )}
@@ -171,14 +191,32 @@ export default function PrinterSetup() {
               <ReceiptIcon className="w-5 h-5" aria-hidden="true" />
               POS Receipt Printer
             </CardTitle>
-            <CardDescription>Prints from this browser's own print dialog after a sale -- there's no persistent connection to check.</CardDescription>
+            <CardDescription>The receipt printer at the cashier. This setting only applies to the device you're on now.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
+            <div className="inline-flex rounded-md border p-1" role="group" aria-label="Receipt print mode on this device">
+              <Button
+                size="sm"
+                variant={receiptMode === 'rawbt' ? 'default' : 'ghost'}
+                aria-pressed={receiptMode === 'rawbt'}
+                onClick={() => changeReceiptMode('rawbt')}
+              >
+                RawBT (Android tablet)
+              </Button>
+              <Button
+                size="sm"
+                variant={receiptMode === 'browser' ? 'default' : 'ghost'}
+                aria-pressed={receiptMode === 'browser'}
+                onClick={() => changeReceiptMode('browser')}
+              >
+                Print dialog
+              </Button>
+            </div>
             <p className="text-sm text-muted-foreground">
-              This uses whichever printer is selected in this device's print dialog -- make sure the
-              58mm receipt printer is set up as this device's printer (or its default) before relying
-              on it during service. Use the button below to send a sample receipt through the exact
-              same path a real sale uses.
+              {receiptMode === 'rawbt'
+                ? 'Receipts go straight to the RawBT app, which prints on the Bluetooth printer chosen in RawBT -- no dialog. Pair the printer and set it up in RawBT first.'
+                : "Receipts open this device's print dialog -- pick the 58mm receipt printer there (or make it the default)."}{' '}
+              The button below prints a sample through the exact same path a real sale uses.
             </p>
             <Button onClick={handleTestPrint} disabled={testPrinting}>
               {testPrinting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ReceiptIcon className="w-4 h-4" />}

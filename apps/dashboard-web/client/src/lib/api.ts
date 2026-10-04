@@ -2050,3 +2050,13 @@ export interface KitchenPrinterStatus {
 export function fetchKitchenPrinterStatus(): Promise<KitchenPrinterStatus> {
   return request('/kitchen-printer/status');
 }
+
+/** Reported by a kitchen tablet printing through RawBT (Kitchen Display),
+ * the same endpoint kitchen-print-bridge reports to. */
+export function postKitchenPrinterHeartbeat(body: {
+  status: 'ok' | 'error';
+  printed_order_number?: number | null;
+  error_message?: string | null;
+}): Promise<KitchenPrinterStatus> {
+  return request('/kitchen-printer/heartbeat', { method: 'POST', body: JSON.stringify(body) });
+}

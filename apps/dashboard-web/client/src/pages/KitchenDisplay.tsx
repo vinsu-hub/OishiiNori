@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Progress } from '@/components/ui/progress';
-import { CalendarDays, Volume2, VolumeX } from 'lucide-react';
+import { CalendarDays, Printer, Volume2, VolumeX } from 'lucide-react';
 import { BundleFulfillmentChecklist } from '@/components/kitchen/BundleFulfillmentChecklist';
 import { LogExtraUsageDialog } from '@/components/kitchen/LogExtraUsageDialog';
 import { useAuth } from '@/contexts/AuthContext';
@@ -21,8 +21,18 @@ import {
   fetchDigitalOrders,
   fetchProducts,
   fetchTransactions,
+  postKitchenPrinterHeartbeat,
   updateKitchenStatus,
 } from '@/lib/api';
+import {
+  SAMPLE_KITCHEN_INDEX,
+  SAMPLE_KITCHEN_ORDER,
+  kitchenTicketEscpos,
+  type TicketOrder,
+  type TicketProductIndex,
+} from '@/lib/kitchenTicket';
+import { sendToRawBT } from '@/lib/rawbt';
+import { getKitchenPrintOnAccept, setKitchenPrintOnAccept } from '@/lib/printerPrefs';
 import { POLL_INTERVAL_MS, toIsoDatePH, todayIsoPH } from '@/lib/constants';
 import { formatTimestamp12h } from '@/lib/utils';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
@@ -125,6 +135,9 @@ export default function KitchenDisplay() {
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [soundOn, setSoundOn] = useState(true);
+  // Per-device: only the kitchen tablet paired with the ticket printer turns
+  // this on. Tickets print when an order is accepted (see handleAdvance).
+  const [printOn, setPrintOn] = useState(getKitchenPrintOnAccept);
   const seenQueuedIdsRef = useRef<Set<string> | null>(null);
   const seenOverdueIdsRef = useRef<Set<string>>(new Set());
 
@@ -180,6 +193,15 @@ export default function KitchenDisplay() {
 
   useVisiblePolling(load, POLL_INTERVAL_MS);
 
+  // Lets Printer Setup show this tablet as the kitchen printer's host. It
+  // only proves the page is open with printing on -- RawBT doesn't report
+  // whether the print itself succeeded.
+  const reportHeartbeat = useCallback(() => {
+    if (!printOn) return;
+    postKitchenPrinterHeartbeat({ status: 'ok' }).catch(() => {});
+  }, [printOn]);
+  useVisiblePolling(reportHeartbeat, POLL_INTERVAL_MS);
+
   const sizeIndex = useMemo(() => {
     const map = new Map<string, { product: ApiProduct; size: ApiProductSize }>();
     for (const product of products) {
@@ -189,6 +211,33 @@ export default function KitchenDisplay() {
     }
     return map;
   }, [products]);
+
+  const ticketIndex: TicketProductIndex = useMemo(() => {
+    const map: TicketProductIndex = new Map();
+    sizeIndex.forEach(({ product, size }, sizeId) => map.set(sizeId, { name: product.name, sizeLabel: size.size_label }));
+    return map;
+  }, [sizeIndex]);
+
+  /** Must run synchronously inside a tap -- Chrome only opens RawBT from a user gesture. */
+  function printTicket(order: TicketOrder, index: TicketProductIndex = ticketIndex): boolean {
+    try {
+      sendToRawBT(kitchenTicketEscpos(order, index));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Failed to print ticket';
+      toast.error(message);
+      postKitchenPrinterHeartbeat({ status: 'error', error_message: message }).catch(() => {});
+      return false;
+    }
+    postKitchenPrinterHeartbeat({ status: 'ok', printed_order_number: order.order_number }).catch(() => {});
+    return true;
+  }
+
+  function togglePrinting() {
+    const next = !printOn;
+    setKitchenPrintOnAccept(next);
+    setPrintOn(next);
+    toast.success(next ? 'This tablet will print a ticket when an order is accepted.' : 'Ticket printing turned off on this tablet.');
+  }
 
   const transactionById = useMemo(() => {
     const map = new Map<string, ApiTransaction>();
@@ -284,6 +333,8 @@ export default function KitchenDisplay() {
   async function handleAdvance(order: ApiTransaction) {
     const next = NEXT_STATUS[order.kitchen_status];
     if (!next) return;
+    // Print first, while still inside the tap (see printTicket).
+    if (next === 'preparing' && printOn) printTicket(order);
     setUpdatingId(order.id);
     try {
       await updateKitchenStatus(order.id, next);
@@ -342,6 +393,29 @@ export default function KitchenDisplay() {
                 ))}
               </SelectContent>
             </Select>
+            <Button
+              className="min-h-10"
+              variant={printOn ? 'default' : 'outline'}
+              aria-pressed={printOn}
+              onClick={togglePrinting}
+              title="Print a kitchen ticket through RawBT whenever an order is accepted on this tablet"
+            >
+              <Printer className="w-4 h-4" aria-hidden="true" />
+              {printOn ? 'Printing tickets' : 'Print tickets on this tablet'}
+            </Button>
+            {printOn && (
+              <Button
+                className="min-h-10"
+                variant="outline"
+                onClick={() => {
+                  if (printTicket({ ...SAMPLE_KITCHEN_ORDER, opened_at: new Date().toISOString() }, SAMPLE_KITCHEN_INDEX)) {
+                    toast.success('Test ticket sent to RawBT.');
+                  }
+                }}
+              >
+                Test ticket
+              </Button>
+            )}
             <Button
               size="icon"
               variant="outline"
@@ -523,6 +597,12 @@ export default function KitchenDisplay() {
                             onClick={() => handleAdvance(order)}
                           >
                             {blockedByBundle ? 'Fulfill bundle first' : ACTION_LABEL[order.kitchen_status]}
+                          </Button>
+                        )}
+                        {printOn && (order.kitchen_status === 'preparing' || order.kitchen_status === 'ready') && (
+                          <Button className="w-full" size="sm" variant="outline" onClick={() => printTicket(order)}>
+                            <Printer className="w-4 h-4" aria-hidden="true" />
+                            Reprint ticket
                           </Button>
                         )}
                       </CardContent>

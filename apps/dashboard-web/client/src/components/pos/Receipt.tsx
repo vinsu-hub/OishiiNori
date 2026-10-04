@@ -1,8 +1,12 @@
 import React, { useRef } from 'react';
 import { Printer } from 'lucide-react';
+import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { formatCurrency, formatTimestamp12h } from '@/lib/utils';
+import { EscPos, PAPER_WIDTH_CHARS, columns, wrapLine } from '@/lib/escpos';
+import { sendToRawBT } from '@/lib/rawbt';
+import { getReceiptMode } from '@/lib/printerPrefs';
 
 export interface ReceiptLine {
   name: string;
@@ -88,8 +92,62 @@ const RECEIPT_CSS = `
   .receipt hr { border: 0; border-top: 1px dashed #000; margin: 6px 0; }
 `;
 
-/** Prints through a hidden iframe: no popup for the browser to block, no app-wide print CSS. */
+/** Same receipt as receiptHtml(), as raw ESC/POS for RawBT on an Android
+ * tablet -- prints as crisp text in one tap instead of a rasterized page
+ * through Android's print dialog. */
+export function receiptEscpos(r: ReceiptData, width = PAPER_WIDTH_CHARS): Uint8Array {
+  const divider = '-'.repeat(width);
+  const money = (n: number) => formatCurrency(n);
+  const p = new EscPos();
+  const rows = (left: string, right: string) => {
+    for (const line of columns(left, right, width)) p.line(line);
+  };
+
+  p.align('center').bold(true).size('tall').line('OISHII NORI').size('normal').bold(false).line('Thank you!');
+  p.line(divider).line('Your order number');
+  p.bold(true).size('large').line(r.orderNumber != null ? `#${r.orderNumber}` : '--').size('normal').bold(false);
+  const type = r.orderType ? ORDER_TYPE_LABEL[r.orderType] ?? r.orderType : '';
+  p.line(`${type}${r.tableNumber != null ? ` - Table ${r.tableNumber}` : ''}`);
+  p.line(formatTimestamp12h(r.openedAt));
+  p.align('left').line(divider);
+
+  for (const l of r.lines) {
+    rows(`${l.quantity}x ${l.name}`, money(l.unitPrice * l.quantity));
+    for (const a of l.addons) rows(`  + ${a.quantity}x ${a.name}`, money(a.unitPrice * a.quantity));
+  }
+  p.line(divider);
+  if (r.discountAmount > 0) rows('Discount', `-${money(r.discountAmount)}`);
+  if (r.deliveryFee > 0) rows('Delivery fee', money(r.deliveryFee));
+  if (r.taxAmount > 0) rows('Tax (incl.)', money(r.taxAmount));
+  p.bold(true);
+  rows('TOTAL', money(r.totalAmount));
+  p.bold(false);
+  if (r.paymentMethod) rows('Paid via', r.paymentMethod.replace(/_/g, ' '));
+
+  if (r.delivery) {
+    p.line(divider);
+    for (const line of wrapLine('Deliver to: ', `${r.delivery.customerName} ${r.delivery.phone}`, width)) p.line(line);
+    const address = [r.delivery.address, r.delivery.barangay].filter(Boolean).join(', ');
+    if (address) for (const line of wrapLine('', address, width)) p.line(line);
+  }
+  p.line(divider).align('center');
+  for (const line of wrapLine('', 'Please keep this ticket until your order is served.', width)) p.line(line);
+  return p.cut().build();
+}
+
+/** Prints the receipt the way this device is set up to (Printer Setup):
+ * RawBT on an Android tablet, otherwise the browser's print dialog. Call
+ * from a click handler -- RawBT can only be launched from a user gesture. */
 export function printReceipt(r: ReceiptData): void {
+  if (getReceiptMode() === 'rawbt') {
+    sendToRawBT(receiptEscpos(r));
+    return;
+  }
+  printReceiptViaBrowser(r);
+}
+
+/** Prints through a hidden iframe: no popup for the browser to block, no app-wide print CSS. */
+function printReceiptViaBrowser(r: ReceiptData): void {
   const iframe = document.createElement('iframe');
   iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
   document.body.appendChild(iframe);
@@ -146,7 +204,14 @@ export function ReceiptDialog({ receipt, onClose }: { receipt: ReceiptData | nul
           <Button
             ref={printButtonRef}
             className="min-h-11 text-base"
-            onClick={() => receipt && printReceipt(receipt)}
+            onClick={() => {
+              if (!receipt) return;
+              try {
+                printReceipt(receipt);
+              } catch (e) {
+                toast.error(e instanceof Error ? e.message : 'Failed to print receipt');
+              }
+            }}
           >
             <Printer aria-hidden="true" />
             Print receipt

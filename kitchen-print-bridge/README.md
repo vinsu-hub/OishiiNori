@@ -10,6 +10,12 @@ dashboard itself.
 It polls, like everything else in this project (no websockets), every 20 seconds by default --
 same interval the Kitchen Display frontend already uses.
 
+> **Android tablets: you don't need this bridge.** Python can't run as a background service on
+> Android, so Android tablets print through the free **RawBT** app instead, straight from the
+> dashboard. See [Android tablets (RawBT)](#android-tablets-rawbt) below. Use this bridge only
+> when the kitchen printer is attached to a Windows/Linux machine. **Never run the bridge and
+> RawBT printing for the same printer** -- every ticket would print twice.
+
 ## 1. First-time setup
 
 ### 1a. Create a dedicated backend account for the bridge
@@ -122,6 +128,67 @@ A ticket prints once, the first time an order's `kitchen_status` is seen as `pre
 right after kitchen staff hit Accept on the Kitchen Display) -- never on arrival at `queued`,
 and never again once printed, even if it stays in `preparing` for a while or the bridge restarts
 (tracked in `printed_tickets.db`, a small local SQLite file).
+
+## Android tablets (RawBT)
+
+The restaurant setup is two Android tablets, each with its own XP-58H:
+
+| Tablet | Printer | Prints | When |
+|---|---|---|---|
+| Cashier (POS Terminal) | RECEIPT | Customer receipt | Cashier taps **Print receipt** after a sale |
+| Kitchen (Kitchen Display) | KITCHEN | Prep ticket | Kitchen taps **Accept** on an order |
+
+The dashboard builds the ESC/POS bytes itself (`apps/dashboard-web/client/src/lib/escpos.ts`,
+`kitchenTicket.ts` -- a line-for-line port of `ticket.py`) and hands them to RawBT, which owns
+the Bluetooth connection. Chrome only lets a page open another app from a tap, so the kitchen
+ticket prints on **Accept**, not automatically when the order is charged.
+
+Setup, on each tablet:
+
+1. **Identify the printer.** Printer off, hold **FEED**, switch on -- it prints a self-test page
+   with its Bluetooth name and PIN. Label the two printers KITCHEN and RECEIPT.
+2. **Pair it.** Android Settings -> Connected devices -> Pair new device. PIN is usually `0000`
+   or `1234`.
+3. **Install RawBT** from the Play Store. In RawBT: connection = Bluetooth, pick this tablet's
+   printer, driver = ESC/POS, paper 58mm. Use RawBT's own test print to confirm.
+4. **Open the dashboard in Chrome** (Add to Home screen) and log in.
+   - Cashier tablet: **Printer Setup** -> POS Receipt Printer -> **RawBT (Android tablet)** ->
+     Print test receipt.
+   - Kitchen tablet: **Kitchen Display** -> **Print tickets on this tablet** -> **Test ticket**.
+5. **Keep it awake.** Exclude RawBT and Chrome from battery optimisation; keep the screen on.
+
+Both settings are stored per device, so other phones/PCs opening the same pages never print.
+Printer Setup shows the kitchen tablet as Online while Kitchen Display is open with printing
+on -- RawBT doesn't report back, so that can't confirm the printer itself. A **Reprint ticket**
+button on Preparing/Ready orders covers a jam or a missed print.
+
+### Xiaomi tablets (HyperOS/MIUI)
+
+The client's tablets are Xiaomi. Xiaomi's system kills background apps and blocks app-to-app
+launches more aggressively than stock Android. Any of these can make printing fail silently, so
+do all of them on **both** tablets:
+
+1. **Use Chrome, not Mi Browser.** Install Chrome (Play Store or GetApps), open the dashboard
+   in Chrome, then ⋮ -> Add to Home screen. Mi Browser may not hand the `intent:` link to RawBT.
+2. **Install RawBT.** Global ROM: Play Store. China ROM without Google Play: download the APK
+   from the official site (rawbt.ru) and allow "Install unknown apps" for Chrome.
+3. **Pair and configure** as in step 2-3 above.
+4. **Stop Xiaomi killing RawBT:** Settings -> Apps -> Manage apps -> RawBT:
+   - Autostart: **ON**
+   - Battery saver: **No restrictions**
+   - Other permissions: allow **Display pop-up windows while running in the background** and
+     **Start in background**
+   - Repeat for Chrome.
+5. **Lock RawBT in recents:** open recent apps, long-press RawBT, tap the lock icon.
+6. **Allow Chrome to open RawBT.** On the first print, if HyperOS asks to allow Chrome to open
+   RawBT, choose **Always allow**. If it was denied: Security app -> Permissions -> App chain
+   launch (name varies by version) -> allow it.
+7. **Screen:** Display -> Sleep -> Never (or the longest option) while the tablet is plugged in.
+8. Print the tests: cashier tablet Printer Setup -> **RawBT** -> Print test receipt; kitchen
+   tablet Kitchen Display -> **Print tickets on this tablet** -> **Test ticket**.
+
+Check that it survives sleep: lock the screen 10+ minutes, unlock, print again. If a print does
+nothing, open RawBT directly -- if it lost the printer, re-select it and recheck step 4.
 
 ## 4. Troubleshooting
 
