@@ -61,3 +61,14 @@ export function playOverdueBeep() {
     // See playNewOrderBeep.
   }
 }
+
+// New QR table order waiting for the cashier: a rising two-note chime, so it
+// reads differently from the kitchen's new-order beep at the same counter.
+export function playTableOrderBeep() {
+  try {
+    playBeep(660, 0, 160);
+    playBeep(990, 0.18, 220);
+  } catch {
+    // See playNewOrderBeep.
+  }
+}

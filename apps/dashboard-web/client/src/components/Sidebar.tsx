@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useInventoryAlerts } from '@/contexts/InventoryAlertsContext';
+import { useTableOrderAlerts } from '@/contexts/TableOrderAlertsContext';
 import { useLocation, useSearch } from 'wouter';
 import { DEPARTMENT_CONFIG } from '@/lib/types';
 import { Button } from '@/components/ui/button';
@@ -61,6 +62,7 @@ interface NavItem {
 export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile }: SidebarProps) {
   const { user } = useAuth();
   const { lowStockCount } = useInventoryAlerts();
+  const { pendingCount: pendingTableOrders } = useTableOrderAlerts();
   const [location, navigate] = useLocation();
   const search = useSearch();
 
@@ -136,16 +138,16 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
   // POS · Order Queue · Kitchen Display · Reservations · Settings ·
   // Menu Editing · Help, PLUS Delivery Requests now that WS-7 has landed
   // (Phase 6) -- the cross-cutting matrix always called this one out for
-  // cashiers specifically. Table Orders (formerly Pending Orders), Online
-  // Orders, the whole Stock & Inventory group, Loss Log, and Utility Log
+  // cashiers specifically. Table Orders is open to cashiers too (they
+  // approve QR table orders). Online Orders, the whole Stock & Inventory group, Loss Log, and Utility Log
   // stay manager+; Menu Editing and Help open to every role (client
   // decision -- cashiers may edit the menu).
   const beforeStockItems: NavItem[] = [
     { icon: ShoppingCart, label: 'POS Terminal', href: '/pos' },
     { icon: ListOrdered, label: 'Order Queue', href: '/order-queue' },
-    ...(isManagerOrExecutive || hasGrant('pending-orders')
-      ? [{ icon: QrCode, label: 'Table Orders', href: '/pending-orders' }]
-      : []),
+    // Every role: the cashier approves QR table orders (2026-10-04 client
+    // decision), so the badge here is how they notice one is waiting.
+    { icon: QrCode, label: 'Table Orders', href: '/pending-orders', badge: pendingTableOrders },
     { icon: ChefHat, label: 'Kitchen Display', href: '/kitchen-display' },
     { icon: Truck, label: 'Delivery Requests', href: '/delivery-requests' },
     ...(isManagerOrExecutive || hasGrant('online-orders')

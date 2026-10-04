@@ -14,6 +14,78 @@
 
 ---
 
+## 🧭 Session update: 2026-09-26 → 2026-10-03 (latest — read this first)
+
+**Everything below is committed and pushed to `main` and live on Vercel unless marked otherwise.**
+
+### What we did
+1. **Landing site redesign** (`apps/landing-page`) — rebuilt from the client's design brief and comp: floating nav pill with Order Now / Reserve, hero with the real sushi-boat photo (all three boats kept visible), best sellers (prices pulled live from `/public/menu`), dark category band, order/reserve blocks, Find Us map beside Contact, dark footer. Separate `/about`, `/our-menu`, `/catering` pages; `/review`, `/privacy`, `/terms` kept.
+2. **Reserve 404 + nav logo fixed.** Reserve links now go to `/menu?reserve=1` (the old `/menu/?reserve=1` missed the Vercel rewrite). `/menu/` also rewrites now. Nav logo is a clean rectangular badge (`public/logo-badge.png`).
+3. **Mobile UX/accessibility audit** (56 page × viewport combinations, 320–1440px + landscape): sticky mobile Order/Reserve bar, 44px touch targets, 16px inputs, map tap-to-interact, image/font loading fixes, reduced-motion respected. Report: `scratchpad/mobile-uiux-report.md` (not in repo).
+4. **Careers "Join Our Crew" section** (below Contact, above footer): name / phone / email required, optional position + message, optional resume photo — **JPG or PNG only, PDF rejected** both client- and server-side. Application is saved before the photo upload, so a failed upload never loses the application.
+5. **Applicants admin tab** and **Inquiries admin tab** (dashboard, manager/executive).
+6. **Catering page**: 43 real catering photos in a uniform grid (batched reveal); "ONE OF OUR SET-UPS" highlight strip (catering-33–43, the client's "catering set up" folder); "Big Orders Welcome" band (6 photos); "Real Gatherings" strip (10 group photos). Real team photo on the careers section. Second sushi-boat angle used in the experience band.
+7. **Brand copy pass**: Filipino-owned, authentic Japanese with a Filipino twist, fresh, everyday value. Deliberately avoids unverifiable health/nutrition claims. Copy and meta descriptions updated site-wide.
+8. **SEO** — installed the third-party `claude-seo` plugin (user-authorized after risk discussion; see below) and ran its `seo-audit` against the live site, scoped to the marketing pages. Health score **61/100**. Fixed:
+   - Canonical, OG/Twitter tags, sitemap, robots `Sitemap:` line, and Restaurant schema `url`/`image` all pointed at the retired `oishii-nori-landing.vercel.app` → now `https://www.oishiinori.com`.
+   - Restaurant schema `menu` pointed at a removed `/#menu` anchor → now `/our-menu`.
+   - Every non-home route served Home's title/description/schema in raw HTML → `prerender.mjs` now renders `/`, `/about`, `/our-menu`, `/catering` each to its own `index.html` with unique title/description/canonical, plus Menu (live 115-product catalog) and Service schema. **Verified live** that Vercel serves these static files before the SPA catch-all.
+   - `robots.txt` now disallows `/dashboard`, `/staff-clock`, `/api`, `/menu/tv`. `llms.txt` rewritten. `sitemap.xml` gained `/review`.
+   - Not checked (no credentials): Core Web Vitals field data (needs a `GOOGLE_API_KEY`), Search Console, GBP listing.
+9. **Kitchen print bridge** (`kitchen-print-bridge/`):
+   - `python bridge.py --setup` opens a local page: Scan ports → Test print → Use this printer (writes `BT_PORT`/`BT_BAUDRATE` into `.env`).
+   - Bridge now reports a heartbeat every poll cycle to the backend (`POST /kitchen-printer/heartbeat`), including last print and last error.
+   - `--test-print` verified (formatting proof, no hardware needed). Real printer not yet tested — no Bluetooth pairing done yet.
+10. **Printer Setup tab** (dashboard, manager/executive): Kitchen Ticket Printer status (Online/Delayed/Offline/Never connected, last print, last error — read-only, reported by the bridge); POS Receipt Printer "Print test receipt" button (uses the same `printReceipt()` path as real sales). Verified live: loads, shows "Never connected" as expected, test print triggers the print dialog.
+11. **Staff roster**: created the 7 new staff via the real `POST /employees` flow; deactivated 7 demo accounts (not deleted). Credentials were printed by the script at creation time — **they are default passwords; each person must be told to change theirs.** Do not store them in the repo.
+12. **QA cleanup**: all `ZZ TEST` rows (inquiries, applicants) created during live testing were deleted.
+
+### Commits (this stretch, newest first)
+`88bc9cb` Printer Setup tab + heartbeat · `6b8095e` bridge `--setup` · `d42d8d5` per-route SEO prerender · `9089561` SEO canonical/robots/llms fixes · `47bff7e` UI/UX + brand copy · `73034a9` photo variety · `04d5102` catering set-up highlight · `fd7dd91` careers + catering gallery + Applicants tab · `8142e25` hero full-bleed restored · `7e35253` hero + mobile UX · `52ea3ac` nav logo · `51bc273` Reserve 404 + About/Menu pages · `50f204e` comp pass 2 · `8c5b325` landing redesign + Inquiries.
+
+### Migrations / one-off scripts (all applied by the user unless noted)
+- `0055_inquiries.sql` — applied.
+- `0056_job_applicants.sql` — applied.
+- `0057_kitchen_printer_status.sql` — applied.
+- `scripts/create_applicant_photos_bucket.py` — run; `applicant-photos` bucket exists (public, jpg/png only, 8MB).
+- Staff roster script (`services/api-fastapi/scripts/update_staff_roster.py`) — run with `--apply`.
+
+### Open / waiting on the client
+- **Professional email address** for inquiry/applicant notifications — not yet set up (planned as an add-on in `POST /public/inquiries` and `POST /public/applicants`).
+- **Real photos** to replace placeholders: katsu, drinks, interior, and the two AI-generated images still in use (`public/generated/torikatsu.jpg`, `drinks.jpg`). Staff photos in `public/team/` (team-02, team-03) are unused.
+- **Privacy policy** doesn't yet cover the inquiry, review, and careers forms; legal pages still have owner/contact/date placeholders. Needs the owner's facts, not invented text.
+- **Google API key** (free, PageSpeed Insights) to get real Core Web Vitals.
+- **Google Business Profile** claim/verification for the Santa Cruz location (not checkable from here).
+- **Kitchen printer setup on the actual device:** pair the XP-58H in OS Bluetooth settings (or plug USB), create the bridge's dedicated account, run `python bridge.py --setup`, then run the bridge. Until then the Printer Setup tab shows "Never connected".
+
+### Android tablet printing (decided 2026-10-03, built, NOT yet tested on a real tablet)
+- Client setup: **two Android tablets** -- cashier (POS + receipt XP-58H) and kitchen (Kitchen Display + ticket XP-58H). Both printers are XP-58H USB+BT.
+- Approach: the dashboard builds ESC/POS bytes and hands them to the free **RawBT** Android app via an `intent:` URL (`lib/escpos.ts`, `lib/rawbt.ts`, `lib/kitchenTicket.ts`, `lib/printerPrefs.ts`). No native app.
+- Kitchen ticket prints when kitchen taps **Accept** (Chrome only opens RawBT from a tap) -- the Python bridge printed on charge. Reprint button on Preparing/Ready cards. Per-device toggle "Print tickets on this tablet" + Test ticket on Kitchen Display; while on, the tablet posts heartbeats so Printer Setup shows it Online.
+- Receipt: Printer Setup -> per-device mode RawBT / Print dialog. RawBT mode prints in one tap, no dialog. Default stays Print dialog, so desktops are unchanged.
+- TS kitchen ticket verified identical, line for line, to `ticket.py`'s output (incl. en-dash and wrapping cases). Receipt bytes verified ASCII-only, max 32 columns.
+- **Still to do on the real tablets:** confirm Chrome opens RawBT without leaving the page, then one real sale end to end. Setup steps: `kitchen-print-bridge/README.md` -> "Android tablets (RawBT)".
+- Python bridge kept for Windows. Never run it and RawBT printing on the same printer.
+- **Tablets confirmed as Xiaomi (HyperOS/MIUI), 2026-10-03.** No code change needed; Xiaomi-specific setup (Chrome not Mi Browser, RawBT Autostart + No battery restrictions + background pop-ups, lock in recents, allow Chrome→RawBT chain launch) is in `kitchen-print-bridge/README.md` -> "Xiaomi tablets". Remaining: do that checklist and the on-device test on both tablets.
+
+### Floor plan v2 + table QR codes (2026-10-04, code NOT yet committed/deployed; DB re-seed APPLIED)
+- Source: client's traced floor plan (`Floor plan-html.zip` → `Main.dc.html`). **12 tables, numbered 1–12** (1 long counter table, 2 round, 3–5 / 6–8 dining rows L→R, 9–10 window, 11–12 bench annex), one zone `Dining Room`.
+- `services/api-fastapi/scripts/seed_floor_plan_v2.py --apply` — **already run against the live DB.** Updated the 12 existing rows in place by `pos_table_number` (old Booth 1–4 / Table 1–7 / Round 1 → Table 1–12). Two past test reservations (#60, #61) now show under Table 12 / Table 11.
+- `DiningRoomBackdrop.tsx` draws walls, counter, kitchen, CR, benches and entrance behind the tables (same −60/−140 offset as the seed). Table cards show a big number.
+- Reservations → **Table QR Codes** tab (`TableQrSheet.tsx`, new dep `qrcode`): one QR per active table → `https://www.oishiinori.com/menu?table=N` (`tableOrderUrl()` in `lib/constants.ts`), Print all = A4, 6 per page. All 12 codes decoded and verified.
+- `POST /public/orders` now rejects a `dine_in_qr` order for a table number that isn't an active table (400).
+- Until this is deployed, the live dashboard shows the new tables without the room drawing.
+- **Cashier alerts for QR table orders:** Table Orders is now in every cashier's sidebar (was manager/grant-only), with a pending-count badge. New `TableOrderAlertsContext` (mounted inside the router in `App.tsx`) polls pending `dine_in_qr` orders every 20s and, for each new one, plays `playTableOrderBeep()` and shows a persistent toast with **Review** → `/pending-orders`. No alert on Kitchen Display; none for riders/stockers; first load is a silent baseline. Verified with a mocked harness (baseline silent, new order chimes + toasts, Review navigates, kitchen quiet, rider never polls). Cashier still approves before the kitchen (client decision). Client steps are in `setup.md` → "Table QR Ordering".
+
+### Notes for whoever picks this up
+- **`claude-seo` plugin** (third-party, AgriciDaniel/claude-seo, pinned v2.4.0) is installed under `~/.claude/skills/seo*` and `~/.claude/agents/`. Its scripts need `CLAUDE_SEO_PYTHON=/opt/homebrew/bin/python3.12` set on each call — the default `python3` on this Mac is 3.9.
+- **Playwright:** the MCP browser screenshot tool sometimes hangs; `~/.claude/skills/seo/.venv/bin/python3` with `playwright` works as a fallback.
+- **Print dialog:** headless Chromium blocks on `window.print()`; don't script through it.
+- **Scratch/audit outputs** live under the session scratchpad (`/private/tmp/claude-501/-Users-vincetamis-orca-OishiiNori/17332bca-6018-4f9e-80b0-37f29f728da7/scratchpad/`): `oishiinori.com-audit/FULL-AUDIT-REPORT.md`, `ACTION-PLAN.md`, `mobile-uiux-report.md`, `uiux-brand-report.md`. Not committed.
+- `kitchen-print-bridge/.venv/`, `test_ticket.*`, `bridge.log`, `printed_tickets.db` are local and gitignored.
+
+---
+
 ## 📸 Customer Reviews smoke test + optional photo upload (built 2026-09-16, migrations applied, NOT yet deployed)
 
 Two follow-ups to the Customer Reviews feature built earlier the same day: a real smoke test of

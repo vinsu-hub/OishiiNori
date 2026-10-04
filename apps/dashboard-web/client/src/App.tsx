@@ -9,6 +9,7 @@ import { ThemeProvider } from './contexts/ThemeContext';
 import { AuthProvider } from './contexts/AuthContext';
 import { SyncProvider } from './contexts/SyncContext';
 import { InventoryAlertsProvider } from './contexts/InventoryAlertsContext';
+import { TableOrderAlertsProvider } from './contexts/TableOrderAlertsContext';
 
 // Login is kept as a static import -- it's the first thing an unauthenticated
 // user sees, so it shouldn't wait on an extra chunk fetch + Suspense frame.
@@ -74,6 +75,8 @@ function RouteFallback() {
 function Router() {
   return (
     <WouterRouter base="/dashboard">
+    {/* Inside the router so its toast can navigate with the /dashboard base. */}
+    <TableOrderAlertsProvider>
     <Suspense fallback={<RouteFallback />}>
       <Switch>
         <Route path={'/login'} component={Login} />
@@ -121,6 +124,7 @@ function Router() {
         <Route component={NotFound} />
       </Switch>
     </Suspense>
+    </TableOrderAlertsProvider>
     </WouterRouter>
   );
 }
