@@ -14,9 +14,9 @@
 
 ---
 
-## 🧭 Session update: 2026-09-26 → 2026-10-03 (latest — read this first)
+## 🧭 Session update: 2026-09-26 → 2026-10-04 (latest — read this first)
 
-**Everything below is committed and pushed to `main` and live on Vercel unless marked otherwise.**
+**Everything below is committed and pushed to `main` and live on Vercel unless marked otherwise.** Latest commits: `e6dc5e7` Android RawBT printing · `b88511f` floor plan v2 + table QR codes · `c87e50a` cashier QR-order alerts · `9801d86` staff onboarding.
 
 ### What we did
 1. **Landing site redesign** (`apps/landing-page`) — rebuilt from the client's design brief and comp: floating nav pill with Order Now / Reserve, hero with the real sushi-boat photo (all three boats kept visible), best sellers (prices pulled live from `/public/menu`), dark category band, order/reserve blocks, Find Us map beside Contact, dark footer. Separate `/about`, `/our-menu`, `/catering` pages; `/review`, `/privacy`, `/terms` kept.
@@ -68,13 +68,12 @@
 - Python bridge kept for Windows. Never run it and RawBT printing on the same printer.
 - **Tablets confirmed as Xiaomi (HyperOS/MIUI), 2026-10-03.** No code change needed; Xiaomi-specific setup (Chrome not Mi Browser, RawBT Autostart + No battery restrictions + background pop-ups, lock in recents, allow Chrome→RawBT chain launch) is in `kitchen-print-bridge/README.md` -> "Xiaomi tablets". Remaining: do that checklist and the on-device test on both tablets.
 
-### Floor plan v2 + table QR codes (2026-10-04, code NOT yet committed/deployed; DB re-seed APPLIED)
+### Floor plan v2 + table QR codes (2026-10-04, committed `b88511f`, deployed; DB re-seed applied)
 - Source: client's traced floor plan (`Floor plan-html.zip` → `Main.dc.html`). **12 tables, numbered 1–12** (1 long counter table, 2 round, 3–5 / 6–8 dining rows L→R, 9–10 window, 11–12 bench annex), one zone `Dining Room`.
 - `services/api-fastapi/scripts/seed_floor_plan_v2.py --apply` — **already run against the live DB.** Updated the 12 existing rows in place by `pos_table_number` (old Booth 1–4 / Table 1–7 / Round 1 → Table 1–12). Two past test reservations (#60, #61) now show under Table 12 / Table 11.
 - `DiningRoomBackdrop.tsx` draws walls, counter, kitchen, CR, benches and entrance behind the tables (same −60/−140 offset as the seed). Table cards show a big number.
 - Reservations → **Table QR Codes** tab (`TableQrSheet.tsx`, new dep `qrcode`): one QR per active table → `https://www.oishiinori.com/menu?table=N` (`tableOrderUrl()` in `lib/constants.ts`), Print all = A4, 6 per page. All 12 codes decoded and verified.
 - `POST /public/orders` now rejects a `dine_in_qr` order for a table number that isn't an active table (400).
-- Until this is deployed, the live dashboard shows the new tables without the room drawing.
 - **Cashier alerts for QR table orders:** Table Orders is now in every cashier's sidebar (was manager/grant-only), with a pending-count badge. New `TableOrderAlertsContext` (mounted inside the router in `App.tsx`) polls pending `dine_in_qr` orders every 20s and, for each new one, plays `playTableOrderBeep()` and shows a persistent toast with **Review** → `/pending-orders`. No alert on Kitchen Display; none for riders/stockers; first load is a silent baseline. Verified with a mocked harness (baseline silent, new order chimes + toasts, Review navigates, kitchen quiet, rider never polls). Cashier still approves before the kitchen (client decision). Client steps are in `setup.md` → "Table QR Ordering".
 
 ### Staff onboarding (2026-10-04)
@@ -92,11 +91,15 @@
   - `kiosk.py`, `/attendance/me` and the attendance holiday lookup used UTC `date.today()`; they now use `today_ph()`.
   - Night differential missed the part of a shift that starts after midnight (a 01:00–09:00 shift got 0 h); it now gets 5 h.
   - Verified time in/out for all 7 against the live DB with the local API: wrong PIN → 401, PH date, working → completed, hours computed. Test shifts deleted.
-- **Still to do:**
-  1. Apply 0058.
-  2. Deploy.
-  3. `scripts/onboard_staff.py --apply --out <outside repo>.html` → print the slips, then delete the file.
-  4. Each person logs in once.
+- **Done 2026-10-04 (commit `9801d86`, deployed):**
+  - 0058 applied by the user in the SQL editor.
+  - `onboard_staff.py --apply` run. All 7 now have unique temp passwords + PINs and `must_change_password = true`. Niña's and Blezzie's emails are fixed (`nina.vanessa.centeno@`, `blezzie.alcantara.pecana@`).
+  - Verified on the live site for all 7:
+    - employee-ID login with the temp password; old `oishii1234` / `1234` rejected
+    - live kiosk Punch In → End Today's Work, PH date, test shifts deleted
+  - Forced-change flow verified in a real browser on the live site, with a throwaway account (since deleted).
+- **Onboarding PDF** (credentials + how-to + roles + table links) was generated to the user's `~/Downloads/Oishii-Nori-Staff-Onboarding.pdf`. It is **not** in the repo and is the only copy of the temp passwords; executives can also see them in Employees → View credentials until each person changes theirs.
+- **Remaining:** each of the 7 logs in once and sets their own password.
 
 ### Notes for whoever picks this up
 - **`claude-seo` plugin** (third-party, AgriciDaniel/claude-seo, pinned v2.4.0) is installed under `~/.claude/skills/seo*` and `~/.claude/agents/`. Its scripts need `CLAUDE_SEO_PYTHON=/opt/homebrew/bin/python3.12` set on each call — the default `python3` on this Mac is 3.9.
