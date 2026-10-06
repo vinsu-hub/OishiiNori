@@ -22,6 +22,7 @@ The tablets print through the free **RawBT** app, which handles the Bluetooth co
 1. Install **Google Chrome** from the Play Store or GetApps.
 2. Open the dashboard in Chrome and log in.
 3. Tap **⋮ → Add to Home screen** so staff always open it in Chrome.
+4. To hide the browser bars, tap **Full screen**. It is in the lower-left corner on POS Terminal and the lower-right corner on Kitchen Display.
 
 > Mi Browser (Xiaomi's default browser) may not pass print jobs to RawBT.
 

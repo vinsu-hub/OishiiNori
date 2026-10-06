@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useSearch } from 'wouter';
 import { toast } from 'sonner';
 import { DashboardLayout } from '@/components/DashboardLayout';
+import { FullscreenButton } from '@/components/FullscreenButton';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -1004,6 +1005,7 @@ export default function POSTerminal() {
   return (
     <DashboardLayout title="POS Terminal" headerExtra={businessDayButton}>
       <div className="relative flex h-full overflow-hidden">
+        <FullscreenButton corner="bottom-left" anchored />
         <div className="flex-1 overflow-auto p-6">
           {kitchenLocked && (
             <div role="alert" className="mb-3 rounded-md border border-red-300 bg-red-50 px-4 py-3 text-sm font-medium text-red-900">

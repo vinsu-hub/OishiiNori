@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { DashboardLayout } from '@/components/DashboardLayout';
+import { FullscreenButton } from '@/components/FullscreenButton';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -355,6 +356,7 @@ export default function KitchenDisplay() {
 
   return (
     <DashboardLayout title="Kitchen Display">
+      <FullscreenButton corner="bottom-right" />
       <div className="p-6 space-y-4">
         <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
           <div className="grid flex-1 grid-cols-2 gap-3 md:grid-cols-4 2xl:mr-4">

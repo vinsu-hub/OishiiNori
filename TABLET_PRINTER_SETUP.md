@@ -43,6 +43,7 @@ Do these steps on both tablets. Pair CASHIER only with RECEIPT. Pair KITCHEN onl
 2. Go to `https://www.oishiinori.com/dashboard` and sign in.
 3. In Chrome, tap the three-dot menu, then "Add to Home screen".
 4. Use this new home-screen icon for the dashboard every day.
+5. To hide Chrome's address and tab bars, tap "Full screen". It is in the lower-left corner on POS Terminal and the lower-right corner on Kitchen Display. Tap "Exit full screen", or swipe down from the top, to get the bars back.
 
 Mi Browser may not pass print jobs to RawBT. Always use Chrome.
 
