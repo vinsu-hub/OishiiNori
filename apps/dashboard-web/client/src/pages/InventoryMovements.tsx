@@ -14,14 +14,18 @@ import { Loader2, Plus, Trash2 } from 'lucide-react';
 import {
   ApiIngredient,
   ApiInventoryMovement,
+  ApiItemUnit,
   ApiStockItem,
   Department,
   MovementType,
   createInventoryMovement,
   fetchInventory,
   fetchInventoryMovements,
+  fetchItemUnits,
   fetchStockItems,
 } from '@/lib/api';
+import { ConversionHint, NewUnitDialog, UnitSelect } from '@/components/stock/UnitPicker';
+import { fmtQty, unitOptionsFor, unitsForItem, type UnitOption } from '@/lib/units';
 import { formatDateTime12h } from '@/lib/utils';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 
@@ -64,13 +68,15 @@ function parseTargetKey(key: TargetKey): { kind: 'ingredient' | 'stock_item'; id
 interface ShipmentRow {
   localId: string;
   targetKey: TargetKey;
+  /** 'base', 'std:kg', or an item_units id -- quantity and cost are in this unit. */
+  unitKey: string;
   quantity: string;
   unitCost: string;
   expiryDate: string;
 }
 
 function newShipmentRow(): ShipmentRow {
-  return { localId: crypto.randomUUID(), targetKey: '', quantity: '', unitCost: '', expiryDate: '' };
+  return { localId: crypto.randomUUID(), targetKey: '', unitKey: 'base', quantity: '', unitCost: '', expiryDate: '' };
 }
 
 export default function InventoryMovements() {
@@ -78,14 +84,22 @@ export default function InventoryMovements() {
   const [ingredients, setIngredients] = useState<ApiIngredient[]>([]);
   const [stockItems, setStockItems] = useState<ApiStockItem[]>([]);
   const [movements, setMovements] = useState<ApiInventoryMovement[]>([]);
+  const [itemUnits, setItemUnits] = useState<ApiItemUnit[]>([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(() => {
-    Promise.all([fetchInventory(), fetchInventoryMovements({ limit: 50 }), fetchStockItems({ active_only: true })])
-      .then(([ing, mov, items]) => {
+    Promise.all([
+      fetchInventory(),
+      fetchInventoryMovements({ limit: 50 }),
+      fetchStockItems({ active_only: true }),
+      // Units are optional extras -- an empty list just means base units only.
+      fetchItemUnits().catch(() => [] as ApiItemUnit[]),
+    ])
+      .then(([ing, mov, items, units]) => {
         setIngredients([...ing].sort((a, b) => a.name.localeCompare(b.name)));
         setMovements(mov);
         setStockItems([...items].filter((i) => !i.ingredient_id).sort((a, b) => a.name.localeCompare(b.name)));
+        setItemUnits(units);
       })
       .catch((e) => toast.error(`Failed to load movements: ${e.message}`))
       .finally(() => setLoading(false));
@@ -104,6 +118,38 @@ export default function InventoryMovements() {
     for (const item of stockItems) map.set(item.id, item);
     return map;
   }, [stockItems]);
+
+  /** Name, base unit and unit options for a picker key. */
+  function targetInfo(key: TargetKey) {
+    const target = parseTargetKey(key);
+    if (!target) return null;
+    const item = target.kind === 'ingredient' ? ingredientsById.get(target.id) : stockItemsById.get(target.id);
+    if (!item) return null;
+    const baseUnit = (target.kind === 'ingredient' ? (item as ApiIngredient).base_unit : (item as ApiStockItem).unit) || 'pcs';
+    const options = unitOptionsFor(baseUnit, unitsForItem(itemUnits, target.kind, target.id));
+    return { target, name: item.name, baseUnit, options };
+  }
+
+  function optionFor(options: UnitOption[], key: string): UnitOption {
+    return options.find((o) => o.key === key) ?? options[0];
+  }
+
+  // "+ New unit…" -- which form asked, and for which item.
+  const [newUnitFor, setNewUnitFor] = useState<{ source: string; key: TargetKey } | null>(null);
+  const newUnitInfo = newUnitFor ? targetInfo(newUnitFor.key) : null;
+
+  function handleUnitCreated(unit: ApiItemUnit) {
+    setItemUnits((units) => [...units, unit]);
+    if (!newUnitFor) return;
+    if (newUnitFor.source === 'other') setOtherUnitKey(unit.id);
+    else updateShipmentRow(newUnitFor.source, { unitKey: unit.id });
+  }
+
+  function movementBaseUnit(m: ApiInventoryMovement): string {
+    if (m.ingredient_id) return ingredientsById.get(m.ingredient_id)?.base_unit || '';
+    if (m.stock_item_id) return stockItemsById.get(m.stock_item_id)?.unit || 'pcs';
+    return '';
+  }
 
   function movementTargetName(m: ApiInventoryMovement): string {
     if (m.ingredient_id) return ingredientsById.get(m.ingredient_id)?.name || m.ingredient_id.slice(0, 8);
@@ -140,15 +186,22 @@ export default function InventoryMovements() {
       await Promise.all(
         validRows.map((r) => {
           const target = parseTargetKey(r.targetKey);
+          const info = targetInfo(r.targetKey);
+          const unit = info ? optionFor(info.options, r.unitKey) : undefined;
+          const factor = unit?.factor ?? 1;
           return createInventoryMovement({
             ingredient_id: target?.kind === 'ingredient' ? target.id : undefined,
             stock_item_id: target?.kind === 'stock_item' ? target.id : undefined,
             type: 'delivery',
-            quantity: Number(r.quantity),
+            // Stock is kept in the base unit: 2 packs x 100 = 200 sheets.
+            quantity: Number(r.quantity) * factor,
             reason: supplierNote.trim() || undefined,
             employee_id: user.id,
-            unit_cost_snapshot: r.unitCost.trim() ? Number(r.unitCost) : undefined,
+            // Cost is typed per chosen unit; stored per base unit.
+            unit_cost_snapshot: r.unitCost.trim() ? Number(r.unitCost) / factor : undefined,
             expiry_date: r.expiryDate || undefined,
+            entered_quantity: unit && unit.key !== 'base' ? Number(r.quantity) : undefined,
+            entered_unit: unit && unit.key !== 'base' ? unit.name : undefined,
           });
         })
       );
@@ -167,12 +220,14 @@ export default function InventoryMovements() {
   const [ingredientId, setIngredientId] = useState('');
   const [type, setType] = useState<MovementType>('trans_out');
   const [quantity, setQuantity] = useState('');
+  const [otherUnitKey, setOtherUnitKey] = useState('base');
   const [department, setDepartment] = useState<Department | 'none'>('none');
   const [reason, setReason] = useState('');
   const [unitCostSnapshot, setUnitCostSnapshot] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   const selectedIngredient = ingredientId ? ingredientsById.get(ingredientId) : undefined;
+  const otherInfo = ingredientId ? targetInfo(targetKeyFor('ingredient', ingredientId)) : null;
   const needsCostCheck =
     (type === 'delivery' || type === 'trans_in') &&
     !!selectedIngredient?.cost_volatility_tier &&
@@ -182,6 +237,7 @@ export default function InventoryMovements() {
     setIngredientId('');
     setType('trans_out');
     setQuantity('');
+    setOtherUnitKey('base');
     setDepartment('none');
     setReason('');
     setUnitCostSnapshot('');
@@ -202,16 +258,20 @@ export default function InventoryMovements() {
       toast.error(`${selectedIngredient?.name} is a volatile-cost ingredient -- confirm its unit cost before logging this movement`);
       return;
     }
+    const unit = otherInfo ? optionFor(otherInfo.options, otherUnitKey) : undefined;
+    const factor = unit?.factor ?? 1;
     setSubmitting(true);
     try {
       await createInventoryMovement({
         ingredient_id: ingredientId,
         type,
         department: department === 'none' ? undefined : department,
-        quantity: qty,
+        quantity: qty * factor,
         reason: reason.trim() || undefined,
         employee_id: user.id,
-        unit_cost_snapshot: unitCostSnapshot.trim() ? Number(unitCostSnapshot) : undefined,
+        unit_cost_snapshot: unitCostSnapshot.trim() ? Number(unitCostSnapshot) / factor : undefined,
+        entered_quantity: unit && unit.key !== 'base' ? qty : undefined,
+        entered_unit: unit && unit.key !== 'base' ? unit.name : undefined,
       });
       toast.success('Movement logged');
       resetForm();
@@ -247,15 +307,17 @@ export default function InventoryMovements() {
 
                 <div className="space-y-3">
                   {shipmentRows.map((row) => {
-                    const target = parseTargetKey(row.targetKey);
-                    const rowIngredient = target?.kind === 'ingredient' ? ingredientsById.get(target.id) : undefined;
-                    const rowStockItem = target?.kind === 'stock_item' ? stockItemsById.get(target.id) : undefined;
+                    const info = targetInfo(row.targetKey);
+                    const unit = info ? optionFor(info.options, row.unitKey) : undefined;
                     return (
-                      <div key={row.localId} className="grid grid-cols-12 gap-2 items-end">
-                        <div className="col-span-4 space-y-1">
+                      <div key={row.localId} className="grid grid-cols-12 gap-2 items-start">
+                        <div className="col-span-3 space-y-1">
                           <Label className="text-xs">Item</Label>
-                          <Select value={row.targetKey} onValueChange={(v) => updateShipmentRow(row.localId, { targetKey: v })}>
-                            <SelectTrigger>
+                          <Select
+                            value={row.targetKey}
+                            onValueChange={(v) => updateShipmentRow(row.localId, { targetKey: v, unitKey: 'base' })}
+                          >
+                            <SelectTrigger className="w-full">
                               <SelectValue placeholder="Select ingredient or stock item" />
                             </SelectTrigger>
                             <SelectContent>
@@ -273,18 +335,29 @@ export default function InventoryMovements() {
                           </Select>
                         </div>
                         <div className="col-span-2 space-y-1">
-                          <Label className="text-xs">
-                            Quantity {rowIngredient ? `(${rowIngredient.base_unit})` : rowStockItem?.unit ? `(${rowStockItem.unit})` : ''}
-                          </Label>
+                          <Label className="text-xs">Quantity</Label>
                           <Input
                             type="number"
                             min={0}
+                            step="any"
                             value={row.quantity}
                             onChange={(e) => updateShipmentRow(row.localId, { quantity: e.target.value })}
                           />
+                          {info && <ConversionHint qty={row.quantity} option={unit} baseUnit={info.baseUnit} />}
                         </div>
                         <div className="col-span-2 space-y-1">
-                          <Label className="text-xs">Unit cost</Label>
+                          <Label className="text-xs">Unit</Label>
+                          <UnitSelect
+                            options={info?.options ?? []}
+                            baseUnit={info?.baseUnit ?? ''}
+                            value={row.unitKey}
+                            disabled={!info}
+                            onChange={(k) => updateShipmentRow(row.localId, { unitKey: k })}
+                            onRequestNew={info ? () => setNewUnitFor({ source: row.localId, key: row.targetKey }) : undefined}
+                          />
+                        </div>
+                        <div className="col-span-2 space-y-1">
+                          <Label className="text-xs">Cost per {unit?.name ?? 'unit'} (optional)</Label>
                           <Input
                             type="number"
                             min={0}
@@ -293,7 +366,7 @@ export default function InventoryMovements() {
                             onChange={(e) => updateShipmentRow(row.localId, { unitCost: e.target.value })}
                           />
                         </div>
-                        <div className="col-span-3 space-y-1">
+                        <div className="col-span-2 space-y-1">
                           <Label className="text-xs">Expiry date (optional)</Label>
                           <Input
                             type="date"
@@ -301,7 +374,7 @@ export default function InventoryMovements() {
                             onChange={(e) => updateShipmentRow(row.localId, { expiryDate: e.target.value })}
                           />
                         </div>
-                        <div className="col-span-1">
+                        <div className="col-span-1 pt-6">
                           <Button
                             variant="ghost"
                             size="icon-sm"
@@ -337,7 +410,13 @@ export default function InventoryMovements() {
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <Label>Ingredient</Label>
-                    <Select value={ingredientId} onValueChange={setIngredientId}>
+                    <Select
+                      value={ingredientId}
+                      onValueChange={(v) => {
+                        setIngredientId(v);
+                        setOtherUnitKey('base');
+                      }}
+                    >
                       <SelectTrigger>
                         <SelectValue placeholder="Select ingredient" />
                       </SelectTrigger>
@@ -366,8 +445,23 @@ export default function InventoryMovements() {
                     </Select>
                   </div>
                   <div className="space-y-1">
-                    <Label>Quantity {selectedIngredient ? `(${selectedIngredient.base_unit})` : ''}</Label>
-                    <Input type="number" min={0} value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+                    <Label>Quantity</Label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input type="number" min={0} step="any" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+                      <UnitSelect
+                        options={otherInfo?.options ?? []}
+                        baseUnit={otherInfo?.baseUnit ?? ''}
+                        value={otherUnitKey}
+                        disabled={!otherInfo}
+                        onChange={setOtherUnitKey}
+                        onRequestNew={
+                          otherInfo ? () => setNewUnitFor({ source: 'other', key: targetKeyFor('ingredient', ingredientId) }) : undefined
+                        }
+                      />
+                    </div>
+                    {otherInfo && (
+                      <ConversionHint qty={quantity} option={optionFor(otherInfo.options, otherUnitKey)} baseUnit={otherInfo.baseUnit} />
+                    )}
                   </div>
                   <div className="space-y-1">
                     <Label>Department (optional)</Label>
@@ -401,7 +495,7 @@ export default function InventoryMovements() {
                       type="number"
                       min={0}
                       step="0.01"
-                      placeholder="Unit cost"
+                      placeholder={`Cost per ${otherInfo ? (otherInfo.options.find((o) => o.key === otherUnitKey)?.name ?? otherInfo.baseUnit) : 'unit'}`}
                       value={unitCostSnapshot}
                       onChange={(e) => setUnitCostSnapshot(e.target.value)}
                     />
@@ -409,7 +503,7 @@ export default function InventoryMovements() {
                 )}
                 {!needsCostCheck && (
                   <div className="space-y-1">
-                    <Label>Unit cost snapshot (optional)</Label>
+                    <Label>Cost per {otherInfo ? (otherInfo.options.find((o) => o.key === otherUnitKey)?.name ?? otherInfo.baseUnit) : 'unit'} (optional)</Label>
                     <Input
                       type="number"
                       min={0}
@@ -449,9 +543,24 @@ export default function InventoryMovements() {
                       <TableCell>
                         <Badge variant="outline">{m.type}</Badge>
                       </TableCell>
-                      <TableCell>{m.quantity}</TableCell>
+                      <TableCell>
+                        {m.entered_unit && m.entered_quantity ? (
+                          <>
+                            {fmtQty(m.entered_quantity)} {m.entered_unit}{' '}
+                            <span className="text-muted-foreground">
+                              (= {fmtQty(m.quantity)} {movementBaseUnit(m)})
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            {fmtQty(m.quantity)} {movementBaseUnit(m)}
+                          </>
+                        )}
+                      </TableCell>
                       <TableCell className="text-muted-foreground">{m.department || '--'}</TableCell>
-                      <TableCell>{m.unit_cost_snapshot != null ? m.unit_cost_snapshot.toFixed(2) : '--'}</TableCell>
+                      <TableCell>
+                        {m.unit_cost_snapshot != null ? `${m.unit_cost_snapshot.toFixed(2)} / ${movementBaseUnit(m) || 'unit'}` : '--'}
+                      </TableCell>
                       <TableCell className="text-muted-foreground">{m.expiry_date || '--'}</TableCell>
                       <TableCell className="text-muted-foreground">{formatDateTime12h(m.created_at)}</TableCell>
                     </TableRow>
@@ -462,6 +571,14 @@ export default function InventoryMovements() {
           </TabsContent>
         </Tabs>
       </div>
+      <NewUnitDialog
+        open={!!newUnitFor}
+        onOpenChange={(open) => !open && setNewUnitFor(null)}
+        itemName={newUnitInfo?.name ?? ''}
+        baseUnit={newUnitInfo?.baseUnit ?? ''}
+        target={newUnitInfo?.target ?? null}
+        onCreated={handleUnitCreated}
+      />
     </DashboardLayout>
   );
 }

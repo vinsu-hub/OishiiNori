@@ -391,7 +391,7 @@ export default function Employees() {
                 <TableHead>Role</TableHead>
                 <TableHead>Department</TableHead>
                 <TableHead>Position</TableHead>
-                <TableHead>Pay Rate</TableHead>
+                <TableHead>Daily Rate</TableHead>
                 <TableHead>Employee #</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Access</TableHead>
@@ -409,7 +409,7 @@ export default function Employees() {
                   </TableCell>
                   <TableCell className="capitalize">{e.department || '--'}</TableCell>
                   <TableCell>{e.position || '--'}</TableCell>
-                  <TableCell>{e.pay_rate.toFixed(2)}</TableCell>
+                  <TableCell>₱{e.pay_rate.toFixed(2)}/day</TableCell>
                   <TableCell className="font-mono text-xs">{e.employee_number || '--'}</TableCell>
                   <TableCell>
                     <Badge variant={e.active ? 'outline' : 'destructive'}>
@@ -491,7 +491,7 @@ export default function Employees() {
                 <Input value={position} onChange={(e) => setPosition(e.target.value)} />
               </div>
               <div className="space-y-1">
-                <Label>Pay rate (per hour)</Label>
+                <Label>Daily rate (₱ per day)</Label>
                 <Input type="number" min={0} step="0.01" value={payRate} onChange={(e) => setPayRate(e.target.value)} />
               </div>
             </div>
@@ -613,7 +613,7 @@ export default function Employees() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <Label>Pay rate (per hour)</Label>
+                <Label>Daily rate (₱ per day)</Label>
                 <Input
                   type="number"
                   min={0}

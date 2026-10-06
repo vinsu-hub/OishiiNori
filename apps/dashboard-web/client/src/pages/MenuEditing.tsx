@@ -19,6 +19,8 @@ import {
 } from '@/components/ui/dialog';
 import { Loader2, Plus, Trash2, Upload } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
+import { ConversionHint, NewUnitDialog, UnitSelect } from '@/components/stock/UnitPicker';
+import { unitOptionsFor, unitsForItem, type UnitOption } from '@/lib/units';
 import {
   ApiIngredient,
   ApiProduct,
@@ -33,6 +35,8 @@ import {
   deleteProductSize,
   deleteRecipeItem,
   fetchInventory,
+  fetchItemUnits,
+  type ApiItemUnit,
   fetchProducts,
   fetchRecipe,
   updateProduct,
@@ -84,11 +88,14 @@ interface RecipeRow {
   ingredient_id: string;
   qty_per_serving: string;
   unit: string;
+  /** Unit the quantity is typed in -- 'base' or an item_units id. Saved
+   * converted to the ingredient's base unit, which is what sales deduct. */
+  unitKey: string;
   prep_notes: string;
 }
 
 function newRecipeRow(): RecipeRow {
-  return { localId: crypto.randomUUID(), ingredient_id: '', qty_per_serving: '', unit: '', prep_notes: '' };
+  return { localId: crypto.randomUUID(), ingredient_id: '', qty_per_serving: '', unit: '', unitKey: 'base', prep_notes: '' };
 }
 
 // Sentinel Select value that opens the inline "create a new ingredient"
@@ -105,6 +112,7 @@ function recipeRowFromApi(r: ApiRecipeItem): RecipeRow {
     ingredient_id: r.ingredient_id,
     qty_per_serving: String(r.qty_per_serving),
     unit: r.unit,
+    unitKey: 'base',
     prep_notes: r.prep_notes || '',
   };
 }
@@ -112,13 +120,16 @@ function recipeRowFromApi(r: ApiRecipeItem): RecipeRow {
 export default function MenuEditing() {
   const [products, setProducts] = useState<ApiProduct[]>([]);
   const [ingredients, setIngredients] = useState<ApiIngredient[]>([]);
+  const [itemUnits, setItemUnits] = useState<ApiItemUnit[]>([]);
+  const [newUnitRow, setNewUnitRow] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(() => {
-    Promise.all([fetchProducts(false), fetchInventory()])
-      .then(([prod, ing]) => {
+    Promise.all([fetchProducts(false), fetchInventory(), fetchItemUnits().catch(() => [] as ApiItemUnit[])])
+      .then(([prod, ing, units]) => {
         setProducts([...prod].sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name)));
         setIngredients([...ing].sort((a, b) => a.name.localeCompare(b.name)));
+        setItemUnits(units);
       })
       .catch((e) => toast.error(`Failed to load menu: ${e.message}`))
       .finally(() => setLoading(false));
@@ -133,6 +144,15 @@ export default function MenuEditing() {
     for (const ing of ingredients) map.set(ing.id, ing);
     return map;
   }, [ingredients]);
+
+  function recipeUnitOptions(ingredientId: string): UnitOption[] {
+    const ing = ingredientsById.get(ingredientId);
+    return unitOptionsFor(ing?.base_unit, unitsForItem(itemUnits, 'ingredient', ingredientId));
+  }
+
+  function recipeUnitFactor(row: RecipeRow): number {
+    return recipeUnitOptions(row.ingredient_id).find((o) => o.key === row.unitKey)?.factor ?? 1;
+  }
 
   // --- Edit dialog state ---
   const [editing, setEditing] = useState<ApiProduct | null>(null);
@@ -350,9 +370,9 @@ export default function MenuEditing() {
     // A row still mid-"create new ingredient" carries the NEW_INGREDIENT_VALUE
     // sentinel, not a real ingredient id -- never send that to the backend.
     const activeRows = recipeRows.filter((r) => r.ingredient_id && r.ingredient_id !== NEW_INGREDIENT_VALUE);
-    const invalid = activeRows.some((r) => !Number.isFinite(Number(r.qty_per_serving)) || Number(r.qty_per_serving) <= 0 || !r.unit.trim());
+    const invalid = activeRows.some((r) => !Number.isFinite(Number(r.qty_per_serving)) || Number(r.qty_per_serving) <= 0);
     if (invalid) {
-      toast.error('Every recipe line needs an ingredient, a quantity greater than 0, and a unit');
+      toast.error('Every recipe line needs an ingredient and a quantity greater than 0');
       return;
     }
     setSavingRecipe(true);
@@ -366,8 +386,9 @@ export default function MenuEditing() {
           .map((r) =>
             createRecipeItem(recipeSizeId, {
               ingredient_id: r.ingredient_id,
-              qty_per_serving: Number(r.qty_per_serving),
-              unit: r.unit.trim(),
+              // Saved in the ingredient's base unit (what sales deduct): 1 mini sheet -> 0.25 sheet.
+              qty_per_serving: Number(r.qty_per_serving) * recipeUnitFactor(r),
+              unit: ingredientsById.get(r.ingredient_id)?.base_unit || r.unit.trim(),
               prep_notes: r.prep_notes.trim() || null,
             })
           ),
@@ -376,8 +397,9 @@ export default function MenuEditing() {
           .map((r) =>
             updateRecipeItem(r.id as string, {
               ingredient_id: r.ingredient_id,
-              qty_per_serving: Number(r.qty_per_serving),
-              unit: r.unit.trim(),
+              // Saved in the ingredient's base unit (what sales deduct): 1 mini sheet -> 0.25 sheet.
+              qty_per_serving: Number(r.qty_per_serving) * recipeUnitFactor(r),
+              unit: ingredientsById.get(r.ingredient_id)?.base_unit || r.unit.trim(),
               prep_notes: r.prep_notes.trim() || null,
             })
           ),
@@ -685,9 +707,9 @@ export default function MenuEditing() {
                             onValueChange={(v) => {
                               if (v === NEW_INGREDIENT_VALUE) {
                                 openNewIngredientForm(row.localId);
-                                updateRecipeRow(row.localId, { ingredient_id: v });
+                                updateRecipeRow(row.localId, { ingredient_id: v, unitKey: 'base' });
                               } else {
-                                updateRecipeRow(row.localId, { ingredient_id: v });
+                                updateRecipeRow(row.localId, { ingredient_id: v, unitKey: 'base' });
                               }
                             }}
                           >
@@ -764,10 +786,18 @@ export default function MenuEditing() {
                             </div>
                             <div className="col-span-2 space-y-1">
                               <Label className="text-xs">Unit</Label>
-                              <Input
-                                value={row.unit}
-                                onChange={(e) => updateRecipeRow(row.localId, { unit: e.target.value })}
-                                placeholder={row.ingredient_id ? ingredientsById.get(row.ingredient_id)?.base_unit : 'unit'}
+                              <UnitSelect
+                                options={row.ingredient_id ? recipeUnitOptions(row.ingredient_id) : []}
+                                baseUnit={ingredientsById.get(row.ingredient_id)?.base_unit || ''}
+                                value={row.unitKey}
+                                disabled={!row.ingredient_id}
+                                onChange={(k) => updateRecipeRow(row.localId, { unitKey: k })}
+                                onRequestNew={row.ingredient_id ? () => setNewUnitRow(row.localId) : undefined}
+                              />
+                              <ConversionHint
+                                qty={row.qty_per_serving}
+                                option={recipeUnitOptions(row.ingredient_id).find((o) => o.key === row.unitKey)}
+                                baseUnit={ingredientsById.get(row.ingredient_id)?.base_unit || ''}
                               />
                             </div>
                             <div className="col-span-3 space-y-1">
@@ -887,6 +917,23 @@ export default function MenuEditing() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {(() => {
+        const row = recipeRows.find((r) => r.localId === newUnitRow);
+        const ing = row ? ingredientsById.get(row.ingredient_id) : undefined;
+        return (
+          <NewUnitDialog
+            open={!!newUnitRow}
+            onOpenChange={(open) => !open && setNewUnitRow(null)}
+            itemName={ing?.name ?? ''}
+            baseUnit={ing?.base_unit ?? ''}
+            target={ing ? { kind: 'ingredient', id: ing.id } : null}
+            onCreated={(unit) => {
+              setItemUnits((units) => [...units, unit]);
+              if (row) updateRecipeRow(row.localId, { unitKey: unit.id });
+            }}
+          />
+        );
+      })()}
     </DashboardLayout>
   );
 }

@@ -494,7 +494,8 @@ export default function HRPayroll() {
                   </TabsList>
                   <TabsContent value="overview" className="space-y-3 text-sm">
                     <div className="flex justify-between"><span className="text-muted-foreground">Hours Worked</span><span>{drawerRow.hours_worked.toFixed(2)}h</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">Pay Rate</span><span>{formatCurrency(drawerRow.pay_rate)}/hr</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Daily Rate</span><span>{formatCurrency(drawerRow.pay_rate)}/day</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Hourly equivalent (÷ 8)</span><span>{formatCurrency(drawerRow.pay_rate / 8)}/hr</span></div>
                     <div className="flex justify-between font-bold"><span>Total Pay</span><span className="text-success">{formatCurrency(drawerRow.total_pay)}</span></div>
                   </TabsContent>
                   <TabsContent value="breakdown" className="space-y-3 text-sm">

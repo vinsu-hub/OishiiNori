@@ -101,6 +101,19 @@
 - **Onboarding PDF** (credentials + how-to + roles + table links) was generated to the user's `~/Downloads/Oishii-Nori-Staff-Onboarding.pdf`. It is **not** in the repo and is the only copy of the temp passwords; executives can also see them in Employees → View credentials until each person changes theirs.
 - **Remaining:** each of the 7 logs in once and sets their own password.
 
+### Daily pay rate + flexible units of measure (2026-10-06)
+- **Pay rate is now DAILY** (PHP per regular 8-hour day). `hr.py` `HOURS_PER_WORKDAY = 8`, and payroll uses daily / 8 as the hourly base for regular, OT, night-diff and holiday pay. Employees, Payroll drawer, payslip PDF and the Oishii AI prompt are labelled per day. All existing rates were 0, so nothing was converted.
+- **Units of measure** (migration **0061**, applied by the user):
+  - `item_units` = a named multiple of an ingredient's or station item's base unit (e.g. pack = N sheets; seeded **Nori sheet: mini sheet = 0.25 sheet**)
+  - `inventory_movements.entered_quantity/entered_unit` record what was typed
+  - Receive Shipment, Log Other Movement and the Menu Editing recipe editor use `components/stock/UnitPicker.tsx` (unit select + "+ New unit…" dialog + "= N base" hint); kg/L are built in for g/ml
+  - Quantities and costs are converted to base units before saving, so stock and recipe deduction are unchanged
+  - API: `GET/POST /item-units` (POST: manager/executive/stocker/employee or stock grant), `DELETE /item-units/{id}` (manager/executive)
+- Verified on the live DB via a local API, then fully reverted:
+  - creating a unit works; a duplicate name (409), the base unit's name (400) and a zero size (422) are refused
+  - 2 packs at ₱350 stored as 200 sheets at ₱3.50; stock 0 → 200, then restored
+  - the UI dialog creates a unit and shows the "= 100 sheet" hint
+
 ### Launch manuals, demo accounts, data gaps (2026-10-05)
 - **Demo/test accounts deactivated:** Cashier, Rider, QA Employee, QA Manager, QA Executive (`active=false`, kept for history). The API refuses them (403). Live checks now use Joe's account or throwaway accounts.
 - **Live journey as Joe:** all 16 dashboard pages at tablet and phone sizes; no console errors, no failed requests, no horizontal scroll.

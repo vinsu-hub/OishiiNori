@@ -97,7 +97,7 @@ def create_inventory_movement(body: InventoryMovementCreate, user: CurrentUser =
         raise HTTPException(status_code=403, detail="Cannot log movement under another employee's id")
 
     supabase = get_supabase()
-    return apply_inventory_movement(
+    row = apply_inventory_movement(
         supabase,
         body.ingredient_id,
         body.type,
@@ -110,6 +110,31 @@ def create_inventory_movement(body: InventoryMovementCreate, user: CurrentUser =
         unit_cost_snapshot=body.unit_cost_snapshot,
         expiry_date=body.expiry_date,
     )
+    # Record the unit the logger typed (migration 0061), for the history view.
+    if body.entered_unit and body.entered_quantity and _entered_unit_supported_check(supabase):
+        updated = (
+            supabase.table("inventory_movements")
+            .update({"entered_quantity": body.entered_quantity, "entered_unit": body.entered_unit.strip()})
+            .eq("id", row["id"])
+            .execute()
+        )
+        row = updated.data[0] if updated.data else row
+    return row
+
+
+_entered_unit_supported: bool | None = None
+
+
+def _entered_unit_supported_check(supabase) -> bool:
+    """Fail-open-until-migrated, same pattern as the rest of this backend."""
+    global _entered_unit_supported
+    if _entered_unit_supported is None:
+        try:
+            supabase.table("inventory_movements").select("entered_unit").limit(1).execute()
+            _entered_unit_supported = True
+        except Exception:
+            _entered_unit_supported = False
+    return _entered_unit_supported
 
 
 @router.get("/inventory-movements", response_model=list[InventoryMovementResponse])

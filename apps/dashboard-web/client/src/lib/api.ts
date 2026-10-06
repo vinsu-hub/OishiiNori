@@ -763,6 +763,8 @@ export interface CreateInventoryMovementRequest {
   employee_id: string;
   unit_cost_snapshot?: number | null;
   expiry_date?: string | null;
+  entered_quantity?: number | null;
+  entered_unit?: string | null;
 }
 
 export interface ApiInventoryMovement {
@@ -777,7 +779,37 @@ export interface ApiInventoryMovement {
   employee_id: string;
   unit_cost_snapshot: number | null;
   expiry_date: string | null;
+  /** What the logger typed when using a non-base unit ("2" "pack"). */
+  entered_quantity?: number | null;
+  entered_unit?: string | null;
   created_at: string;
+}
+
+/** A named multiple of an item's base unit (migration 0061), e.g. pack = 100 sheets. */
+export interface ApiItemUnit {
+  id: string;
+  ingredient_id: string | null;
+  stock_item_id: string | null;
+  name: string;
+  base_qty: number;
+  created_at: string;
+}
+
+export function fetchItemUnits(): Promise<ApiItemUnit[]> {
+  return request('/item-units');
+}
+
+export function createItemUnit(body: {
+  ingredient_id?: string;
+  stock_item_id?: string;
+  name: string;
+  base_qty: number;
+}): Promise<ApiItemUnit> {
+  return request('/item-units', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function deleteItemUnit(id: string): Promise<{ status: string }> {
+  return request(`/item-units/${id}`, { method: 'DELETE' });
 }
 
 export function createInventoryMovement(body: CreateInventoryMovementRequest): Promise<ApiInventoryMovement> {

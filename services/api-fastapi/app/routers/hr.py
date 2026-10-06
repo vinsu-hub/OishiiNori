@@ -109,13 +109,25 @@ def _get_pay_multiplier_rules() -> dict[str, dict]:
     return {r["scenario_key"]: r for r in (result.data or [])}
 
 
+# profiles.pay_rate is a DAILY rate (PHP per regular 8-hour workday, the
+# Philippine standard). Everything below works per hour, from the hourly
+# equivalent daily / 8: a full 8-hour regular day pays exactly the daily rate,
+# and OT / night-differential / holiday premiums use the same hourly base.
+HOURS_PER_WORKDAY = 8.0
+
+
+def hourly_from_daily(daily_rate: float) -> float:
+    return daily_rate / HOURS_PER_WORKDAY
+
+
 def _compute_pay_breakdown(
-    regular_hours: float, overtime_hours: float, night_diff_hours: float, pay_rate: float, rule: dict
+    regular_hours: float, overtime_hours: float, night_diff_hours: float, daily_rate: float, rule: dict
 ) -> dict:
     """DOLE-style breakdown for one attendance log. regular_pay bakes in the
     scenario's holiday/rest-day premium (first_8hr_pct); holiday_pay is
     reported separately as just the premium portion above a flat 100% rate.
     """
+    pay_rate = hourly_from_daily(daily_rate)
     first_8hr_pct = float(rule.get("first_8hr_pct", 100))
     ot_addon_pct = float(rule.get("ot_addon_pct", 0))
     night_diff_addon_pct = float(rule.get("night_diff_addon_pct", 0))
@@ -136,7 +148,7 @@ def _compute_pay_breakdown(
 
 
 def _compute_payroll_summary(supabase, date_from: date, date_to: date) -> dict:
-    """Aggregate attendance hours x pay_rate over a date range using each
+    """Aggregate attendance hours x hourly rate (daily pay_rate / 8) over a date range using each
     log's persisted day_scenario/regular_hours/overtime_hours/
     night_diff_hours, DOLE holiday/OT/night-diff multiplier engine (always
     on in this build -- unlike the SMFC reference there is no

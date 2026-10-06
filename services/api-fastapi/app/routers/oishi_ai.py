@@ -94,7 +94,7 @@ don't guess from the wrong one:
 - employee_roster: every employee's full_name, role, department,
   position, pay_rate, employee_number -- use for "what's X's pay rate",
   "how many employees do we have", "who works in kitchen vs cafe", or any
-  named-employee question. pay_rate is per hour in PHP. This is the only
+  named-employee question. pay_rate is a DAILY rate in PHP (per regular 8-hour day; hourly equivalent = pay_rate / 8). This is the only
   source of individual compensation figures -- never estimate a person's
   pay from payroll_analysis or payroll_history, which are aggregates only.
 - sales_trend_30d.daily_revenue: revenue per calendar day for the last 30

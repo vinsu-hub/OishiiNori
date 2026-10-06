@@ -110,7 +110,8 @@ def build_payslip_pdf(
     story.append(Paragraph("Summary", section_style))
     summary_data = [
         ["Total Hours Worked", f"{hours_worked:.2f} hrs"],
-        ["Hourly Rate", _money(pay_rate)],
+        ["Daily Rate", _money(pay_rate)],
+        ["Hourly Equivalent (daily ÷ 8)", _money(pay_rate / 8)],
     ]
     if regular_hours:
         summary_data.append(["Regular Hours", f"{regular_hours:.2f} hrs"])

@@ -628,6 +628,10 @@ class InventoryMovementCreate(BaseModel):
     # Advisory only -- batch-level expiry for this specific delivery, not
     # enforced FIFO consumption (see 0021's migration comment).
     expiry_date: date | None = None
+    # What the logger actually typed when they used a unit other than the
+    # base unit ("2" "pack") -- `quantity` is already converted to base units.
+    entered_quantity: float | None = Field(default=None, gt=0)
+    entered_unit: str | None = Field(default=None, max_length=30)
 
 
 class InventoryMovementResponse(BaseModel):
@@ -642,6 +646,24 @@ class InventoryMovementResponse(BaseModel):
     employee_id: str
     unit_cost_snapshot: float | None = None
     expiry_date: date | None = None
+    entered_quantity: float | None = None
+    entered_unit: str | None = None
+    created_at: datetime
+
+
+class ItemUnitCreate(BaseModel):
+    ingredient_id: str | None = None
+    stock_item_id: str | None = None
+    name: str = Field(min_length=1, max_length=30)
+    base_qty: float = Field(gt=0)
+
+
+class ItemUnitOut(BaseModel):
+    id: str
+    ingredient_id: str | None = None
+    stock_item_id: str | None = None
+    name: str
+    base_qty: float
     created_at: datetime
 
 
