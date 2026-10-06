@@ -461,3 +461,7 @@ input:not([type=radio]):not([type=checkbox]),textarea,select{font-size:16px!impo
 .on-site .on-hero-copy>p.on-sushi-story{font-size:clamp(40px,4.3vw,66px)!important;letter-spacing:-.01em}
 @media(max-width:767px){.on-site .on-hero-copy>p.on-sushi-story{font-size:clamp(38px,11vw,52px)!important}}
 @media(min-width:768px) and (max-width:1280px){.on-site .on-hero-copy>p.on-sushi-story{font-size:clamp(36px,3.7vw,46px)!important}}
+/* Crew collage: two photos side by side. */
+.on-crew-collage{grid-template-columns:1fr 1fr;grid-template-rows:auto}
+.on-crew-collage>:first-child{grid-row:auto}
+.on-crew-collage .on-photo,.on-crew-collage>:first-child .on-photo,.on-crew-collage>:not(:first-child) .on-photo{aspect-ratio:3/4;height:auto}
