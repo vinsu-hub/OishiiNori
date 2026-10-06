@@ -24,7 +24,7 @@ export default function Login() {
     setSubmitting(true);
     try {
       const identifier = email.trim();
-      // Employee ID (EMP-30F5), full email, or just the part before the @.
+      // Employee ID (EMP-0000), full email, or just the part before the @.
       const loginEmail = /^emp-[0-9a-f]{4}$/i.test(identifier)
         ? await resolveLoginEmail(identifier)
         : identifier.includes('@')
@@ -58,7 +58,7 @@ export default function Login() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 autoComplete="username"
-                placeholder="e.g. EMP-30F5"
+                placeholder="e.g. EMP-0000"
               />
             </div>
             <div className="space-y-2">

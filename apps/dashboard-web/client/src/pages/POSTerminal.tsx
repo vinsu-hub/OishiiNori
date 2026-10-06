@@ -496,6 +496,9 @@ export default function POSTerminal() {
         // path (window is captured before document), so it runs first and
         // still sees the real pre-close state.
         if (sizePickerProduct || ownerRequestOpen || editOrderOpen || cardTypePromptOpen) return;
+        // Same for popovers/dropdowns (Add-ons, Held, table picker): Esc
+        // should just close them, never wipe the order behind them.
+        if (document.querySelector('[data-radix-popper-content-wrapper], [role="dialog"]')) return;
         clearOrder();
       }
     }
@@ -1319,7 +1322,7 @@ export default function POSTerminal() {
         </div>
 
         <div className="w-96 border-l flex flex-col overflow-hidden">
-          <div className="p-4 border-b space-y-2">
+          <div className="shrink-0 p-4 border-b space-y-2">
           <div className="flex items-center justify-between gap-2">
             <h3 className="font-corp-display font-semibold">Current Order</h3>
             <div className="flex items-center gap-2">
@@ -1529,7 +1532,10 @@ export default function POSTerminal() {
             )}
           </div>
           </div>
-          <div className="flex-1 overflow-auto p-4 space-y-2">
+          {/* Cart + checkout options scroll together; totals and Charge stay
+              pinned below so they're always reachable on a 1280x800 tablet. */}
+          <div className="flex-1 min-h-0 overflow-y-auto">
+          <div className="p-4 space-y-2">
             {cart.length === 0 && <p className="text-sm text-muted-foreground">No items yet.</p>}
             {cart.map((line) => {
               const lineAddonsTotal = line.addons.reduce((s, a) => s + a.price * a.quantity, 0);
@@ -1775,6 +1781,10 @@ export default function POSTerminal() {
               </Button>
             </div>
 
+          </div>
+          </div>
+
+          <div className="shrink-0 p-4 border-t space-y-3">
             <div className="text-sm space-y-1">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Subtotal</span>

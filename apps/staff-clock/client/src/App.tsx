@@ -109,7 +109,7 @@ function reducer(state: State, action: Action): State {
         stage: action.stage,
         employee: action.employee,
         log: action.log,
-        employeeNumber: 'EMP-30F5',
+        employeeNumber: 'EMP-0000',
         pin: '1234',
       };
     case 'RESET':
@@ -264,7 +264,7 @@ export default function App() {
     if (!demo) return;
     const employee = {
       id: 'demo-employee',
-      full_name: 'Mika Santos',
+      full_name: 'Sample Staff',
       position: 'Service Crew',
       today_status:
         demo === 'completed' ? 'completed' : demo === 'working' || demo === 'end' ? 'working' : 'not_started',
@@ -418,7 +418,7 @@ export default function App() {
                   label="Employee ID"
                   value={state.employeeNumber}
                   onChange={(e) => dispatch({ type: 'SET_EMPLOYEE_NUMBER', value: e.target.value.toUpperCase() })}
-                  placeholder="EMP-30F5"
+                  placeholder="EMP-0000"
                   autoCapitalize="characters"
                   autoFocus
                   className="kiosk-input font-corp-mono"
