@@ -359,3 +359,105 @@ input:not([type=radio]):not([type=checkbox]),textarea,select{font-size:16px!impo
 /* The brush heading must fit its narrow editorial column at tablet widths. */
 @media(min-width:768px){.on-section-title h2{font-size:clamp(36px,4.6vw,70px)}}
 @media(max-width:767px){.on-about-hero .on-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.on-about-hero .on-actions .on-button{padding:12px 8px}}
+
+/* ===== Brand red refresh (2026-10): logo red #c10708, far less black. =====
+   Big surfaces that used to be ink are now logo red; ink stays for text. */
+.on-site{--on-red:#c10708;--on-red-deep:#8e0405;--on-gold:#ffd27a}
+:root{--red:#c10708;--red-dark:#8e0405}
+.on-button:hover{background:var(--on-red-deep)}
+.on-outline:hover{background:var(--on-red-deep);color:#fff!important}
+/* Nav: red pill, cream CTA so it doesn't vanish into the bar. */
+.on-nav,.on-links.is-open{background:var(--on-red)}
+.on-nav:before{box-shadow:0 12px 28px #8e040540}
+.on-links a:hover:after,.on-links a.is-active:after,.on-footer-nav a.is-active:after{background:var(--on-gold)}
+.on-nav .on-button:not(.on-outline){background:var(--on-paper);color:var(--on-red)!important}
+.on-nav .on-button:not(.on-outline):hover{background:#fff}
+.on-nav .on-outline{border-color:var(--on-paper);color:var(--on-paper)!important}
+.on-nav .on-outline:hover{background:var(--on-red-deep);color:#fff!important}
+/* Best sellers sits right after red-free content but next to categories: deep red. */
+.on-sellers{background-color:var(--on-red-deep)}
+.on-categories{background:var(--on-red)}
+.on-category-heading .on-eyebrow,.on-category-heading h2 span,.on-category-grid h3 span{color:var(--on-gold)}
+.on-category-grid>a{border-color:#ffffff55}
+.on-order>div+div{background:var(--on-red-deep)}
+.on-gallery{background:var(--on-red-deep)}
+.on-footer{background:var(--on-red)}
+.on-footer-details{border-color:#fff8}
+/* Our Menu sticky filter bar. */
+.on-menu-filters{background:var(--on-red)}
+.on-menu-filters a{border-color:#f4edda88}
+.on-menu-filters a[aria-current],.on-menu-filters a:hover{background:var(--on-paper);border-color:var(--on-paper);color:var(--on-red)}
+.on-menu-filters>div{background:linear-gradient(90deg,#c10708,transparent) left/16px 100% no-repeat,linear-gradient(270deg,#c10708,transparent) right/16px 100% no-repeat}
+.on-menu-filters:after{background:linear-gradient(90deg,transparent,#c10708)}
+.on-mobile-actions .on-outline{color:var(--on-red)!important;border-color:var(--on-red)}
+.on-japanese{background:#8e040599;text-shadow:none}
+
+/* Desktop nav now has 7 links (EVENTS added): 4 · logo · 3 · actions. */
+@media(min-width:1101px){
+  .on-nav{grid-template-columns:repeat(4,minmax(0,1fr)) 132px repeat(3,minmax(0,1fr)) 280px;gap:6px}
+  .on-links a:nth-child(7){grid-column:8;grid-row:1}
+  .on-nav-actions{grid-column:9}
+}
+@media(min-width:1101px) and (max-width:1280px){.on-links a{font-size:10.5px}.on-nav-actions .on-button{padding:9px 13px}}
+
+/* "Your Sushi Story" tagline. */
+.on-sushi-story{display:inline-block;position:relative;font-family:'Oishii Display','Bebas Neue',sans-serif;font-size:clamp(40px,4.4vw,64px);line-height:1;letter-spacing:-.01em;color:var(--on-red);margin:18px 0 6px!important;padding-bottom:10px}
+.on-sushi-story:after{content:'';position:absolute;left:0;right:-4%;bottom:0;height:9px;background:var(--on-red);border-radius:6px 40px 10px 30px;transform:rotate(-1.2deg);opacity:.85}
+.on-sushi-story em{font-style:normal;color:var(--on-ink)}
+.on-footer-story{display:block;font-family:'Oishii Display','Bebas Neue',sans-serif;font-size:30px;letter-spacing:.01em;color:var(--on-gold);margin-top:14px;line-height:1}
+@media(max-width:767px){.on-sushi-story{font-size:clamp(34px,10vw,46px)}}
+
+/* Join our crew: three-photo collage. */
+.on-crew-collage{display:grid;grid-template-columns:1.15fr 1fr;grid-template-rows:auto auto;gap:12px;max-width:520px}
+.on-crew-collage .on-photo{border-radius:10px;box-shadow:0 8px 20px #0002}
+.on-crew-collage>:first-child{grid-row:1/3}
+.on-crew-collage>:first-child .on-photo{aspect-ratio:3/4.2;height:100%}
+.on-crew-collage>:not(:first-child) .on-photo{aspect-ratio:4/3.6}
+.on-crew-collage img{object-position:center 30%}
+@media(max-width:767px){.on-crew-collage{max-width:100%}}
+
+/* ===== Events page ===== */
+.on-events-hero{display:grid;grid-template-columns:1.1fr .9fr;gap:48px;align-items:center;padding-top:170px;padding-bottom:64px;position:relative}
+.on-events-hero h1{font-size:clamp(76px,9vw,140px);line-height:.88;color:var(--on-ink);margin:8px 0 18px}
+.on-events-hero h1 span{color:var(--on-red);display:inline-block;position:relative}
+.on-events-hero h1 span:after{content:'';position:absolute;left:-2%;right:-2%;bottom:6%;height:14%;background:var(--on-red);opacity:.18;border-radius:20px;z-index:-1}
+.on-events-hero .on-events-sub{font-size:20px!important;font-weight:700;max-width:30ch;margin:0 0 10px}
+.on-events-hero .on-events-meta{font-size:13px!important;letter-spacing:.14em;font-weight:800;color:var(--on-red);margin:0 0 24px}
+.on-events-video{position:relative;justify-self:center;width:min(100%,360px);aspect-ratio:9/16;border-radius:22px;overflow:hidden;box-shadow:16px 18px 0 var(--on-red),0 18px 40px #0003;transform:rotate(2deg);background:#000}
+.on-events-video video{width:100%;height:100%;object-fit:cover;display:block}
+.on-events-video button{position:absolute;right:12px;bottom:12px;min-width:44px;min-height:44px;border-radius:999px;border:0;background:#000a;color:#fff;display:grid;place-items:center;cursor:pointer}
+.on-events-video figcaption{position:absolute;left:0;right:0;bottom:0;padding:40px 16px 16px;background:linear-gradient(transparent,#000b);color:#fff;font-size:12px;font-weight:800;letter-spacing:.12em}
+.on-events-story{background:var(--on-red);color:var(--on-paper)}
+.on-events-story .on-container{display:grid;grid-template-columns:.9fr 1.1fr;gap:56px;align-items:center}
+.on-events-story h2{font-size:clamp(48px,5.6vw,84px);color:var(--on-paper)}
+.on-events-story h2 span{color:var(--on-gold)}
+.on-events-story ul{list-style:none;padding:0;margin:20px 0 0;display:grid;gap:12px}
+.on-events-story li{display:flex;gap:12px;align-items:flex-start}
+.on-events-story li b{font-family:'Oishii Display','Bebas Neue',sans-serif;font-size:28px;line-height:1;color:var(--on-gold);min-width:34px}
+.on-events-story .on-photo{border-radius:14px;aspect-ratio:4/3;box-shadow:0 14px 30px #0004}
+.on-events-gallery-head{display:flex;justify-content:space-between;align-items:end;gap:24px;margin-bottom:28px}
+.on-events-gallery-head h2{font-size:clamp(44px,5vw,76px)}
+.on-events-gallery-head h2 span{color:var(--on-red)}
+.on-events-grid{columns:3 260px;column-gap:14px}
+.on-events-grid button{display:block;width:100%;margin:0 0 14px;padding:0;border:0;background:none;cursor:zoom-in;break-inside:avoid;border-radius:10px;overflow:hidden;position:relative}
+.on-events-grid img{display:block;width:100%;height:auto;transition:transform .45s}
+@media(hover:hover){.on-events-grid button:hover img{transform:scale(1.04)}}
+.on-events-grid button:focus-visible{outline:3px solid var(--on-red);outline-offset:3px}
+.on-events-cta{background:var(--on-red-deep);color:var(--on-paper);text-align:center}
+.on-events-cta .on-container{display:grid;justify-items:center;gap:14px}
+.on-events-cta h2{font-size:clamp(44px,5vw,78px);color:var(--on-paper)}
+.on-events-cta h2 span{color:var(--on-gold)}
+.on-events-cta p{max-width:52ch;margin:0}
+.on-events-cta .on-actions{display:flex;gap:12px;flex-wrap:wrap;justify-content:center}
+.on-events-cta .on-button:not(.on-outline){background:var(--on-paper);color:var(--on-red)!important}
+.on-lightbox{position:fixed;inset:0;z-index:100;background:#120302ee;display:grid;grid-template-columns:64px 1fr 64px;align-items:center;padding:24px 12px}
+.on-lightbox img{max-width:100%;max-height:calc(100dvh - 120px);margin:auto;border-radius:8px;box-shadow:0 20px 60px #0008}
+.on-lightbox button{min-width:48px;min-height:48px;border-radius:999px;border:1px solid #fff6;background:#0006;color:#fff;display:grid;place-items:center;cursor:pointer;justify-self:center}
+.on-lightbox .on-lightbox-close{position:absolute;top:16px;right:16px}
+.on-lightbox p{grid-column:1/-1;text-align:center;color:#fffc;font-size:13px!important;margin:12px 0 0}
+@media(max-width:900px){.on-events-hero{grid-template-columns:1fr;padding-top:130px;gap:36px}.on-events-video{width:min(78vw,320px)}.on-events-story .on-container{grid-template-columns:1fr;gap:28px}.on-events-gallery-head{display:block}}
+@media(max-width:767px){.on-events-hero{padding-top:110px}.on-events-grid{columns:2 140px;column-gap:10px}.on-events-grid button{margin-bottom:10px}.on-lightbox{grid-template-columns:48px 1fr 48px;padding:12px 4px}}
+@media(prefers-reduced-motion:reduce){.on-events-video{transform:none}}
+.on-site .on-hero-copy>p.on-sushi-story{font-size:clamp(40px,4.3vw,66px)!important;letter-spacing:-.01em}
+@media(max-width:767px){.on-site .on-hero-copy>p.on-sushi-story{font-size:clamp(38px,11vw,52px)!important}}
+@media(min-width:768px) and (max-width:1280px){.on-site .on-hero-copy>p.on-sushi-story{font-size:clamp(36px,3.7vw,46px)!important}}

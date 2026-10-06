@@ -144,6 +144,19 @@ function buildJsonLd(hours, route, products) {
     url: `${SITE_URL}/catering`,
     provider: { '@id': `${SITE_URL}/#restaurant` },
   });
+  if (route === '/events') schemas.push({
+    '@context': 'https://schema.org',
+    '@type': 'Event',
+    name: 'Sushi Making Class for Kids — Your Sushi Story',
+    description: 'A hands-on sushi-making class where kids learned to roll, slice and pack their own maki with the Oishii Nori crew.',
+    eventStatus: 'https://schema.org/EventScheduled',
+    eventAttendanceMode: 'https://schema.org/OfflineEventAttendanceMode',
+    startDate: '2026-10-04',
+    image: [`${SITE_URL}/events/sushi-kids/01.jpg`],
+    location: { '@id': `${SITE_URL}/#restaurant` },
+    organizer: { '@id': `${SITE_URL}/#restaurant` },
+    url: `${SITE_URL}/events`,
+  });
   return schemas.map(schema => `<script type="application/ld+json">${JSON.stringify(schema).replace(/</g, '\\u003c')}</script>`).join('\n    ');
 }
 
@@ -210,14 +223,16 @@ async function main() {
     console.log(`[prerender] fetched ${products.length} products, hours=${hours ? 'ok' : 'unavailable'}`);
 
     const pages = [
-      { route: '/', component: 'Home', title: 'Oishii Nori — Good food, good mood.',
-        description: 'Filipino-owned Oishii Nori serves fresh, authentic Japanese food with a Filipino twist. Everyday value in Santa Cruz, Laguna.', initialData: { products, hours } },
+      { route: '/', component: 'Home', title: 'Oishii Nori — Your Sushi Story. Japanese food with a Filipino twist.',
+        description: 'Your Sushi Story starts at Oishii Nori: a Filipino-owned kitchen serving fresh, authentic Japanese food with a Filipino twist in Santa Cruz, Laguna.', initialData: { products, hours } },
       { route: '/about', component: 'About', title: 'About | Oishii Nori — Filipino-Owned Japanese Kitchen in Santa Cruz, Laguna',
         description: 'Meet Oishii Nori, a Filipino-owned kitchen in Santa Cruz, Laguna serving fresh Japanese food with a Filipino twist, fair prices, and a warm welcome.', initialData: { hours } },
       { route: '/our-menu', component: 'OurMenu', title: 'Menu | Oishii Nori — Sushi, Ramen & Katsu in Santa Cruz, Laguna',
         description: 'Explore Oishii Nori’s live menu with real prices: Japanese favorites and rolls with a Filipino twist in Santa Cruz, Laguna. Find your next craving and order online.', initialData: { products } },
       { route: '/catering', component: 'Catering', title: 'Catering | Oishii Nori — Sushi Boats & Group Orders in Santa Cruz, Laguna',
         description: 'Bring Oishii Nori to your next gathering: fresh sushi boats, generous spreads, and group orders in Santa Cruz, Laguna. Share your occasion and let’s talk food.' },
+      { route: '/events', component: 'Events', title: 'Events | Oishii Nori — Your Sushi Story',
+        description: 'Little hands, big rolls: photos from Oishii Nori’s Sushi Making Class for Kids in Santa Cruz, Laguna. Book a sushi class for your school, party or team.' },
     ];
     const outputRoot = path.join(root, 'dist', 'public');
     const template = fs.readFileSync(path.join(outputRoot, 'index.html'), 'utf-8');

@@ -1,4 +1,4 @@
-# Oishii Nori
+# Oishii Nori — Your Sushi Story
 
 > A Filipino-owned kitchen serving authentic Japanese food with a distinctive Filipino twist -- sushi, ramen, tako/snacks, and cafe drinks in Santa Cruz, Laguna, Philippines.
 
@@ -10,6 +10,7 @@ Oishii Nori is a single-location restaurant known for baked sushi, maki rolls, r
 - About / our story: https://www.oishiinori.com/about
 - Menu: https://www.oishiinori.com/our-menu
 - Catering: https://www.oishiinori.com/catering
+- Events (Sushi Making Class for Kids): https://www.oishiinori.com/events
 - Customer reviews: https://www.oishiinori.com/review
 
 ## Location
