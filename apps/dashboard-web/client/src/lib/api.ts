@@ -73,25 +73,48 @@ async function fetchWithRetry(url: string, init: RequestInit, attempts = 3): Pro
   throw new Error('unreachable');
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+/**
+ * Authenticated fetch. On a 401 the access token is refreshed once and the
+ * request retried: a tablet that slept, or was switched to the RawBT app and
+ * back, can come back with Chrome's auto-refresh timer paused, so the cached
+ * token has quietly expired. If the refresh itself fails the session is
+ * really gone -- sign out so the app returns to the login screen instead of
+ * showing raw "Invalid or expired token" errors.
+ */
+async function authedFetch(path: string, init: RequestInit = {}, json = true): Promise<Response> {
   const {
     data: { session },
   } = await supabase.auth.getSession();
   if (!session) {
     throw new Error('Not signed in');
   }
-
-  const response = await fetchWithRetry(`${API_BASE_URL}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${session.access_token}`,
-    },
-    ...init,
-  });
+  const send = (token: string) =>
+    fetchWithRetry(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers: {
+        ...(json ? { 'Content-Type': 'application/json' } : {}),
+        ...(init.headers as Record<string, string> | undefined),
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  let response = await send(session.access_token);
+  if (response.status === 401) {
+    const { data, error } = await supabase.auth.refreshSession();
+    if (error || !data.session) {
+      await supabase.auth.signOut();
+      throw new Error('Your sign-in expired -- please sign in again');
+    }
+    response = await send(data.session.access_token);
+  }
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`API ${path} failed: ${response.status} ${body}`);
   }
+  return response;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await authedFetch(path, init);
   if (response.status === 204) {
     return undefined as T;
   }
@@ -99,43 +122,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 async function requestMultipart<T>(path: string, formData: FormData, method = 'POST'): Promise<T> {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  if (!session) {
-    throw new Error('Not signed in');
-  }
-
-  // Deliberately omits Content-Type -- the browser sets the multipart
-  // boundary itself when given a FormData body; setting it manually breaks
-  // the upload.
-  const response = await fetchWithRetry(`${API_BASE_URL}${path}`, {
-    method,
-    headers: { Authorization: `Bearer ${session.access_token}` },
-    body: formData,
-  });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`API ${path} failed: ${response.status} ${body}`);
-  }
+  // No Content-Type -- the browser sets the multipart boundary itself when
+  // given a FormData body; setting it manually breaks the upload.
+  const response = await authedFetch(path, { method, body: formData }, false);
   return response.json() as Promise<T>;
 }
 
 async function requestBlob(path: string): Promise<Blob> {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  if (!session) {
-    throw new Error('Not signed in');
-  }
-
-  const response = await fetchWithRetry(`${API_BASE_URL}${path}`, {
-    headers: { Authorization: `Bearer ${session.access_token}` },
-  });
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`API ${path} failed: ${response.status} ${body}`);
-  }
+  const response = await authedFetch(path, {}, false);
   return response.blob();
 }
 
