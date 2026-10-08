@@ -126,7 +126,6 @@ function htmlText(className: string, text: string): string {
 /** Self-contained 58mm receipt document, shared by the preview and the print iframe. */
 export function receiptHtml(r: ReceiptData): string {
   const name = r.business.name || 'OISHII NORI';
-  const footer = r.business.footer || 'Thank you! Please come again.';
   const vatSales = r.totalAmount - r.taxAmount - r.deliveryFee;
   const items = r.lines
     .map((line) => {
@@ -147,7 +146,7 @@ export function receiptHtml(r: ReceiptData): string {
     })
     .join('');
   return `<div class="receipt">
-    <header class="header"><div class="c b brand">${esc(name)}</div>${htmlText('c small detail', r.business.address || '')}${htmlText('c small detail', r.business.phone || '')}${htmlText('c small detail', r.business.tin ? `TIN: ${r.business.tin}` : '')}<div class="c slip-title">ORDER SLIP</div></header>
+    <header class="header"><div class="c b brand">${esc(name)}</div>${htmlText('c small detail', r.business.phone || '')}${htmlText('c small detail', r.business.tin ? `TIN: ${r.business.tin}` : '')}<div class="c slip-title">ORDER SLIP</div></header>
     <hr/><section class="order-number c"><div class="eyebrow">YOUR ORDER NUMBER</div><div class="b ticket">${r.orderNumber != null ? `#${r.orderNumber}` : '--'}</div><div class="small">Watch the screen for your number</div><div class="small">Now Serving = ready for pick-up</div></section>
     <hr/><section class="meta small">${htmlText('meta-line', orderTypeLabel(r))}${htmlText('meta-line', timestamp(r.openedAt))}${htmlText('meta-line', r.cashierName ? `Cashier: ${r.cashierName}` : '')}${htmlText('meta-line', r.reference ? `Ref: ${r.reference}` : '')}</section>
     <hr/><section class="items">${items}${row('Items:', String(r.itemCount))}</section><hr/>
@@ -155,7 +154,7 @@ export function receiptHtml(r: ReceiptData): string {
     ${r.taxAmount > 0 || r.vatExempt ? `<section class="vat small">${r.vatExempt ? row('VAT-exempt sales', formatCurrency(r.totalAmount - r.deliveryFee)) : row('VATable sales', formatCurrency(vatSales))}${!r.vatExempt && r.taxAmount > 0 ? row('VAT 12%', formatCurrency(r.taxAmount)) : ''}</section>` : ''}
     ${r.paymentMethod ? `<hr/><section class="payment">${row('Paid via', paymentLabel(r.paymentMethod))}${r.cashTendered != null ? row('Cash tendered', formatCurrency(r.cashTendered)) : ''}${r.cashTendered != null ? row('Change', formatCurrency(r.changeDue ?? 0)) : ''}</section>` : ''}
     ${r.delivery ? `<hr/><section class="delivery small"><div class="b">Deliver to:</div>${htmlText('delivery-line', r.delivery.customerName)}${htmlText('delivery-line', r.delivery.phone)}${htmlText('delivery-line', deliveryAddress(r.delivery))}</section>` : ''}
-    <hr/><footer class="c small"><div>${esc(footer)}</div><div class="b legal">THIS IS NOT AN OFFICIAL RECEIPT</div><div>Keep this slip until your order is served.</div></footer>
+    <hr/><footer class="c small"><div class="b legal">THIS IS NOT AN OFFICIAL RECEIPT</div><div>Keep this slip until your order is served.</div></footer>
   </div>`;
 }
 
@@ -200,14 +199,10 @@ export function receiptEscpos(
     }
   };
   const name = asciiSafe(r.business.name || 'OISHII NORI');
-  const footer = asciiSafe(
-    r.business.footer || 'Thank you! Please come again.',
-  );
   const vatSales = r.totalAmount - r.taxAmount - r.deliveryFee;
   p.align('center').bold(true).size('tall');
   centered(name);
   p.size('normal').bold(false);
-  if (r.business.address) centered(r.business.address);
   if (r.business.phone) centered(r.business.phone);
   if (r.business.tin) centered(`TIN: ${r.business.tin}`);
   p.bold(true);
@@ -274,7 +269,6 @@ export function receiptEscpos(
     if (address) textLines('', address);
   }
   p.line(divider).align('center');
-  centered(footer);
   p.bold(true);
   centered('THIS IS NOT AN OFFICIAL RECEIPT');
   p.bold(false);

@@ -302,7 +302,7 @@ export default function POSTerminal() {
   const [cardTypePromptOpen, setCardTypePromptOpen] = useState(false);
   // Independent of any discount's own vat_exempt -- lets a cashier book an
   // order non-VAT with no VAT-exempt discount applied.
-  const [vatOverride, setVatOverride] = useState<'vat' | 'non_vat'>('vat');
+  const [vatOverride, setVatOverride] = useState<'vat' | 'non_vat'>('non_vat');
 
   // Delivery (0051): a walk-in who wants their order delivered instead of
   // carried out. Behaves like Takeout (no table) everywhere else; this is
@@ -815,7 +815,7 @@ export default function POSTerminal() {
   function clearOrder() {
     setCart([]);
     setDiscountTypeId('none');
-    setVatOverride('vat');
+    setVatOverride('non_vat');
     setCashReceived('');
     clearOwnerRequest();
   }
@@ -975,7 +975,7 @@ export default function POSTerminal() {
         toast.warning(e.message);
         setCart([]);
         setDiscountTypeId('none');
-        setVatOverride('vat');
+        setVatOverride('non_vat');
         setTableNumber('');
         setPaymentMethod(null);
         setCardType(null);

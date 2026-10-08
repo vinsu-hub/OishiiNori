@@ -210,7 +210,8 @@ function ReceiptDetailsCard() {
           <p className="text-sm text-muted-foreground">Loading...</p>
         ) : (
           <>
-            {RECEIPT_FIELDS.map((field) => {
+            {/* Address and footer are kept in settings but no longer printed on the slip. */}
+            {RECEIPT_FIELDS.filter((field) => field.key !== 'address' && field.key !== 'footer').map((field) => {
               const id = `receipt-${field.key}`;
               const onChange = (value: string) => setDetails((d) => ({ ...d, [field.key]: value }));
               return (
