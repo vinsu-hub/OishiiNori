@@ -58,7 +58,8 @@ export function printReceiptAllowed(userRole?: string | null): boolean {
   return getTabletRole() !== 'kitchen' && userRole !== 'kitchen';
 }
 
-export const KITCHEN_RECEIPT_BLOCKED_MESSAGE = 'This is the kitchen tablet — customer receipts print at the cashier.';
+export const KITCHEN_RECEIPT_BLOCKED_MESSAGE =
+  'This tablet is set as the Kitchen tablet, so customer receipts are blocked here. If this is the cashier tablet, open Printer Setup → "This tablet is…" → Cashier counter.';
 
 export function setKitchenPrintOnAccept(on: boolean): void {
   write(KITCHEN_PRINT_KEY, on ? '1' : '0');
