@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Progress } from '@/components/ui/progress';
-import { CalendarDays, Printer, Volume2, VolumeX } from 'lucide-react';
+import { CalendarDays, Printer, Volume2, VolumeX, Zap } from 'lucide-react';
 import { BundleFulfillmentChecklist } from '@/components/kitchen/BundleFulfillmentChecklist';
 import { LogExtraUsageDialog } from '@/components/kitchen/LogExtraUsageDialog';
 import { useAuth } from '@/contexts/AuthContext';
@@ -32,7 +32,7 @@ import {
   type TicketOrder,
   type TicketProductIndex,
 } from '@/lib/kitchenTicket';
-import { sendToRawBT } from '@/lib/rawbt';
+import { rawbtServerAvailable, sendToRawBT, sendToRawBTServer } from '@/lib/rawbt';
 import { getKitchenPrintOnAccept, getTabletRole, setKitchenPrintOnAccept } from '@/lib/printerPrefs';
 import { POLL_INTERVAL_MS, toIsoDatePH, todayIsoPH } from '@/lib/constants';
 import { formatTimestamp12h } from '@/lib/utils';
@@ -49,6 +49,25 @@ const STATUS_LABEL: Record<KitchenStatus, string> = {
   ready: 'Ready',
   completed: 'Completed',
 };
+
+/** Kitchen tablet poll while auto-printing (new orders print within ~5s). */
+const AUTO_POLL_MS = 5_000;
+/** Orders this tablet already printed -- survives a reload so nothing prints twice. */
+const AUTO_PRINTED_KEY = 'oishii.kitchen.autoPrinted';
+function readAutoPrinted(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(AUTO_PRINTED_KEY) ?? '[]') as string[]);
+  } catch {
+    return new Set();
+  }
+}
+function writeAutoPrinted(ids: Set<string>) {
+  try {
+    localStorage.setItem(AUTO_PRINTED_KEY, JSON.stringify(Array.from(ids).slice(-300)));
+  } catch {
+    /* storage unavailable */
+  }
+}
 
 const NEXT_STATUS: Record<KitchenStatus, KitchenStatus | null> = {
   queued: 'preparing',
@@ -195,7 +214,8 @@ export default function KitchenDisplay() {
       .finally(() => setLoading(false));
   }, [dateFilter, soundOn]);
 
-  useVisiblePolling(load, POLL_INTERVAL_MS);
+  // The kitchen tablet auto-prints new orders, so it checks far more often.
+  useVisiblePolling(load, tabletRole === 'kitchen' ? AUTO_POLL_MS : POLL_INTERVAL_MS);
 
   // Lets Printer Setup show this tablet as the kitchen printer's host. It
   // only proves the page is open with printing on -- RawBT doesn't report
@@ -338,11 +358,94 @@ export default function KitchenDisplay() {
     );
   }, [visibleOrders, now]);
 
+  // ---- Auto-print: the kitchen tablet prints and accepts new orders itself ----
+  // 'server' = Server for RawBT is running, so orders print hands-free;
+  // 'tap' = only the RawBT app is available, which Chrome opens only from a
+  // tap, so new orders wait behind a single "Print next order" button.
+  const autoPrintOn = tabletRole === 'kitchen';
+  const [printPath, setPrintPath] = useState<'checking' | 'server' | 'tap'>('checking');
+  const autoPrintedRef = useRef<Set<string>>(readAutoPrinted());
+  const autoBusyRef = useRef(false);
+
+  useEffect(() => {
+    if (!autoPrintOn) return;
+    let cancelled = false;
+    const probe = () => rawbtServerAvailable().then((ok) => { if (!cancelled) setPrintPath(ok ? 'server' : 'tap'); });
+    probe();
+    const timer = setInterval(probe, 30_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [autoPrintOn]);
+
+  // Today's queued orders, oldest first -- the auto-print queue.
+  const pendingAuto = useMemo(
+    () =>
+      autoPrintOn
+        ? transactions
+            .filter((t) => t.kitchen_status === 'queued' && toIsoDatePH(t.opened_at) === todayIsoPH())
+            .sort((a, b) => a.opened_at.localeCompare(b.opened_at))
+        : [],
+    [autoPrintOn, transactions]
+  );
+
+  const acceptPrinted = useCallback(async (order: ApiTransaction) => {
+    try {
+      await updateKitchenStatus(order.id, 'preparing');
+    } catch {
+      /* stays queued; next poll retries the accept (it won't print again) */
+    }
+  }, []);
+
+  useEffect(() => {
+    if (printPath !== 'server' || autoBusyRef.current || pendingAuto.length === 0 || products.length === 0) return;
+    autoBusyRef.current = true;
+    (async () => {
+      let changed = false;
+      for (const order of pendingAuto) {
+        if (!autoPrintedRef.current.has(order.id)) {
+          try {
+            await sendToRawBTServer(kitchenTicketEscpos(order, ticketIndex));
+          } catch (e) {
+            const message = e instanceof Error ? e.message : 'Auto-print failed';
+            postKitchenPrinterHeartbeat({ status: 'error', error_message: message }).catch(() => {});
+            setPrintPath('tap');
+            break;
+          }
+          autoPrintedRef.current.add(order.id);
+          writeAutoPrinted(autoPrintedRef.current);
+          postKitchenPrinterHeartbeat({ status: 'ok', printed_order_number: order.order_number }).catch(() => {});
+          toast.success(`Ticket printed${order.order_number != null ? ` — order #${order.order_number}` : ''}`);
+        }
+        await acceptPrinted(order);
+        changed = true;
+      }
+      autoBusyRef.current = false;
+      if (changed) load();
+    })();
+  }, [printPath, pendingAuto, products.length, ticketIndex, acceptPrinted, load]);
+
+  /** Tap fallback: one tap prints the oldest waiting order and accepts it. */
+  async function printNextPending() {
+    const order = pendingAuto.find((o) => !autoPrintedRef.current.has(o.id)) ?? pendingAuto[0];
+    if (!order) return;
+    if (!autoPrintedRef.current.has(order.id)) {
+      if (!printTicket(order)) return;
+      autoPrintedRef.current.add(order.id);
+      writeAutoPrinted(autoPrintedRef.current);
+    }
+    await acceptPrinted(order);
+    load();
+  }
+
   async function handleAdvance(order: ApiTransaction) {
     const next = NEXT_STATUS[order.kitchen_status];
     if (!next) return;
     // Print first, while still inside the tap (see printTicket).
-    if (next === 'preparing' && printOn) printTicket(order);
+    if (next === 'preparing' && printOn && !autoPrintedRef.current.has(order.id)) {
+      if (printTicket(order)) {
+        autoPrintedRef.current.add(order.id);
+        writeAutoPrinted(autoPrintedRef.current);
+      }
+    }
     setUpdatingId(order.id);
     try {
       await updateKitchenStatus(order.id, next);
@@ -358,6 +461,22 @@ export default function KitchenDisplay() {
     <DashboardLayout title="Kitchen Display">
       <FullscreenButton corner="bottom-right" />
       <div className="p-6 space-y-4">
+        {autoPrintOn && printPath === 'tap' && pendingAuto.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border-2 border-primary bg-primary/10 p-4">
+            <div>
+              <p className="font-semibold">
+                {pendingAuto.length} new order{pendingAuto.length === 1 ? '' : 's'} waiting to print
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Tap once per order. To print automatically, open the Server for RawBT app on this tablet.
+              </p>
+            </div>
+            <Button size="lg" className="min-h-12" onClick={printNextPending}>
+              <Printer className="w-5 h-5" aria-hidden="true" /> Print next order
+              {pendingAuto[0]?.order_number != null ? ` (#${pendingAuto[0].order_number})` : ''}
+            </Button>
+          </div>
+        )}
         <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
           <div className="grid flex-1 grid-cols-2 gap-3 md:grid-cols-4 2xl:mr-4">
             {KITCHEN_STATUSES.map((status) => (
@@ -403,9 +522,22 @@ export default function KitchenDisplay() {
               </SelectContent>
             </Select>
             {tabletRole === 'kitchen' ? (
-              <span className="inline-flex min-h-10 items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground">
-                <Printer className="w-4 h-4" aria-hidden="true" />
-                Kitchen tablet — tickets print here
+              <span
+                className={`inline-flex min-h-10 items-center gap-2 rounded-md px-3 text-sm font-medium ${
+                  printPath === 'server' ? 'bg-green-600 text-white' : 'bg-primary text-primary-foreground'
+                }`}
+                title={
+                  printPath === 'server'
+                    ? 'New orders print and move to Preparing automatically.'
+                    : 'Start Server for RawBT on this tablet to print new orders automatically.'
+                }
+              >
+                {printPath === 'server' ? <Zap className="w-4 h-4" aria-hidden="true" /> : <Printer className="w-4 h-4" aria-hidden="true" />}
+                {printPath === 'server'
+                  ? 'Auto-print ON — new orders print by themselves'
+                  : printPath === 'checking'
+                    ? 'Kitchen tablet — checking printer…'
+                    : 'Kitchen tablet — tap to print (auto-print off)'}
               </span>
             ) : tabletRole === 'cashier' ? (
               <span className="inline-flex min-h-10 items-center gap-2 rounded-md border px-3 text-sm text-muted-foreground">
@@ -429,7 +561,14 @@ export default function KitchenDisplay() {
                 className="min-h-10"
                 variant="outline"
                 onClick={() => {
-                  if (printTicket({ ...SAMPLE_KITCHEN_ORDER, opened_at: new Date().toISOString() }, SAMPLE_KITCHEN_INDEX)) {
+                  const sample = { ...SAMPLE_KITCHEN_ORDER, opened_at: new Date().toISOString() };
+                  if (printPath === 'server') {
+                    sendToRawBTServer(kitchenTicketEscpos(sample, SAMPLE_KITCHEN_INDEX))
+                      .then(() => toast.success('Test ticket sent to Server for RawBT.'))
+                      .catch((e) => toast.error(e instanceof Error ? e.message : 'Test print failed'));
+                    return;
+                  }
+                  if (printTicket(sample, SAMPLE_KITCHEN_INDEX)) {
                     toast.success('Test ticket sent to RawBT.');
                   }
                 }}
