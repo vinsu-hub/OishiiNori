@@ -48,10 +48,11 @@ export async function getSavedSerialPrinter(): Promise<SerialPortLike | null> {
 export async function chooseSerialPrinter(): Promise<SerialPortLike> {
   const s = serial();
   if (!s) throw new Error('This browser cannot connect to a Bluetooth printer directly. Update Google Chrome.');
-  return s.requestPort({
-    allowedBluetoothServiceClassIds: [SPP_UUID],
-    filters: [{ bluetoothServiceClassId: SPP_UUID }],
-  });
+  // No filter: list every paired Bluetooth device. A strict SPP-UUID filter
+  // hid XPrinter models whose service record Android hadn't cached yet
+  // ("No compatible devices found"). allowedBluetoothServiceClassIds still
+  // lets Chrome open the standard serial (SPP) channel on the chosen printer.
+  return s.requestPort({ allowedBluetoothServiceClassIds: [SPP_UUID] });
 }
 
 let busy: Promise<void> = Promise.resolve();

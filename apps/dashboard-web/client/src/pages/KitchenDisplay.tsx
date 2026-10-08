@@ -455,7 +455,14 @@ export default function KitchenDisplay() {
       setPrintPath('serial');
       toast.success('Printer connected — new orders will print by themselves.');
     } catch (e) {
-      if (e instanceof Error && e.name === 'NotFoundError') return; // picker closed
+      if (e instanceof Error && e.name === 'NotFoundError') {
+        // Picker closed or empty -- usually Chrome lacks Android's "Nearby devices" permission.
+        toast.info(
+          'No printer chosen. If the list was empty: Android Settings → Apps → Chrome → Permissions → Nearby devices → Allow, and pair the kitchen printer in Bluetooth settings. Then tap Connect printer again.',
+          { duration: 12000 }
+        );
+        return;
+      }
       toast.error(e instanceof Error ? e.message : 'Could not connect the printer');
     }
   }
