@@ -155,13 +155,29 @@ def close_business_day(body: BusinessDayCloseRequest, user: CurrentUser = Depend
     start, end = ph_day_bounds_utc(d)
     tx_result = (
         supabase.table("transactions")
-        .select("total_amount")
+        .select("id, total_amount")
         .gte("opened_at", start)
         .lte("opened_at", end)
         .neq("status", "voided")
         .execute()
     )
-    system_eod_total = sum(float(t["total_amount"]) for t in tx_result.data)
+    # Pay-on-delivery orders (0062) still out with a rider aren't in the
+    # drawer yet, so they don't count toward the blind-count comparison.
+    unpaid_ids: set[str] = set()
+    try:
+        unpaid = (
+            supabase.table("transactions")
+            .select("id")
+            .gte("opened_at", start)
+            .lte("opened_at", end)
+            .eq("payment_status", "unpaid")
+            .neq("status", "voided")
+            .execute()
+        )
+        unpaid_ids = {r["id"] for r in unpaid.data}
+    except Exception:
+        pass
+    system_eod_total = sum(float(t["total_amount"]) for t in tx_result.data if t.get("id") not in unpaid_ids)
 
     update_result = (
         supabase.table("business_days")

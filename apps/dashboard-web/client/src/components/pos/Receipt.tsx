@@ -75,6 +75,8 @@ export interface ReceiptData {
   cashTendered: number | null;
   changeDue: number | null;
   itemCount: number;
+  /** Pay on delivery: the rider collects the total from the customer. */
+  payOnDelivery?: boolean;
 }
 
 const ORDER_TYPE_LABEL: Record<string, string> = {
@@ -152,7 +154,7 @@ export function receiptHtml(r: ReceiptData): string {
     <hr/><section class="items">${items}${row('Items:', String(r.itemCount))}</section><hr/>
     <section class="totals">${row('Subtotal', formatCurrency(r.subtotal))}${r.discountAmount > 0 ? row(`Discount (${r.discountLabel || 'Discount'})`, `-${formatCurrency(r.discountAmount)}`) : ''}${r.deliveryFee > 0 ? row('Delivery fee', formatCurrency(r.deliveryFee)) : ''}${row('TOTAL', formatCurrency(r.totalAmount), true)}</section>
     ${r.taxAmount > 0 || r.vatExempt ? `<section class="vat small">${r.vatExempt ? row('VAT-exempt sales', formatCurrency(r.totalAmount - r.deliveryFee)) : row('VATable sales', formatCurrency(vatSales))}${!r.vatExempt && r.taxAmount > 0 ? row('VAT 12%', formatCurrency(r.taxAmount)) : ''}</section>` : ''}
-    ${r.paymentMethod ? `<hr/><section class="payment">${row('Paid via', paymentLabel(r.paymentMethod))}${r.cashTendered != null ? row('Cash tendered', formatCurrency(r.cashTendered)) : ''}${r.cashTendered != null ? row('Change', formatCurrency(r.changeDue ?? 0)) : ''}</section>` : ''}
+    ${r.payOnDelivery ? `<hr/><section class="payment"><div class="c b">PAY ON DELIVERY</div>${row('Rider collects', formatCurrency(r.totalAmount), true)}</section>` : r.paymentMethod ? `<hr/><section class="payment">${row('Paid via', paymentLabel(r.paymentMethod))}${r.cashTendered != null ? row('Cash tendered', formatCurrency(r.cashTendered)) : ''}${r.cashTendered != null ? row('Change', formatCurrency(r.changeDue ?? 0)) : ''}</section>` : ''}
     ${r.delivery ? `<hr/><section class="delivery small"><div class="b">Deliver to:</div>${htmlText('delivery-line', r.delivery.customerName)}${htmlText('delivery-line', r.delivery.phone)}${htmlText('delivery-line', deliveryAddress(r.delivery))}</section>` : ''}
     <hr/><footer class="c small"><div class="b legal">THIS IS NOT AN OFFICIAL RECEIPT</div><div>Keep this slip until your order is served.</div></footer>
   </div>`;
@@ -251,7 +253,14 @@ export function receiptEscpos(
     else rows('VATable sales', money(vatSales));
     if (!r.vatExempt && r.taxAmount > 0) rows('VAT 12%', money(r.taxAmount));
   }
-  if (r.paymentMethod) {
+  if (r.payOnDelivery) {
+    p.line(divider).align('center').bold(true).size('tall');
+    centered('PAY ON DELIVERY');
+    p.size('normal');
+    p.align('left');
+    rows('Rider collects', money(r.totalAmount));
+    p.bold(false);
+  } else if (r.paymentMethod) {
     p.line(divider);
     rows('Paid via', paymentLabel(r.paymentMethod));
     if (r.cashTendered != null) {

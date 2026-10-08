@@ -42,8 +42,7 @@ import {
   Star,
   Mail,
   UserPlus,
-  Printer,
-} from 'lucide-react';
+  Printer, Bike } from 'lucide-react';
 
 interface SidebarProps {
   collapsed: boolean;
@@ -151,6 +150,9 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
     { icon: QrCode, label: 'Table Orders', href: '/pending-orders', badge: pendingTableOrders },
     { icon: ChefHat, label: 'Kitchen Display', href: '/kitchen-display' },
     { icon: Truck, label: 'Delivery Requests', href: '/delivery-requests' },
+    // Pay-on-delivery (Facebook/phone) orders the POS rang up: track the rider
+    // and record the cash when it comes back.
+    { icon: Bike, label: 'Deliveries', href: '/pos-deliveries' },
     ...(isManagerOrExecutive || hasGrant('online-orders')
       ? [{ icon: Truck, label: 'Online Orders', href: '/online-orders' }]
       : []),

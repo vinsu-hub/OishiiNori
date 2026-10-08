@@ -124,6 +124,11 @@ export default function Delivery() {
                   {formatCurrency(order.subtotal + (order.delivery?.delivery_fee ?? 0))}
                 </span>
               </div>
+              {order.payment_method?.startsWith('COLLECT CASH') && (
+                <p className="rounded-md bg-primary px-3 py-2 text-center font-bold text-primary-foreground">
+                  Collect {formatCurrency(order.subtotal + (order.delivery?.delivery_fee ?? 0))} cash — bring it back to the cashier
+                </p>
+              )}
               {order.delivery && (
                 <div className="text-sm">
                   <p className="font-medium">{order.delivery.customer_name}</p>

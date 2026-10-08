@@ -53,6 +53,8 @@ const Applicants = lazyWithReload(() => import('./pages/Applicants'), 'Applicant
 const Inquiries = lazyWithReload(() => import('./pages/Inquiries'), 'Inquiries');
 const Delivery = lazyWithReload(() => import('./pages/Delivery'), 'Delivery');
 const DeliveryRequests = lazyWithReload(() => import('./pages/DeliveryRequests'), 'DeliveryRequests');
+
+const PosDeliveries = lazyWithReload(() => import('./pages/PosDeliveries'), 'PosDeliveries');
 const OnlineOrders = lazyWithReload(() => import('./pages/OnlineOrders'), 'OnlineOrders');
 const ScheduledOrders = lazyWithReload(() => import('./pages/ScheduledOrders'), 'ScheduledOrders');
 const StockVS = lazyWithReload(() => import('./pages/StockVS'), 'StockVS');
@@ -109,6 +111,7 @@ function Router() {
         <Route path={'/inquiries'} component={Inquiries} />
         <Route path={'/delivery'} component={Delivery} />
         <Route path={'/delivery-requests'} component={DeliveryRequests} />
+        <Route path={'/pos-deliveries'} component={PosDeliveries} />
         <Route path={'/online-orders'} component={OnlineOrders} />
         <Route path={'/scheduled-orders'} component={ScheduledOrders} />
         <Route path={'/stock/vs'} component={StockVS} />

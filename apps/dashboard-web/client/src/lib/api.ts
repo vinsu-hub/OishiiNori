@@ -363,6 +363,8 @@ export interface CreateTransactionRequest {
     landmark?: string | null;
     barangay: string;
   } | null;
+  /** Pay on delivery: the rider collects the cash; recorded unpaid until settled. */
+  pay_on_delivery?: boolean;
   // Set once per submission attempt and resent on every retry/replay of
   // that attempt -- lets the backend recognize and no-op a duplicate if a
   // request actually succeeded but its response was lost. See createTransaction().
@@ -415,6 +417,9 @@ export interface ApiTransaction {
   card_type: TransactionCardType | null;
   force_vat_exempt: boolean;
   related_transaction_id: string | null;
+  /** 'unpaid' = pay-on-delivery order whose cash the rider hasn't handed in yet. */
+  payment_status?: 'paid' | 'unpaid';
+  paid_at?: string | null;
   items: ApiTransactionItem[];
   delivery: ApiDeliveryDetail | null;
 }
@@ -458,6 +463,14 @@ export function fetchTransaction(id: string): Promise<ApiTransaction> {
 
 export function closeTransaction(id: string): Promise<ApiTransaction> {
   return request(`/transactions/${id}/close`, { method: 'POST' });
+}
+
+/** Pay on delivery: the rider handed in the customer's money. */
+export function settleTransactionPayment(id: string, paymentMethod: 'cash' | 'gcash' = 'cash'): Promise<ApiTransaction> {
+  return request(`/transactions/${id}/settle-payment`, {
+    method: 'POST',
+    body: JSON.stringify({ payment_method: paymentMethod }),
+  });
 }
 
 export function voidTransaction(id: string, reason: string): Promise<ApiTransaction> {

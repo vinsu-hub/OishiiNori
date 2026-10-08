@@ -54,6 +54,7 @@ import {
   TransactionCardType,
   closeBusinessDay,
   createTransaction,
+  fetchTransactions,
   QueuedOfflineError,
   fetchAddons,
   fetchBusinessSettings,
@@ -114,6 +115,25 @@ function loadFavorites(): Set<string> {
 // survive ordinary in-app navigation, which was the actual bug: wouter
 // unmounts POSTerminal on route change, resetting plain component state),
 // not meant to persist indefinitely across days the way Favorites should.
+const POS_DRAFT_KEY = 'oishii.pos.draft.v1';
+interface PosDraft {
+  cart: CartLine[];
+  orderType: OrderType;
+  tableNumber: string;
+  guestCount: number;
+  discountTypeId: string;
+  vatOverride: 'vat' | 'non_vat';
+  paymentMethod: TransactionPaymentMethod | null;
+  cardType: TransactionCardType | null;
+  cashReceived: string;
+  payOnDelivery: boolean;
+  deliveryCustomerName: string;
+  deliveryCustomerPhone: string;
+  deliveryAddress: string;
+  deliveryLandmark: string;
+  deliveryBarangay: string;
+}
+
 function loadHeldCarts(): HeldCart[] {
   try {
     const raw = sessionStorage.getItem(HELD_CARTS_STORAGE_KEY);
@@ -193,6 +213,20 @@ export default function POSTerminal() {
   const [endDayStep, setEndDayStep] = useState<'register-total' | 'credentials'>('register-total');
   const [endDayForm, setEndDayForm] = useState({ cashRegisterTotal: '', employeeNumber: '', pin: '' });
   const [endDaySubmitting, setEndDaySubmitting] = useState(false);
+  // Pay-on-delivery cash still out with riders -- not in the drawer yet.
+  const [unpaidDeliveries, setUnpaidDeliveries] = useState<{ count: number; total: number }>({ count: 0, total: 0 });
+  useEffect(() => {
+    if (!endDayOpen) return;
+    fetchTransactions()
+      .then((all) => {
+        const open = all.filter((t) => t.payment_status === 'unpaid' && t.status !== 'voided');
+        setUnpaidDeliveries({
+          count: open.length,
+          total: open.reduce((sum, t) => sum + t.total_amount + (t.delivery?.delivery_fee ?? 0), 0),
+        });
+      })
+      .catch(() => setUnpaidDeliveries({ count: 0, total: 0 }));
+  }, [endDayOpen]);
 
   // WS-13: the backend 403s with a terse "did not match your logged-in
   // account" detail whenever the entered Employee Number + PIN belong to a
@@ -299,6 +333,8 @@ export default function POSTerminal() {
   const [paymentMethod, setPaymentMethod] = useState<TransactionPaymentMethod | null>(null);
   const [cardType, setCardType] = useState<TransactionCardType | null>(null);
   const [cashReceived, setCashReceived] = useState('');
+  // Delivery orders only: the rider collects the cash (Facebook/phone orders).
+  const [payOnDelivery, setPayOnDelivery] = useState(false);
   const [cardTypePromptOpen, setCardTypePromptOpen] = useState(false);
   // Independent of any discount's own vat_exempt -- lets a cashier book an
   // order non-VAT with no VAT-exempt discount applied.
@@ -314,6 +350,42 @@ export default function POSTerminal() {
   const [deliveryLandmark, setDeliveryLandmark] = useState('');
   const [deliveryBarangay, setDeliveryBarangay] = useState('');
   const [deliveryFees, setDeliveryFees] = useState<ApiDeliveryFee[]>([]);
+
+  // ---- Draft cache: an order in progress survives switching tabs/pages ----
+  // Saved on this device only (localStorage). Restored once on mount, and
+  // cleared naturally when the order is charged or cleared (state empties).
+  const draftRestoredRef = useRef(false);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(POS_DRAFT_KEY);
+      if (raw) {
+        const d = JSON.parse(raw) as PosDraft;
+        const hasContent =
+          d.cart?.length > 0 || !!d.deliveryCustomerName || !!d.deliveryAddress || !!d.deliveryCustomerPhone;
+        if (hasContent) {
+          setCart(d.cart ?? []);
+          setOrderType(d.orderType ?? 'dine_in');
+          setTableNumber(d.tableNumber ?? '');
+          setGuestCount(d.guestCount ?? 2);
+          setDiscountTypeId(d.discountTypeId ?? 'none');
+          setVatOverride(d.vatOverride ?? 'non_vat');
+          setPaymentMethod(d.paymentMethod ?? null);
+          setCardType(d.cardType ?? null);
+          setCashReceived(d.cashReceived ?? '');
+          setPayOnDelivery(!!d.payOnDelivery);
+          setDeliveryCustomerName(d.deliveryCustomerName ?? '');
+          setDeliveryCustomerPhone(d.deliveryCustomerPhone ?? '');
+          setDeliveryAddress(d.deliveryAddress ?? '');
+          setDeliveryLandmark(d.deliveryLandmark ?? '');
+          setDeliveryBarangay(d.deliveryBarangay ?? '');
+          toast.info('Restored the order you were working on.');
+        }
+      }
+    } catch {
+      /* corrupt or unavailable storage -- start fresh */
+    }
+    draftRestoredRef.current = true;
+  }, []);
   useEffect(() => {
     fetchDeliveryFees()
       .then(setDeliveryFees)
@@ -661,9 +733,12 @@ export default function POSTerminal() {
       if (!deliveryAddress.trim()) b.push('Enter the delivery address');
       if (!deliveryBarangay) b.push('Pick a barangay');
     }
-    if (!paymentMethod) b.push('Select a payment method');
-    if (paymentMethod === 'card' && !cardType) b.push('Select debit or credit');
-    if (paymentMethod === 'cash' && !cashReceivedIsSufficient) b.push('Enter the cash received');
+    const codSale = orderType === 'delivery' && payOnDelivery;
+    if (!codSale) {
+      if (!paymentMethod) b.push('Select a payment method');
+      if (paymentMethod === 'card' && !cardType) b.push('Select debit or credit');
+      if (paymentMethod === 'cash' && !cashReceivedIsSufficient) b.push('Enter the cash received');
+    }
     return b;
   }, [
     cart.length,
@@ -677,7 +752,50 @@ export default function POSTerminal() {
     paymentMethod,
     cardType,
     cashReceivedIsSufficient,
+    payOnDelivery,
     kitchenLocked,
+  ]);
+
+  useEffect(() => {
+    if (!draftRestoredRef.current) return;
+    const draft: PosDraft = {
+      cart,
+      orderType,
+      tableNumber,
+      guestCount,
+      discountTypeId,
+      vatOverride,
+      paymentMethod,
+      cardType,
+      cashReceived,
+      payOnDelivery,
+      deliveryCustomerName,
+      deliveryCustomerPhone,
+      deliveryAddress,
+      deliveryLandmark,
+      deliveryBarangay,
+    };
+    try {
+      localStorage.setItem(POS_DRAFT_KEY, JSON.stringify(draft));
+    } catch {
+      /* storage full/unavailable -- the draft just won't survive a page switch */
+    }
+  }, [
+    cart,
+    orderType,
+    tableNumber,
+    guestCount,
+    discountTypeId,
+    vatOverride,
+    paymentMethod,
+    cardType,
+    cashReceived,
+    payOnDelivery,
+    deliveryCustomerName,
+    deliveryCustomerPhone,
+    deliveryAddress,
+    deliveryLandmark,
+    deliveryBarangay,
   ]);
 
   function addToCart(product: ApiProduct, size: ApiProductSize) {
@@ -870,6 +988,7 @@ export default function POSTerminal() {
       toast.error(`Can't charge yet: ${chargeBlockers[0]}`);
       return;
     }
+    const codSale = orderType === 'delivery' && payOnDelivery;
     setSubmitting(true);
     try {
       const transaction = await createTransaction({
@@ -888,7 +1007,8 @@ export default function POSTerminal() {
         order_type: orderType,
         table_number: orderType === 'dine_in' ? Number(tableNumber) : null,
         guest_count: orderType === 'dine_in' ? guestCount : null,
-        payment_method: paymentMethod ?? undefined, // guaranteed set past chargeBlockers
+        payment_method: codSale ? 'cash' : paymentMethod ?? undefined, // guaranteed set past chargeBlockers
+        pay_on_delivery: codSale || undefined,
         card_type: cardType ?? undefined,
         force_vat_exempt: vatOverride === 'non_vat',
         reservation_override_id: overrideId ?? undefined,
@@ -922,15 +1042,16 @@ export default function POSTerminal() {
         deliveryFee,
         totalAmount: transaction.total_amount + deliveryFee,
         paymentMethod: transaction.payment_method,
+        payOnDelivery: codSale,
         business: receiptBusiness,
         cashierName: user.name ?? null,
         reference: transaction.id.slice(0, 8).toUpperCase(),
         subtotal,
         discountLabel: selectedDiscount ? `${selectedDiscount.name} (${selectedDiscount.percentage}%)` : null,
         vatExempt: selectedDiscount?.vat_exempt || vatOverride === 'non_vat',
-        cashTendered: paymentMethod === 'cash' ? cashReceivedAmount : null,
+        cashTendered: !codSale && paymentMethod === 'cash' ? cashReceivedAmount : null,
         changeDue:
-          paymentMethod === 'cash'
+          !codSale && paymentMethod === 'cash'
             ? Math.max(0, Math.round((cashReceivedAmount - (transaction.total_amount + deliveryFee)) * 100) / 100)
             : null,
         itemCount: cart.reduce((sum, line) => sum + line.quantity, 0),
@@ -963,6 +1084,8 @@ export default function POSTerminal() {
       setDeliveryAddress('');
       setDeliveryLandmark('');
       setDeliveryBarangay('');
+      setPayOnDelivery(false);
+      if (codSale) toast.info('Pay on delivery -- track it in the Deliveries tab and tap "Cash received" when the rider is back.');
       loadTableOptions();
     } catch (e) {
       if (e instanceof QueuedOfflineError) {
@@ -1663,6 +1786,25 @@ export default function POSTerminal() {
               </div>
             </div>
 
+            {orderType === 'delivery' && (
+              <button
+                type="button"
+                onClick={() => setPayOnDelivery((v) => !v)}
+                aria-pressed={payOnDelivery}
+                className={`w-full rounded border px-3 py-3 text-left text-sm ${
+                  payOnDelivery ? 'border-transparent bg-primary text-primary-foreground' : 'bg-card'
+                }`}
+              >
+                <span className="block font-semibold">
+                  {payOnDelivery ? '✓ Pay on delivery — rider collects the cash' : 'Pay on delivery (rider collects the cash)'}
+                </span>
+                <span className="block text-xs opacity-80">
+                  For Facebook/phone orders. The order goes to the kitchen now; settle it in Deliveries when the rider brings the money.
+                </span>
+              </button>
+            )}
+
+            {!(orderType === 'delivery' && payOnDelivery) && (
             <div>
               <Label className="text-xs">
                 Payment Method <span className="text-destructive">*</span>
@@ -1709,8 +1851,9 @@ export default function POSTerminal() {
                 <p className="mt-1 text-xs text-destructive">Required before charging.</p>
               )}
             </div>
+            )}
 
-            {paymentMethod === 'cash' && (
+            {paymentMethod === 'cash' && !(orderType === 'delivery' && payOnDelivery) && (
               <div className="space-y-2 rounded-md border bg-muted/30 p-3">
                 <Label htmlFor="cash-received" className="text-xs">Amount received <span className="text-destructive">*</span></Label>
                 <Input
@@ -1918,6 +2061,14 @@ export default function POSTerminal() {
                 : 'Confirm your own kiosk credentials to close today.'}
             </DialogDescription>
           </DialogHeader>
+          {unpaidDeliveries.count > 0 && (
+            <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+              {unpaidDeliveries.count} pay-on-delivery order{unpaidDeliveries.count === 1 ? '' : 's'} (
+              {formatCurrency(unpaidDeliveries.total)}) {unpaidDeliveries.count === 1 ? 'is' : 'are'} still with a rider and{' '}
+              {unpaidDeliveries.count === 1 ? "isn't" : "aren't"} counted in today’s drawer. If the rider is back, record it
+              in <b>Deliveries → Cash received</b> before closing.
+            </p>
+          )}
           {endDayStep === 'register-total' ? (
             <>
               <div>

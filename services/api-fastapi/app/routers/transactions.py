@@ -18,6 +18,7 @@ from app.schemas import (
     DeliveryCaptureIn,
     KitchenStatus,
     KitchenStatusUpdateRequest,
+    SettlePaymentRequest,
     SwitchTableRequest,
     TransactionResponse,
     VoidTransactionRequest,
@@ -59,6 +60,7 @@ _transaction_order_number_supported: bool | None = None
 _business_days_supported: bool | None = None
 _transaction_card_vat_supported: bool | None = None
 _deliveries_transaction_id_supported: bool | None = None
+_payment_status_supported: bool | None = None
 
 
 def _business_days_supported_check(supabase) -> bool:
@@ -136,6 +138,18 @@ def _transaction_order_context_supported_check(supabase) -> bool:
         except APIError:
             _transaction_order_context_supported = False
     return _transaction_order_context_supported
+
+
+def _payment_status_supported_check(supabase) -> bool:
+    """Migration 0062 feature-detection (pay on delivery), same pattern."""
+    global _payment_status_supported
+    if _payment_status_supported is None:
+        try:
+            supabase.table("transactions").select("payment_status, paid_at").limit(1).execute()
+            _payment_status_supported = True
+        except APIError:
+            _payment_status_supported = False
+    return _payment_status_supported
 
 
 def _transaction_order_number_supported_check(supabase) -> bool:
@@ -414,7 +428,11 @@ def fetch_transaction_delivery_ticket(supabase, transaction_id: str) -> dict | N
         "table_number": None,
         "order_channel": "delivery",
         "status": "approved",
-        "payment_method": transaction.get("payment_method") or "cash",
+        "payment_method": (
+            f"COLLECT CASH: PHP {float(transaction['total_amount']):,.2f}"
+            if transaction.get("payment_status") == "unpaid"
+            else transaction.get("payment_method") or "cash"
+        ),
         "payment_proof_url": None,
         "customer_note": None,
         "subtotal": transaction["total_amount"],
@@ -445,6 +463,7 @@ def _create_transaction_row(
     force_vat_exempt: bool = False,
     related_transaction_id: str | None = None,
     delivery: DeliveryCaptureIn | None = None,
+    pay_on_delivery: bool = False,
 ) -> TransactionResponse:
     """Insert a transaction + items, deduct non-bundle recipe ingredients,
     and compute discount/tax. Shared by POS sale creation (create_transaction
@@ -558,6 +577,10 @@ def _create_transaction_row(
         insert_payload["force_vat_exempt"] = force_vat_exempt
     if related_transaction_id:
         insert_payload["related_transaction_id"] = related_transaction_id
+    if pay_on_delivery:
+        if not _payment_status_supported_check(supabase):
+            raise HTTPException(status_code=501, detail="Pay on delivery needs database migration 0062")
+        insert_payload["payment_status"] = "unpaid"
 
     transaction_insert = supabase.table("transactions").insert(insert_payload).execute()
     transaction = transaction_insert.data[0]
@@ -706,6 +729,10 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
         raise HTTPException(status_code=400, detail="Customer/address details are required for delivery orders")
     # Payment method is a hard requirement at the POS (unlike a discount) so the
     # till reconciles. The digital-order approval path doesn't come through here.
+    if body.pay_on_delivery and body.order_type != "delivery":
+        raise HTTPException(status_code=400, detail="Pay on delivery is only for delivery orders")
+    if body.pay_on_delivery and not body.payment_method:
+        body.payment_method = "cash"  # what the rider will collect
     if not body.payment_method:
         raise HTTPException(status_code=400, detail="Payment method is required")
     if body.payment_method == "card" and not body.card_type:
@@ -798,6 +825,7 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
         force_vat_exempt=body.force_vat_exempt,
         related_transaction_id=body.related_transaction_id,
         delivery=body.delivery,
+        pay_on_delivery=body.pay_on_delivery,
     )
 
     if consumed_override_id is not None:
@@ -890,6 +918,8 @@ def list_transactions(
     )
     if _transaction_order_number_supported_check(supabase):
         columns += ", order_number"
+    if _payment_status_supported_check(supabase):
+        columns += ", payment_status, paid_at"
     query = supabase.table("transactions").select(columns)
     if on_date:
         start, end = ph_day_bounds_utc(on_date)
@@ -973,6 +1003,36 @@ def close_transaction(transaction_id: str, user: CurrentUser = Depends(get_curre
     updated_row.setdefault("card_type", None)
     updated_row.setdefault("force_vat_exempt", False)
     return TransactionResponse(**updated_row, items=transaction["items"])
+
+
+@router.post("/transactions/{transaction_id}/settle-payment", response_model=TransactionResponse)
+def settle_payment(transaction_id: str, body: SettlePaymentRequest, user: CurrentUser = Depends(get_current_user)):
+    """Pay on delivery: the rider is back with the customer's money. Marks the
+    sale paid (it now counts toward the drawer) -- any front-of-house staff
+    can receive it, not just the cashier who rang it up."""
+    if user.role in ("kitchen", "rider", "stocker"):
+        raise HTTPException(status_code=403, detail="Only front-of-house staff can receive payments")
+    supabase = get_supabase()
+    if not _payment_status_supported_check(supabase):
+        raise HTTPException(status_code=501, detail="Pay on delivery needs database migration 0062")
+    transaction = _fetch_transaction_with_items(supabase, transaction_id)
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if transaction["status"] == "voided":
+        raise HTTPException(status_code=400, detail="This order was voided")
+    if transaction.get("payment_status") != "unpaid":
+        raise HTTPException(status_code=409, detail="This order is already paid")
+    supabase.table("transactions").update(
+        {
+            "payment_status": "paid",
+            "paid_at": datetime.now(timezone.utc).isoformat(),
+            "paid_by": user.id,
+            "payment_method": body.payment_method,
+        }
+    ).eq("id", transaction_id).execute()
+    refreshed = _fetch_transaction_with_items(supabase, transaction_id)
+    items = refreshed.pop("items")
+    return TransactionResponse(**refreshed, items=items)
 
 
 @router.post("/transactions/{transaction_id}/switch-table", response_model=TransactionResponse)

@@ -233,6 +233,9 @@ class CreateTransactionRequest(BaseModel):
     # same "requirement depends on another field" posture as
     # CreateDigitalOrderRequest's own delivery fields).
     delivery: DeliveryCaptureIn | None = None
+    # Pay on delivery (0062): the rider collects the cash. Delivery orders
+    # only; the sale is recorded unpaid until settled at the counter.
+    pay_on_delivery: bool = False
     # Independent of any discount's own vat_exempt -- lets the cashier book
     # an order non-VAT with no VAT-exempt discount applied (POS VAT/Non-VAT
     # toggle). A discount's own vat_exempt still applies regardless of this.
@@ -300,6 +303,8 @@ class TransactionResponse(BaseModel):
     card_type: TransactionCardType | None = None
     force_vat_exempt: bool = False
     related_transaction_id: str | None = None
+    payment_status: Literal["paid", "unpaid"] = "paid"
+    paid_at: datetime | None = None
     items: list[TransactionItemResponse] = Field(default_factory=list)
     delivery: DeliveryDetailOut | None = None
 
@@ -310,6 +315,10 @@ class VoidTransactionRequest(BaseModel):
 
 class SwitchTableRequest(BaseModel):
     new_table_number: int = Field(gt=0)
+
+
+class SettlePaymentRequest(BaseModel):
+    payment_method: Literal["cash", "gcash"] = "cash"
 
 
 class KitchenStatusUpdateRequest(BaseModel):
