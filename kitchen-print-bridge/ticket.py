@@ -157,27 +157,39 @@ def render_preview_text(transaction: dict, product_index: dict, width: int = 32)
 def print_ticket(printer, transaction: dict, product_index: dict, width: int = 32) -> None:
     """Writes the full ticket to `printer` (any escpos.printer.Escpos
     subclass -- Serial for the real device, Dummy for a dry run) and cuts
-    the paper. Caller is responsible for opening/closing the connection."""
+    the paper. Caller is responsible for opening/closing the connection.
+
+    Big-print layout (matches the tablet's kitchenTicket.ts): order number
+    and table at double width+height, items at double width+height in bold
+    wrapped to half the paper width, holds/add-ons at double height in bold."""
     divider = "-" * width
+    wide = width // 2
 
-    printer.set(align="center", bold=True, double_height=True)
-    for line in build_ticket_header(transaction, width):
-        printer.text(line + "\n")
+    header = build_ticket_header(transaction, wide)
+    time_line = header.pop() if header else ""
+    printer.set(align="center", bold=True, double_width=True, double_height=True)
+    for line in header:
+        printer.text(line.strip() + "\n")
+    printer.set(align="center", bold=True, double_width=False, double_height=True)
+    printer.text(time_line.strip() + "\n")
 
-    printer.set(align="left", bold=False, double_height=False)
+    printer.set(align="left", bold=False, double_width=False, double_height=False)
     printer.text(divider + "\n")
 
     for item in transaction.get("items", []):
-        head_lines, sub_lines = build_item_lines(item, product_index, width)
-        printer.set(align="left", bold=True, double_height=False)
+        head_lines, _ = build_item_lines(item, product_index, wide)
+        _, sub_lines = build_item_lines(item, product_index, width)
+        printer.set(align="left", bold=True, double_width=True, double_height=True)
         for line in head_lines:
             printer.text(line + "\n")
         if sub_lines:
-            printer.set(align="left", bold=False, double_height=False)
+            printer.set(align="left", bold=True, double_width=False, double_height=True)
             for line in sub_lines:
                 printer.text(line + "\n")
+        printer.set(align="left", bold=False, double_width=False, double_height=False)
+        printer.text("\n")
 
-    printer.set(align="left", bold=False, double_height=False)
+    printer.set(align="left", bold=False, double_width=False, double_height=False)
     printer.text(divider + "\n")
     printer.text("\n")
     printer.cut()

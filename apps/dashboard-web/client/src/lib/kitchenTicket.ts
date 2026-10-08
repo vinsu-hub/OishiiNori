@@ -97,17 +97,27 @@ export function kitchenTicketText(order: TicketOrder, index: TicketProductIndex,
   return lines.join('\n');
 }
 
+/** Big-print layout for reading from across the kitchen: order number and
+ * table at double width+height, item lines at double width+height in bold
+ * (wrapped to half the paper width), and holds/add-ons at double height in
+ * bold so "NO ..." can't be missed. Time and dividers stay normal size. */
 export function kitchenTicketEscpos(order: TicketOrder, index: TicketProductIndex, width = PAPER_WIDTH_CHARS): Uint8Array {
   const divider = '-'.repeat(width);
-  const p = new EscPos().align('center').bold(true).size('tall');
-  for (const line of buildTicketHeader(order, width)) p.line(line);
+  const wide = Math.floor(width / 2); // chars per line at double width
+  const header = buildTicketHeader(order, wide);
+  const time = header.pop() ?? '';
+  const p = new EscPos().align('center').bold(true).size('large');
+  for (const line of header) p.line(line.trim());
+  p.size('tall').line(time.trim());
   p.align('left').bold(false).size('normal').line(divider);
   for (const item of order.items) {
-    const { head, sub } = buildItemLines(item, index, width);
-    p.bold(true);
+    const { head } = buildItemLines(item, index, wide);
+    const { sub } = buildItemLines(item, index, width);
+    p.bold(true).size('large');
     for (const line of head) p.line(line);
-    p.bold(false);
+    p.size('tall');
     for (const line of sub) p.line(line);
+    p.size('normal').bold(false).feed(1);
   }
   return p.line(divider).cut().build();
 }
