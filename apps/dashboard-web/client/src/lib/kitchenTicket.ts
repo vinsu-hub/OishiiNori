@@ -256,7 +256,7 @@ export function kitchenTicketRaster(order: TicketOrder, index: TicketProductInde
   const pixels = ctx.getImageData(0, 0, DOTS, height).data;
   const rowBytes = DOTS / 8;
   const out: number[] = [0x1b, 0x40, 0x1b, 0x61, 0x00];
-  const BAND = 120;
+  const BAND = 48; // small bands: cheap printers drop data from big single images
   for (let top = 0; top < height; top += BAND) {
     const rows = Math.min(BAND, height - top);
     out.push(0x1d, 0x76, 0x30, 0x00, rowBytes & 0xff, rowBytes >> 8, rows & 0xff, rows >> 8);

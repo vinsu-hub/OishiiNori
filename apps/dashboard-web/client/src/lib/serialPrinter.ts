@@ -55,6 +55,10 @@ export async function chooseSerialPrinter(): Promise<SerialPortLike> {
   return s.requestPort({ allowedBluetoothServiceClassIds: [SPP_UUID] });
 }
 
+const CHUNK_BYTES = 512;
+const CHUNK_PAUSE_MS = 60; // ~8 KB/s, below what Bluetooth SPP printers sustain
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 let busy: Promise<void> = Promise.resolve();
 
 /** Prints raw ESC/POS bytes on the saved printer. Jobs are queued one at a time. */
@@ -66,12 +70,20 @@ export function printViaSerial(bytes: Uint8Array): Promise<void> {
     try {
       const writer = port.writable!.getWriter();
       try {
-        await writer.write(bytes);
+        // Paced chunks: a 58mm printer has a small buffer and a picture
+        // ticket is ~30 KB. Dumping it in one write and closing the link
+        // right away cut tickets off half-way.
+        for (let i = 0; i < bytes.length; i += CHUNK_BYTES) {
+          await writer.ready;
+          await writer.write(bytes.subarray(i, i + CHUNK_BYTES));
+          await sleep(CHUNK_PAUSE_MS);
+        }
+        await writer.ready;
       } finally {
         writer.releaseLock();
       }
-      // Let the printer finish receiving before the link closes.
-      await new Promise((r) => setTimeout(r, 400));
+      // Keep the link open until the printer has had time to take it all.
+      await sleep(1500);
     } finally {
       await port.close().catch(() => {});
     }
