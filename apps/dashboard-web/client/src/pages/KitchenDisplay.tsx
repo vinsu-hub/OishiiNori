@@ -33,6 +33,7 @@ import {
   type TicketProductIndex,
 } from '@/lib/kitchenTicket';
 import { rawbtServerAvailable, sendToRawBT, sendToRawBTServer } from '@/lib/rawbt';
+import { chooseSerialPrinter, getSavedSerialPrinter, printViaSerial, serialPrintingSupported } from '@/lib/serialPrinter';
 import { getKitchenPrintOnAccept, getTabletRole, setKitchenPrintOnAccept } from '@/lib/printerPrefs';
 import { POLL_INTERVAL_MS, toIsoDatePH, todayIsoPH } from '@/lib/constants';
 import { formatTimestamp12h } from '@/lib/utils';
@@ -162,6 +163,8 @@ export default function KitchenDisplay() {
   // for the cashier tablet -- only an "other" device has a free toggle.
   const tabletRole = getTabletRole();
   const seenQueuedIdsRef = useRef<Set<string> | null>(null);
+  /** Set while a hands-free printer is available, so taps (Reprint/Accept) use it too. */
+  const handsFreeRef = useRef<((bytes: Uint8Array) => Promise<void>) | null>(null);
   const seenOverdueIdsRef = useRef<Set<string>>(new Set());
 
   // Separate 1s tick (elapsed-time labels/progress bars) from the 20s data
@@ -247,6 +250,12 @@ export default function KitchenDisplay() {
     if (tabletRole === 'cashier') {
       toast.error('This is the cashier tablet — kitchen tickets print in the kitchen.');
       return false;
+    }
+    if (handsFreeRef.current) {
+      handsFreeRef.current(kitchenTicketEscpos(order, index))
+        .then(() => postKitchenPrinterHeartbeat({ status: 'ok', printed_order_number: order.order_number }).catch(() => {}))
+        .catch((e) => toast.error(e instanceof Error ? e.message : 'Failed to print ticket'));
+      return true;
     }
     try {
       sendToRawBT(kitchenTicketEscpos(order, index));
@@ -359,18 +368,30 @@ export default function KitchenDisplay() {
   }, [visibleOrders, now]);
 
   // ---- Auto-print: the kitchen tablet prints and accepts new orders itself ----
-  // 'server' = Server for RawBT is running, so orders print hands-free;
+  // 'serial' = Chrome talks to the Bluetooth printer directly (Web Serial),
+  // 'server' = Server for RawBT is running -- both print hands-free;
   // 'tap' = only the RawBT app is available, which Chrome opens only from a
   // tap, so new orders wait behind a single "Print next order" button.
   const autoPrintOn = tabletRole === 'kitchen';
-  const [printPath, setPrintPath] = useState<'checking' | 'server' | 'tap'>('checking');
+  const [printPath, setPrintPath] = useState<'checking' | 'serial' | 'server' | 'tap'>('checking');
+  const handsFree = printPath === 'serial' || printPath === 'server';
+  const sendHandsFree = useCallback(
+    (bytes: Uint8Array) => (printPath === 'serial' ? printViaSerial(bytes) : sendToRawBTServer(bytes)),
+    [printPath]
+  );
   const autoPrintedRef = useRef<Set<string>>(readAutoPrinted());
   const autoBusyRef = useRef(false);
 
   useEffect(() => {
     if (!autoPrintOn) return;
     let cancelled = false;
-    const probe = () => rawbtServerAvailable().then((ok) => { if (!cancelled) setPrintPath(ok ? 'server' : 'tap'); });
+    const probe = async () => {
+      const port = await getSavedSerialPrinter();
+      if (cancelled) return;
+      if (port) return setPrintPath('serial');
+      const ok = await rawbtServerAvailable();
+      if (!cancelled) setPrintPath(ok ? 'server' : 'tap');
+    };
     probe();
     const timer = setInterval(probe, 30_000);
     return () => { cancelled = true; clearInterval(timer); };
@@ -396,18 +417,18 @@ export default function KitchenDisplay() {
   }, []);
 
   useEffect(() => {
-    if (printPath !== 'server' || autoBusyRef.current || pendingAuto.length === 0 || products.length === 0) return;
+    if (!handsFree || autoBusyRef.current || pendingAuto.length === 0 || products.length === 0) return;
     autoBusyRef.current = true;
     (async () => {
       let changed = false;
       for (const order of pendingAuto) {
         if (!autoPrintedRef.current.has(order.id)) {
           try {
-            await sendToRawBTServer(kitchenTicketEscpos(order, ticketIndex));
+            await sendHandsFree(kitchenTicketEscpos(order, ticketIndex));
           } catch (e) {
             const message = e instanceof Error ? e.message : 'Auto-print failed';
             postKitchenPrinterHeartbeat({ status: 'error', error_message: message }).catch(() => {});
-            setPrintPath('tap');
+            toast.error(`Auto-print failed: ${message}`);
             break;
           }
           autoPrintedRef.current.add(order.id);
@@ -421,7 +442,23 @@ export default function KitchenDisplay() {
       autoBusyRef.current = false;
       if (changed) load();
     })();
-  }, [printPath, pendingAuto, products.length, ticketIndex, acceptPrinted, load]);
+  }, [handsFree, sendHandsFree, pendingAuto, products.length, ticketIndex, acceptPrinted, load]);
+
+  useEffect(() => {
+    handsFreeRef.current = handsFree ? sendHandsFree : null;
+  }, [handsFree, sendHandsFree]);
+
+  /** One-time tap: pick the kitchen printer in Chrome's Bluetooth list. */
+  async function connectPrinter() {
+    try {
+      await chooseSerialPrinter();
+      setPrintPath('serial');
+      toast.success('Printer connected — new orders will print by themselves.');
+    } catch (e) {
+      if (e instanceof Error && e.name === 'NotFoundError') return; // picker closed
+      toast.error(e instanceof Error ? e.message : 'Could not connect the printer');
+    }
+  }
 
   /** Tap fallback: one tap prints the oldest waiting order and accepts it. */
   async function printNextPending() {
@@ -468,7 +505,7 @@ export default function KitchenDisplay() {
                 {pendingAuto.length} new order{pendingAuto.length === 1 ? '' : 's'} waiting to print
               </p>
               <p className="text-sm text-muted-foreground">
-                Tap once per order. To print automatically, open the Server for RawBT app on this tablet.
+                Tap once per order — or tap “Connect printer (auto-print)” once and new orders will print by themselves.
               </p>
             </div>
             <Button size="lg" className="min-h-12" onClick={printNextPending}>
@@ -524,22 +561,27 @@ export default function KitchenDisplay() {
             {tabletRole === 'kitchen' ? (
               <span
                 className={`inline-flex min-h-10 items-center gap-2 rounded-md px-3 text-sm font-medium ${
-                  printPath === 'server' ? 'bg-green-600 text-white' : 'bg-primary text-primary-foreground'
+                  handsFree ? 'bg-green-600 text-white' : 'bg-primary text-primary-foreground'
                 }`}
                 title={
-                  printPath === 'server'
+                  handsFree
                     ? 'New orders print and move to Preparing automatically.'
-                    : 'Start Server for RawBT on this tablet to print new orders automatically.'
+                    : 'Tap Connect printer to print new orders automatically.'
                 }
               >
-                {printPath === 'server' ? <Zap className="w-4 h-4" aria-hidden="true" /> : <Printer className="w-4 h-4" aria-hidden="true" />}
-                {printPath === 'server'
+                {handsFree ? <Zap className="w-4 h-4" aria-hidden="true" /> : <Printer className="w-4 h-4" aria-hidden="true" />}
+                {handsFree
                   ? 'Auto-print ON — new orders print by themselves'
                   : printPath === 'checking'
                     ? 'Kitchen tablet — checking printer…'
                     : 'Kitchen tablet — tap to print (auto-print off)'}
               </span>
-            ) : tabletRole === 'cashier' ? (
+            ) : null}
+            {tabletRole === 'kitchen' && printPath === 'tap' && serialPrintingSupported() ? (
+              <Button className="min-h-10" onClick={connectPrinter}>
+                <Zap className="w-4 h-4" aria-hidden="true" /> Connect printer (auto-print)
+              </Button>
+            ) : tabletRole === 'kitchen' ? null : tabletRole === 'cashier' ? (
               <span className="inline-flex min-h-10 items-center gap-2 rounded-md border px-3 text-sm text-muted-foreground">
                 <Printer className="w-4 h-4" aria-hidden="true" />
                 Cashier tablet — tickets print in the kitchen
@@ -562,9 +604,9 @@ export default function KitchenDisplay() {
                 variant="outline"
                 onClick={() => {
                   const sample = { ...SAMPLE_KITCHEN_ORDER, opened_at: new Date().toISOString() };
-                  if (printPath === 'server') {
-                    sendToRawBTServer(kitchenTicketEscpos(sample, SAMPLE_KITCHEN_INDEX))
-                      .then(() => toast.success('Test ticket sent to Server for RawBT.'))
+                  if (handsFree) {
+                    sendHandsFree(kitchenTicketEscpos(sample, SAMPLE_KITCHEN_INDEX))
+                      .then(() => toast.success('Test ticket sent to the printer.'))
                       .catch((e) => toast.error(e instanceof Error ? e.message : 'Test print failed'));
                     return;
                   }

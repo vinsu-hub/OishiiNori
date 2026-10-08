@@ -104,14 +104,14 @@ After a real sale, tap "Charge". On the sale-complete screen, tap "Print order s
 1. On KITCHEN, a manager signs in and opens "Printer Setup".
 2. Under "This tablet is…", tap "Kitchen".
 3. Sign out, then sign in with the **Kitchen Tablet** account (its employee ID and password are on the separate login sheet). On first sign-in it asks for a new password; choose one and give it only to kitchen leads.
-4. **Turn on auto-print.** On KITCHEN, install **Server for RawBT** from the Play Store (it works alongside RawBT). Open it, choose the KITCHEN printer, keep ESC/POS and 58 mm, and tap Start. In Xiaomi settings, allow it to autostart and set battery saver to "No restrictions", as for RawBT.
-5. The tablet opens straight to "Kitchen Display". The green chip should read **"Auto-print ON — new orders print by themselves"**. If Chrome asks to allow access to devices on the local network, tap Allow.
+4. Update **Google Chrome** from the Play Store, and make sure the KITCHEN printer is paired in Android Bluetooth settings.
+5. **Turn on auto-print (one time).** On "Kitchen Display", tap **Connect printer (auto-print)**. Chrome lists nearby Bluetooth printers: choose the KITCHEN printer and tap Connect. The chip turns green: **"Auto-print ON — new orders print by themselves"**. Chrome remembers this, so after a reload or restart it turns on again with no tap. RawBT is not needed on the KITCHEN tablet for this.
 6. Tap "Test ticket" and check that the sample prints on KITCHEN.
 7. Leave the tablet signed in on Kitchen Display, in full screen, with the screen timeout set to Never. Auto-print only runs while the page is open and the screen is on.
 
 **Daily flow:** the cashier charges the sale, and within about 5 seconds the KITCHEN tablet prints the ticket by itself and moves the order to Preparing. Nobody needs to tap Accept. The kitchen then taps "Mark Ready" and "Complete" as usual. Each order prints only once, even if the page reloads. If paper jams or a ticket is missing, use "Reprint ticket" on an order that is preparing or ready.
 
-If Server for RawBT is not running, the chip shows "tap to print (auto-print off)" and a red bar appears: "N new orders waiting to print". Tap **Print next order** once per order (each tap prints and accepts the oldest waiting order), or start Server for RawBT again.
+If auto-print is off (the chip says "tap to print"), a red bar appears: "N new orders waiting to print". Tap **Print next order** once per order (each tap prints and accepts the oldest waiting order through RawBT), or tap **Connect printer (auto-print)** again. Note: a Bluetooth printer takes one connection at a time, so if RawBT is printing to the same printer at that moment, an auto-print can fail; it retries on the next new order, and "Reprint ticket" is always available.
 
 The Kitchen Tablet account can only see Kitchen Display and Order Queue. It cannot open POS, charge sales, void orders, request refunds or print customer slips, even if someone types another address.
 
