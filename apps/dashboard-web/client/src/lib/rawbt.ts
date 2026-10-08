@@ -19,10 +19,21 @@ export function rawbtIntentUrl(bytes: Uint8Array): string {
 }
 
 export function isAndroid(): boolean {
-  return typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent);
+  if (typeof navigator === 'undefined') return false;
+  if (/Android/i.test(navigator.userAgent)) return true;
+  const uaData = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData;
+  if (uaData?.platform && /Android/i.test(uaData.platform)) return true;
+  // Chrome on Android tablets defaults to "Desktop site", which reports a
+  // Linux desktop ("X11; Linux x86_64") instead of Android. A Linux browser
+  // with a touchscreen is, in practice, that tablet.
+  return /Linux/i.test(navigator.userAgent) && navigator.maxTouchPoints > 0;
 }
 
 export function sendToRawBT(bytes: Uint8Array): void {
-  if (!isAndroid()) throw new Error('RawBT printing only works on an Android tablet with the RawBT app installed.');
+  if (!isAndroid()) {
+    throw new Error(
+      'RawBT printing needs the Android tablet. If you are on the tablet, open Chrome\'s ⋮ menu and untick "Desktop site", then try again.'
+    );
+  }
   window.location.href = rawbtIntentUrl(bytes);
 }
