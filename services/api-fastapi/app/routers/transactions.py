@@ -1194,8 +1194,9 @@ def void_transaction(
 
 
 def _set_kitchen_status(supabase, transaction: dict, new_status: str, user: CurrentUser, allow_skip: bool) -> dict:
-    if user.role == "employee" and transaction["employee_id"] != user.id:
-        raise HTTPException(status_code=403, detail="Employees may only update their own orders")
+    # Any signed-in staff may move an order through the kitchen workflow --
+    # whoever is at the kitchen tablet accepts/readies orders rung up by any
+    # cashier. Ownership checks stay on money actions (void, refund).
     if transaction["status"] == "voided":
         raise HTTPException(status_code=400, detail="Cannot update a voided order")
 
