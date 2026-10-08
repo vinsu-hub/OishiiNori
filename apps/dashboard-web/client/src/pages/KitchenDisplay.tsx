@@ -797,7 +797,18 @@ export default function KitchenDisplay() {
                           })}
                         </ul>
 
-                        {next && (
+                        {order.kitchen_status === 'queued' && (
+                          // No Accept: the kitchen tablet prints each new order and moves it
+                          // to Preparing by itself (auto-print, or the "Print next order" bar).
+                          <p className="rounded-md border border-dashed px-3 py-2 text-center text-xs font-medium text-muted-foreground">
+                            {tabletRole === 'kitchen'
+                              ? handsFree
+                                ? 'Printing ticket…'
+                                : 'Waiting to print — tap “Print next order” above'
+                              : 'Sent to the kitchen printer'}
+                          </p>
+                        )}
+                        {next && order.kitchen_status !== 'queued' && (
                           <Button
                             className="w-full"
                             size="sm"

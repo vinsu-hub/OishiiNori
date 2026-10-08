@@ -7,7 +7,7 @@ Use this guide to set up the cashier tablet, kitchen tablet, their printers, and
 | Tablet | Printer label | What it prints | When it prints |
 |---|---|---|---|
 | CASHIER — POS Terminal | RECEIPT | Customer order slip | The cashier taps "Print order slip" after "Charge". |
-| KITCHEN — Kitchen Display | KITCHEN | Kitchen prep ticket | A kitchen staff member taps "Accept" on an order. |
+| KITCHEN — Kitchen Display | KITCHEN | Kitchen prep ticket | Automatically when a new order arrives (no Accept button). |
 
 Both printers are Xprinter XP-58H thermal printers. They use 58 mm paper and can connect by Bluetooth or USB. This guide uses Bluetooth and the free RawBT app.
 
@@ -121,14 +121,14 @@ The Kitchen Tablet account can only see Kitchen Display and Order Queue. It cann
 2. Make the browser full screen.
 3. Keep the TV connected to Wi-Fi and leave this page open.
 
-The large order number on the customer order slip is the same number shown on the TV. After the kitchen taps "Accept", it appears under "Now Preparing". After the kitchen taps "Mark Ready", it appears under "Now Serving". Customers can watch the TV and collect their order when their number appears under "Now Serving".
+The large order number on the customer order slip is the same number shown on the TV. When the kitchen ticket prints, it appears under "Now Preparing". After the kitchen taps "Mark Ready", it appears under "Now Serving". Customers can watch the TV and collect their order when their number appears under "Now Serving".
 
 ## Daily order flow
 
 1. Cashier takes the order and taps "Charge".
 2. Cashier taps "Print order slip" and gives the order slip to the customer.
 3. Customer watches the TV queue board for the large order number.
-4. Kitchen sees the order in "Kitchen Display" and taps "Accept". The KITCHEN ticket prints and the number appears under "Now Preparing".
+4. The KITCHEN ticket prints by itself and the order moves to "Preparing" on Kitchen Display; the number appears under "Now Preparing". There is no Accept button.
 5. When the food is ready, kitchen taps "Mark Ready". The number moves to "Now Serving".
 6. After handoff, kitchen taps "Complete".
 
