@@ -61,7 +61,12 @@ interface NavItem {
 export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile }: SidebarProps) {
   const { user } = useAuth();
   const { lowStockCount } = useInventoryAlerts();
-  const { pendingCount: pendingTableOrders } = useTableOrderAlerts();
+  const {
+    pendingCount: pendingTableOrders,
+    pendingPickupCount,
+    pendingDeliveryCount,
+    pendingScheduledCount,
+  } = useTableOrderAlerts();
   const [location, navigate] = useLocation();
   const search = useSearch();
 
@@ -150,7 +155,7 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
     // decision), so the badge here is how they notice one is waiting.
     { icon: QrCode, label: 'Table Orders', href: '/pending-orders', badge: pendingTableOrders },
     { icon: ChefHat, label: 'Kitchen Display', href: '/kitchen-display' },
-    { icon: Truck, label: 'Delivery Requests', href: '/delivery-requests' },
+    { icon: Truck, label: 'Delivery Requests', href: '/delivery-requests', badge: pendingDeliveryCount },
     // Pay-on-delivery (Facebook/phone) orders the POS rang up: track the rider
     // and record the cash when it comes back.
     { icon: Bike, label: 'Deliveries', href: '/pos-deliveries' },
@@ -158,10 +163,10 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
     { icon: Wallet, label: 'Expenses', href: '/expenses' },
     { icon: ClipboardList, label: 'Shift Reports', href: '/shift-reports' },
     ...(isManagerOrExecutive || hasGrant('online-orders')
-      ? [{ icon: Truck, label: 'Online Orders', href: '/online-orders' }]
+      ? [{ icon: Truck, label: 'Online Orders', href: '/online-orders', badge: pendingPickupCount }]
       : []),
     ...(isManagerOrExecutive || hasGrant('online-orders')
-      ? [{ icon: CalendarClock, label: 'Scheduled Orders', href: '/scheduled-orders' }]
+      ? [{ icon: CalendarClock, label: 'Scheduled Orders', href: '/scheduled-orders', badge: pendingScheduledCount }]
       : []),
     { icon: CalendarCheck, label: 'Reservations', href: '/reservations' },
   ];

@@ -148,7 +148,7 @@ function App() {
           <SyncProvider>
             <InventoryAlertsProvider>
               <TooltipProvider>
-                <Toaster />
+                <Toaster position="bottom-right" />
                 <Router />
               </TooltipProvider>
             </InventoryAlertsProvider>

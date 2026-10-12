@@ -72,3 +72,14 @@ export function playTableOrderBeep() {
     // See playNewOrderBeep.
   }
 }
+
+// Customer pickup or delivery order: a short three-note rising chime.
+export function playOnlineOrderBeep() {
+  try {
+    playBeep(523, 0, 130);
+    playBeep(659, 0.16, 130);
+    playBeep(784, 0.32, 210);
+  } catch {
+    // Browsers may require a user gesture before allowing audio.
+  }
+}
