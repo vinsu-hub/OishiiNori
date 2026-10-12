@@ -495,7 +495,7 @@ export interface OrderHistoryEntry {
   digital_order_id: string | null;
   order_number: number | null;
   placed_at: string;
-  period: 'morning' | 'afternoon' | 'evening';
+  period: 'overnight' | 'morning' | 'afternoon' | 'evening';
   labels: string[];
   status: string;
   approval_status: string | null;
@@ -537,8 +537,8 @@ export interface OrderHistoryEntry {
   outstanding: number;
 }
 
-export function fetchOrderHistory(date: string): Promise<OrderHistoryEntry[]> {
-  return request(`/order-history?date=${encodeURIComponent(date)}`);
+export function fetchOrderHistory(date: string, businessDay = false): Promise<OrderHistoryEntry[]> {
+  return request(`/order-history?date=${encodeURIComponent(date)}${businessDay ? '&business_day=true' : ''}`);
 }
 
 export function fetchAdvanceOrders(orderType: 'takeout' | 'delivery', dateFrom: string, dateBefore: string): Promise<ApiTransaction[]> {

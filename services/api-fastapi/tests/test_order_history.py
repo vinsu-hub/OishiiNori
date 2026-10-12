@@ -1,4 +1,4 @@
-"""Placed-date history: PH time blocks, digital de-duplication, and money."""
+"""Placed-date history: PH time blocks, 22:00 rollover, de-duplication, and money."""
 
 import unittest
 from datetime import date
@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
-from app.routers.order_history import _period, list_order_history
+from app.routers.order_history import _history_day_bounds_utc, _period, list_order_history
 
 
 class Query:
@@ -63,7 +63,42 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(_period("2026-10-11T22:00:00Z"), "morning")  # 06:00 PH
         self.assertEqual(_period("2026-10-12T04:00:00Z"), "afternoon")  # 12:00 PH
         self.assertEqual(_period("2026-10-12T10:00:00Z"), "evening")  # 18:00 PH
-        self.assertEqual(_period("2026-10-11T18:00:00Z"), "evening")  # 02:00 PH
+        self.assertEqual(_period("2026-10-11T18:00:00Z"), "overnight")  # 02:00 PH
+        self.assertEqual(_period("2026-10-12T14:00:00Z"), "overnight")  # 22:00 PH
+
+    def test_10pm_boundary_moves_orders_to_the_next_history_date(self):
+        self.assertEqual(_history_day_bounds_utc(date(2026, 10, 12)),
+                         ("2026-10-11T14:00:00+00:00", "2026-10-12T13:59:59.999999+00:00"))
+        db = DB(transactions=[
+            tx("before-previous", "2026-10-11T13:59:59+00:00", 10),
+            tx("at-previous", "2026-10-11T14:00:00+00:00", 20),
+            tx("overnight", "2026-10-11T18:00:00+00:00", 30),
+            tx("before-current", "2026-10-12T13:59:59+00:00", 40),
+            tx("at-current", "2026-10-12T14:00:00+00:00", 50),
+        ])
+        with patch("app.routers.order_history.get_supabase", return_value=db), \
+             patch("app.routers.order_history._item_discounts_supported_check", return_value=False), \
+             patch("app.routers.order_history._transaction_item_addons_supported_check", return_value=False):
+            history = list_order_history(date(2026, 10, 12), SimpleNamespace(role="employee"), True)
+            calendar = list_order_history(date(2026, 10, 12), SimpleNamespace(role="employee"))
+        self.assertEqual({row["id"] for row in history}, {"at-previous", "overnight", "before-current"})
+        self.assertEqual({row["id"] for row in calendar}, {"overnight", "before-current", "at-current"})
+        self.assertEqual({row["id"] for row in history if row["period"] == "overnight"},
+                         {"at-previous", "overnight"})
+
+    def test_linked_online_order_uses_placement_time_across_cutoff(self):
+        db = DB(
+            transactions=[tx("linked-tx", "2026-10-12T02:00:00+00:00", 150, order_source="online")],
+            digital_orders=[digital("online", "2026-10-11T14:00:00+00:00", "linked-tx")],
+        )
+        with patch("app.routers.order_history.get_supabase", return_value=db), \
+             patch("app.routers.order_history._item_discounts_supported_check", return_value=False), \
+             patch("app.routers.order_history._transaction_item_addons_supported_check", return_value=False):
+            history = list_order_history(date(2026, 10, 12), SimpleNamespace(role="employee"), True)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["id"], "online")
+        self.assertEqual(history[0]["transaction_id"], "linked-tx")
+        self.assertEqual(history[0]["period"], "overnight")
 
     def test_only_cashier_and_management_may_read_history(self):
         with self.assertRaises(HTTPException) as denied:

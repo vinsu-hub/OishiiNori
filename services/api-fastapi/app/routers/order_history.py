@@ -1,7 +1,7 @@
 """Placed-date order history, combining POS sales and digital order staging."""
 
 from collections import defaultdict
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -38,11 +38,26 @@ def _group(rows: list[dict], key: str) -> dict[str, list[dict]]:
 
 def _period(placed_at: str) -> str:
     hour = datetime.fromisoformat(placed_at.replace("Z", "+00:00")).astimezone(PH_TZ).hour
+    if hour >= 22 or hour < 6:
+        return "overnight"
     if 6 <= hour < 12:
         return "morning"
     if 12 <= hour < 18:
         return "afternoon"
     return "evening"
+
+
+def _history_day_bounds_utc(selected: date) -> tuple[str, str]:
+    """[Previous day 22:00, selected day 22:00) in Manila time."""
+    local_end = datetime.combine(selected, time(hour=22), tzinfo=PH_TZ)
+    start = (local_end - timedelta(days=1)).astimezone(timezone.utc)
+    end = local_end.astimezone(timezone.utc) - timedelta(microseconds=1)
+    return start.isoformat(), end.isoformat()
+
+
+def _current_history_date() -> date:
+    local_now = datetime.now(PH_TZ)
+    return local_now.date() + timedelta(days=local_now.hour >= 22)
 
 
 def _labels(tx: dict | None, digital: dict | None) -> list[str]:
@@ -189,12 +204,12 @@ def _build_entry(
 
 
 @router.get("/order-history")
-def list_order_history(on_date: date | None = Query(None, alias="date"), user: CurrentUser = Depends(get_current_user)):
+def list_order_history(on_date: date | None = Query(None, alias="date"), user: CurrentUser = Depends(get_current_user), business_day: bool = False):
     if user.role not in ("employee", "manager", "executive"):
         raise HTTPException(status_code=403, detail="Order history is for cashier and management accounts")
     db = get_supabase()
-    selected = on_date or today_ph()
-    start, end = ph_day_bounds_utc(selected)
+    selected = on_date or (_current_history_date() if business_day else today_ph())
+    start, end = _history_day_bounds_utc(selected) if business_day else ph_day_bounds_utc(selected)
     tx_day = _page_rows(db.table("transactions").select("*").gte("opened_at", start).lte("opened_at", end)
                         .order("opened_at").order("id"))
     digital_day = _page_rows(db.table("digital_orders").select("*").gte("created_at", start).lte("created_at", end)

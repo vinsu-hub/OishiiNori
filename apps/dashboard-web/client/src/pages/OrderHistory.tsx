@@ -8,14 +8,14 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { useAuth } from '@/contexts/AuthContext';
 import { fetchOrderHistory, type OrderHistoryEntry } from '@/lib/api';
-import { POLL_INTERVAL_MS, todayIsoPH } from '@/lib/constants';
+import { orderHistoryDateIsoPH, POLL_INTERVAL_MS } from '@/lib/constants';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 import { formatCurrency } from '@/lib/utils';
 
 const PERIODS = [
   { key: 'morning', title: 'Morning', hours: '6:00 AM – 11:59 AM' },
   { key: 'afternoon', title: 'Afternoon', hours: '12:00 PM – 5:59 PM' },
-  { key: 'evening', title: 'Evening', hours: '6:00 PM – 5:59 AM' },
+  { key: 'evening', title: 'Evening', hours: '6:00 PM – 9:59 PM' },
 ] as const;
 
 const phTime = new Intl.DateTimeFormat('en-PH', {
@@ -123,25 +123,44 @@ function OrderCard({ order }: { order: OrderHistoryEntry }) {
   </Card>;
 }
 
+function PeriodSection({ title, hours, orders, loading }: { title: string; hours: string; orders: OrderHistoryEntry[]; loading: boolean }) {
+  return <section aria-label={title} className="min-w-0 space-y-3">
+    <header className="flex items-baseline justify-between rounded-md bg-muted/50 px-3 py-2"><div><h2 className="font-corp-display text-lg font-semibold">{title}</h2><p className="text-xs text-muted-foreground">{hours}</p></div><Badge variant="secondary">{orders.length}</Badge></header>
+    {orders.map((order) => <OrderCard key={order.id} order={order} />)}
+    {!loading && orders.length === 0 && <p className="rounded-md border p-4 text-sm text-muted-foreground">No orders in this time block.</p>}
+  </section>;
+}
+
 export default function OrderHistory() {
   const { user } = useAuth();
   const allowed = user?.role === 'employee' || user?.role === 'manager' || user?.role === 'executive';
-  const [date, setDate] = useState(todayIsoPH);
+  const [date, setDate] = useState(orderHistoryDateIsoPH);
+  const [currentDate, setCurrentDate] = useState(orderHistoryDateIsoPH);
+  const [followCurrentDate, setFollowCurrentDate] = useState(true);
   const [orders, setOrders] = useState<OrderHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const requestVersion = useRef(0);
   const load = useCallback(() => {
     if (!allowed || !date) return;
+    const latest = orderHistoryDateIsoPH();
+    setCurrentDate(latest);
+    if (followCurrentDate && latest !== date) {
+      requestVersion.current++;
+      setLoading(true);
+      setOrders([]);
+      setDate(latest);
+      return;
+    }
     const version = ++requestVersion.current;
-    fetchOrderHistory(date).then((result) => {
+    fetchOrderHistory(date, true).then((result) => {
       if (version === requestVersion.current) setOrders(result);
     }).catch((error) => {
       if (version === requestVersion.current) toast.error(error instanceof Error ? error.message : 'Could not load order history');
     }).finally(() => {
       if (version === requestVersion.current) setLoading(false);
     });
-  }, [allowed, date]);
+  }, [allowed, date, followCurrentDate]);
   useVisiblePolling(load, POLL_INTERVAL_MS);
 
   const filtered = useMemo(() => {
@@ -156,24 +175,20 @@ export default function OrderHistory() {
   return <DashboardLayout title="Order History">
     <div className="space-y-5 p-4 sm:p-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
-        <div><h1 className="font-corp-display text-2xl font-semibold">Order History</h1><p className="text-sm text-muted-foreground">Every order placed on the selected Manila date, including pending and voided orders.</p></div>
+        <div><h1 className="font-corp-display text-2xl font-semibold">Order History</h1><p className="text-sm text-muted-foreground">Orders from 10:00 PM the previous Manila date through 9:59 PM on the selected date, including pending and voided orders.</p></div>
         <div className="flex flex-wrap items-end gap-2">
-          <label className="space-y-1 text-xs font-medium">Date <Input type="date" max={todayIsoPH()} value={date} onChange={(event) => { if (!event.target.value) return; requestVersion.current++; setLoading(true); setOrders([]); setDate(event.target.value); }} className="w-44" /></label>
+          <label className="space-y-1 text-xs font-medium">Date <Input type="date" max={currentDate} value={date} onChange={(event) => { if (!event.target.value) return; requestVersion.current++; setFollowCurrentDate(false); setLoading(true); setOrders([]); setDate(event.target.value); }} className="w-44" /></label>
           <Button type="button" variant="outline" onClick={() => { setLoading(true); load(); }}><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button>
         </div>
       </div>
       {!allowed ? <p className="text-sm text-destructive">This history is available to cashiers and management.</p> : <>
         <div className="relative max-w-md"><Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input className="pl-9" placeholder="Search order, customer, payment, or item" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
         <p className="text-sm text-muted-foreground">{loading ? 'Loading…' : `${filtered.length} order${filtered.length === 1 ? '' : 's'}`} · Paid amounts reflect recorded payments; cash tendered and change were not stored.</p>
-        <div className="grid gap-4 xl:grid-cols-3">
-          {PERIODS.map((period) => {
-            const items = filtered.filter((order) => order.period === period.key);
-            return <section key={period.key} aria-label={period.title} className="min-w-0 space-y-3">
-              <header className="flex items-baseline justify-between rounded-md bg-muted/50 px-3 py-2"><div><h2 className="font-corp-display text-lg font-semibold">{period.title}</h2><p className="text-xs text-muted-foreground">{period.hours}</p></div><Badge variant="secondary">{items.length}</Badge></header>
-              {items.map((order) => <OrderCard key={order.id} order={order} />)}
-              {!loading && items.length === 0 && <p className="rounded-md border p-4 text-sm text-muted-foreground">No orders in this time block.</p>}
-            </section>;
-          })}
+        <div className="space-y-4">
+          <PeriodSection title="Overnight" hours="10:00 PM previous date – 5:59 AM selected date" orders={filtered.filter((order) => order.period === 'overnight')} loading={loading} />
+          <div className="grid gap-4 xl:grid-cols-3">
+            {PERIODS.map((period) => <PeriodSection key={period.key} title={period.title} hours={period.hours} orders={filtered.filter((order) => order.period === period.key)} loading={loading} />)}
+          </div>
         </div>
       </>}
     </div>

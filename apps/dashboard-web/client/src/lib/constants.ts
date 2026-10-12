@@ -14,6 +14,12 @@ export function todayIsoPH(): string {
   return new Date(Date.now() + PH_UTC_OFFSET_MS).toISOString().slice(0, 10);
 }
 
+export function orderHistoryDateIsoPH(): string {
+  // A 22:00 Manila cutoff makes orders placed after closing belong to the
+  // following selected history date.
+  return new Date(Date.now() + PH_UTC_OFFSET_MS + 2 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
 export function daysAgoIsoPH(days: number): string {
   return new Date(Date.now() + PH_UTC_OFFSET_MS - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
