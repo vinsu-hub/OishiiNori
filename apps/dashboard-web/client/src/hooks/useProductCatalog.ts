@@ -22,7 +22,7 @@ let inFlight: Promise<ApiProduct[]> | null = null;
 function loadProductCatalog(): Promise<ApiProduct[]> {
   if (cachedProducts) return Promise.resolve(cachedProducts);
   if (!inFlight) {
-    inFlight = fetchProducts(true)
+    inFlight = fetchProducts(false) // Resolve pending/historical orders after menu changes.
       .then((products) => {
         cachedProducts = products;
         return products;

@@ -6,11 +6,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Loader2 } from 'lucide-react';
-import { ApiBusinessDay, ApiBusinessDayItemRow, fetchBusinessDayItems, fetchBusinessDays } from '@/lib/api';
-import { formatCurrency } from '@/lib/utils';
+import { ApiBusinessDay, ApiBusinessDayItemRow, ApiCashExpense, fetchBusinessDayItems, fetchBusinessDays, fetchCashExpenses } from '@/lib/api';
+import { formatCurrency, formatTimestamp12h } from '@/lib/utils';
 import { STOCK_TABLE_CELL_CLASS, STOCK_TABLE_HEAD_CLASS, STOCK_TABLE_ROW_CLASS } from '@/components/stock/stockTableStyle';
 
-type ItemSortKey = 'product_name' | 'category' | 'quantity_sold' | 'revenue';
+type ItemSortKey = 'product_name' | 'size_label' | 'category' | 'quantity_sold' | 'revenue';
 
 function SortIcon({ active, dir }: { active: boolean; dir: 'asc' | 'desc' }) {
   if (!active) return <ChevronsUpDown className="w-3.5 h-3.5 text-muted-foreground/40" />;
@@ -24,8 +24,7 @@ function SortIcon({ active, dir }: { active: boolean; dir: 'asc' | 'desc' }) {
 function BusinessDayItemsTable({ items }: { items: ApiBusinessDayItemRow[] }) {
   const [sortKey, setSortKey] = useState<ItemSortKey>('category');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
-  // End-of-day view: items grouped under their category with a subtotal per
-  // category (default). The flat, click-to-sort table stays one toggle away.
+  // End-of-day view: category, product subtotal, then every sold size.
   const [grouped, setGrouped] = useState(true);
 
   function handleSort(key: ItemSortKey) {
@@ -39,7 +38,7 @@ function BusinessDayItemsTable({ items }: { items: ApiBusinessDayItemRow[] }) {
 
   const sorted = [...items].sort((a, b) => {
     let cmp: number;
-    if (sortKey === 'product_name' || sortKey === 'category') {
+    if (sortKey === 'product_name' || sortKey === 'size_label' || sortKey === 'category') {
       cmp = a[sortKey].localeCompare(b[sortKey]);
     } else {
       cmp = a[sortKey] - b[sortKey];
@@ -58,12 +57,22 @@ function BusinessDayItemsTable({ items }: { items: ApiBusinessDayItemRow[] }) {
       byCategory.set(key, [...(byCategory.get(key) ?? []), item]);
     }
     return Array.from(byCategory.entries())
-      .map(([category, rows]) => ({
-        category,
-        rows: [...rows].sort((a, b) => b.quantity_sold - a.quantity_sold),
-        qty: rows.reduce((sum, r) => sum + r.quantity_sold, 0),
-        revenue: rows.reduce((sum, r) => sum + r.revenue, 0),
-      }))
+      .map(([category, rows]) => {
+        const byProduct = new Map<string, ApiBusinessDayItemRow[]>();
+        for (const row of rows) byProduct.set(row.product_id, [...(byProduct.get(row.product_id) ?? []), row]);
+        const products = Array.from(byProduct.entries()).map(([productId, sizes]) => ({
+          productId,
+          name: sizes[0].product_name,
+          sizes: [...sizes].sort((a, b) => b.quantity_sold - a.quantity_sold || a.size_label.localeCompare(b.size_label)),
+          qty: sizes.reduce((sum, row) => sum + row.quantity_sold, 0),
+          revenue: sizes.reduce((sum, row) => sum + row.revenue, 0),
+        })).sort((a, b) => b.qty - a.qty || a.name.localeCompare(b.name));
+        return {
+          category, products,
+          qty: rows.reduce((sum, r) => sum + r.quantity_sold, 0),
+          revenue: rows.reduce((sum, r) => sum + r.revenue, 0),
+        };
+      })
       .sort((a, b) => a.category.localeCompare(b.category));
   })();
 
@@ -75,7 +84,7 @@ function BusinessDayItemsTable({ items }: { items: ApiBusinessDayItemRow[] }) {
         aria-pressed={grouped}
         onClick={() => setGrouped((g) => !g)}
       >
-        {grouped ? 'Show flat sortable list' : 'Group by category'}
+        {grouped ? 'Show flat sortable list' : 'Group by category and product'}
       </button>
     </div>
   );
@@ -85,12 +94,13 @@ function BusinessDayItemsTable({ items }: { items: ApiBusinessDayItemRow[] }) {
       <div>
         {toggle}
         <div className="overflow-x-auto rounded-md border">
-        <Table aria-label="Items sold grouped by category">
+        <Table aria-label="Items sold by category, product, and size">
           <TableHeader>
             <TableRow className={STOCK_TABLE_ROW_CLASS}>
               <TableHead className={STOCK_TABLE_HEAD_CLASS}>Product</TableHead>
+              <TableHead className={STOCK_TABLE_HEAD_CLASS}>Size</TableHead>
               <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Qty sold</TableHead>
-              <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Revenue</TableHead>
+              <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Gross item sales</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -98,17 +108,29 @@ function BusinessDayItemsTable({ items }: { items: ApiBusinessDayItemRow[] }) {
               <React.Fragment key={g.category}>
                 <TableRow className={`${STOCK_TABLE_ROW_CLASS} bg-muted/60`}>
                   <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-corp-display font-semibold`}>{g.category}</TableCell>
+                  <TableCell className={STOCK_TABLE_CELL_CLASS} />
                   <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right font-semibold`}>{g.qty}</TableCell>
                   <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right font-semibold`}>
                     {formatCurrency(g.revenue)}
                   </TableCell>
                 </TableRow>
-                {g.rows.map((item) => (
-                  <TableRow key={item.product_id} className={STOCK_TABLE_ROW_CLASS}>
-                    <TableCell className={`${STOCK_TABLE_CELL_CLASS} pl-8 font-medium`}>{item.product_name}</TableCell>
-                    <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>{item.quantity_sold}</TableCell>
-                    <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>{formatCurrency(item.revenue)}</TableCell>
-                  </TableRow>
+                {g.products.map((product) => (
+                  <React.Fragment key={product.productId}>
+                    <TableRow className={`${STOCK_TABLE_ROW_CLASS} bg-muted/20`}>
+                      <TableCell className={`${STOCK_TABLE_CELL_CLASS} pl-8 font-semibold`}>{product.name}</TableCell>
+                      <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-xs text-muted-foreground`}>All sizes</TableCell>
+                      <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right font-semibold`}>{product.qty}</TableCell>
+                      <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right font-semibold`}>{formatCurrency(product.revenue)}</TableCell>
+                    </TableRow>
+                    {product.sizes.map((item) => (
+                      <TableRow key={item.product_size_id} className={STOCK_TABLE_ROW_CLASS}>
+                        <TableCell className={`${STOCK_TABLE_CELL_CLASS} pl-12 text-muted-foreground`}>↳</TableCell>
+                        <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-medium`}>{item.size_label}</TableCell>
+                        <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>{item.quantity_sold}</TableCell>
+                        <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>{formatCurrency(item.revenue)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </React.Fragment>
                 ))}
               </React.Fragment>
             ))}
@@ -121,9 +143,10 @@ function BusinessDayItemsTable({ items }: { items: ApiBusinessDayItemRow[] }) {
 
   const columns: { key: ItemSortKey; label: string; align?: 'right' }[] = [
     { key: 'product_name', label: 'Product' },
+    { key: 'size_label', label: 'Size' },
     { key: 'category', label: 'Category' },
     { key: 'quantity_sold', label: 'Qty sold', align: 'right' },
-    { key: 'revenue', label: 'Revenue', align: 'right' },
+    { key: 'revenue', label: 'Gross item sales', align: 'right' },
   ];
 
   return (
@@ -151,8 +174,9 @@ function BusinessDayItemsTable({ items }: { items: ApiBusinessDayItemRow[] }) {
       </TableHeader>
       <TableBody>
         {sorted.map((item) => (
-          <TableRow key={item.product_id} className={STOCK_TABLE_ROW_CLASS}>
+          <TableRow key={item.product_size_id} className={STOCK_TABLE_ROW_CLASS}>
             <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-medium`}>{item.product_name}</TableCell>
+            <TableCell className={STOCK_TABLE_CELL_CLASS}>{item.size_label}</TableCell>
             <TableCell className={STOCK_TABLE_CELL_CLASS}>{item.category}</TableCell>
             <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>{item.quantity_sold}</TableCell>
             <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>{formatCurrency(item.revenue)}</TableCell>
@@ -181,6 +205,9 @@ export default function BusinessDayReport() {
   const [expandedDate, setExpandedDate] = useState<string | null>(null);
   const [itemsByDate, setItemsByDate] = useState<Record<string, ApiBusinessDayItemRow[]>>({});
   const [itemsLoading, setItemsLoading] = useState<string | null>(null);
+  const [expensesByDate, setExpensesByDate] = useState<Record<string, ApiCashExpense[]>>({});
+  const [expensesLoading, setExpensesLoading] = useState<string | null>(null);
+  const [expensesError, setExpensesError] = useState<Record<string, string>>({});
 
   const load = useCallback(() => {
     setLoading(true);
@@ -206,6 +233,16 @@ export default function BusinessDayReport() {
         .then((res) => setItemsByDate((prev) => ({ ...prev, [businessDate]: res.items })))
         .catch((e) => toast.error(e instanceof Error ? e.message : 'Failed to load items sold'))
         .finally(() => setItemsLoading(null));
+    }
+    if (!expensesByDate[businessDate]) {
+      setExpensesLoading(businessDate);
+      fetchCashExpenses(businessDate)
+        .then((rows) => {
+          setExpensesByDate((prev) => ({ ...prev, [businessDate]: rows }));
+          setExpensesError((prev) => { const next = { ...prev }; delete next[businessDate]; return next; });
+        })
+        .catch((e) => setExpensesError((prev) => ({ ...prev, [businessDate]: e instanceof Error ? e.message : 'Could not load expenses' })))
+        .finally(() => setExpensesLoading(null));
     }
   }
 
@@ -245,7 +282,8 @@ export default function BusinessDayReport() {
                     <TableHead className={STOCK_TABLE_HEAD_CLASS}>Status</TableHead>
                     <TableHead className={STOCK_TABLE_HEAD_CLASS}>Menu confirmed</TableHead>
                     <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Register total</TableHead>
-                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>System total</TableHead>
+                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Net system total</TableHead>
+                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Expenses</TableHead>
                     <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Variance</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -284,6 +322,9 @@ export default function BusinessDayReport() {
                           <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>
                             {d.system_eod_total != null ? formatCurrency(d.system_eod_total) : '--'}
                           </TableCell>
+                          <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>
+                            {formatCurrency(d.expenses_total)}
+                          </TableCell>
                           <TableCell
                             className={`${STOCK_TABLE_CELL_CLASS} text-right font-semibold ${
                               d.variance != null && Math.abs(d.variance) > 0.01 ? 'text-destructive' : ''
@@ -294,9 +335,9 @@ export default function BusinessDayReport() {
                         </TableRow>
                         {expanded && (
                           <TableRow className={STOCK_TABLE_ROW_CLASS}>
-                            <TableCell colSpan={7} className="bg-muted/30 p-3">
+                            <TableCell colSpan={8} className="bg-muted/30 p-3">
                               <p className="text-xs font-medium text-muted-foreground mb-1 px-1">
-                                Total items sold -- {d.business_date}
+                                Items sold by product and size · {d.business_date} · all non-voided orders, including unpaid
                               </p>
                               {itemsLoading === d.business_date ? (
                                 <div className="flex items-center justify-center py-4 text-muted-foreground">
@@ -306,6 +347,15 @@ export default function BusinessDayReport() {
                               ) : (
                                 <BusinessDayItemsTable items={itemsByDate[d.business_date] ?? []} />
                               )}
+                              <div className="mt-5 border-t pt-4">
+                                <p className="mb-2 text-sm font-semibold">Register expenses · {formatCurrency(d.expenses_total)}</p>
+                                {expensesLoading === d.business_date ? <p className="text-sm text-muted-foreground">Loading expenses…</p>
+                                  : expensesError[d.business_date] ? <p role="alert" className="text-sm text-destructive">{expensesError[d.business_date]}</p>
+                                  : (expensesByDate[d.business_date] ?? []).length === 0 ? <p className="text-sm text-muted-foreground">No register expenses recorded.</p>
+                                  : <div className="overflow-x-auto"><Table aria-label={`Register expenses for ${d.business_date}`}><TableHeader><TableRow><TableHead>Time</TableHead><TableHead>Expense / purpose</TableHead><TableHead>Recorded by</TableHead><TableHead className="text-right">Amount</TableHead></TableRow></TableHeader><TableBody>
+                                    {expensesByDate[d.business_date].map((row) => <TableRow key={row.id}><TableCell>{formatTimestamp12h(row.created_at)}</TableCell><TableCell>{row.description}</TableCell><TableCell>{row.recorded_by_name ?? 'Unknown staff'}</TableCell><TableCell className="text-right">{formatCurrency(row.amount)}</TableCell></TableRow>)}
+                                  </TableBody></Table></div>}
+                              </div>
                             </TableCell>
                           </TableRow>
                         )}

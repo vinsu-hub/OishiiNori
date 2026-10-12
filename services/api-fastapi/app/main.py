@@ -8,8 +8,10 @@ from fastapi.responses import JSONResponse
 
 from app.routers import (
     analytics,
+    trend_insights,
     applicants,
     business_days,
+    cash_expenses,
     dashboard_summary,
     deliveries,
     digital_menu,
@@ -32,7 +34,9 @@ from app.routers import (
     refunds,
     reservations,
     reviews,
+    sales_insights,
     settings,
+    shift_reports,
     stock_items,
     transactions,
     utility_logs,
@@ -115,12 +119,16 @@ app.include_router(transactions.router)
 app.include_router(utility_logs.router)
 app.include_router(digital_menu.router)
 app.include_router(dashboard_summary.router)
+app.include_router(sales_insights.router)
 app.include_router(analytics.router)
+app.include_router(trend_insights.router)
 app.include_router(pnl.router)
 app.include_router(oishi_ai.router)
 app.include_router(settings.router)
 app.include_router(reservations.router)
 app.include_router(business_days.router)
+app.include_router(shift_reports.router)
+app.include_router(cash_expenses.router)
 app.include_router(refunds.router)
 app.include_router(deliveries.router)
 app.include_router(payment_methods.router)

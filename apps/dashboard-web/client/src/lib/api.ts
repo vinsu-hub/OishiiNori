@@ -311,9 +311,10 @@ export function fetchAddons(): Promise<ApiMenuAddon[]> {
 export type KitchenStatus = 'queued' | 'preparing' | 'ready' | 'completed';
 export type TransactionStatus = 'open' | 'closed' | 'voided';
 export type OrderType = 'dine_in' | 'takeout' | 'delivery';
+export type OrderSource = 'pos' | 'online' | 'grab' | 'qr';
 // Distinct from any digital-order payment-method type -- POS supports one
 // more value (card).
-export type TransactionPaymentMethod = 'cash' | 'gcash' | 'card';
+export type TransactionPaymentMethod = 'cash' | 'gcash' | 'card' | 'bdo' | 'maya';
 export type TransactionCardType = 'debit' | 'credit';
 
 export interface ApiMenuAddon {
@@ -344,6 +345,8 @@ export interface CreateTransactionRequest {
   owner_request_pin?: string | null;
   owner_request_note?: string | null;
   order_type?: OrderType | null;
+  order_source?: OrderSource;
+  delivery_fee?: number | null;
   table_number?: number | null;
   guest_count?: number | null;
   payment_method?: TransactionPaymentMethod | null;
@@ -363,8 +366,12 @@ export interface CreateTransactionRequest {
     landmark?: string | null;
     barangay: string;
   } | null;
-  /** Pay on delivery: the rider collects the cash; recorded unpaid until settled. */
+  /** Deferred delivery payment; recorded unpaid until collected. */
   pay_on_delivery?: boolean;
+  pay_on_pickup?: boolean;
+  scheduled_for?: string | null;
+  pickup_customer_name?: string | null;
+  pickup_customer_phone?: string | null;
   // Set once per submission attempt and resent on every retry/replay of
   // that attempt -- lets the backend recognize and no-op a duplicate if a
   // request actually succeeded but its response was lost. See createTransaction().
@@ -388,6 +395,7 @@ export interface ApiTransactionItem {
   unit_price: number;
   held_ingredients: string[];
   bundle_fulfilled: boolean;
+  bundle_deduction_status?: 'applied' | 'pending_recipe' | null;
   addons: ApiTransactionItemAddon[];
 }
 
@@ -411,15 +419,22 @@ export interface ApiTransaction {
   kitchen_status: KitchenStatus;
   kitchen_status_updated_at: string | null;
   order_type: OrderType | null;
+  order_source: OrderSource;
   table_number: number | null;
   guest_count: number | null;
   payment_method: TransactionPaymentMethod | null;
   card_type: TransactionCardType | null;
   force_vat_exempt: boolean;
   related_transaction_id: string | null;
-  /** 'unpaid' = pay-on-delivery order whose cash the rider hasn't handed in yet. */
+  /** 'unpaid' = deferred pickup or delivery payment not yet collected. */
   payment_status?: 'paid' | 'unpaid';
   paid_at?: string | null;
+  scheduled_for: string | null;
+  pickup_customer_name: string | null;
+  pickup_customer_phone: string | null;
+  advance_schedule_revision: number;
+  advance_schedule_updated_at: string | null;
+  advance_schedule_updated_by: string | null;
   items: ApiTransactionItem[];
   delivery: ApiDeliveryDetail | null;
 }
@@ -430,7 +445,7 @@ function _createTransactionRequest(body: CreateTransactionRequest): Promise<ApiT
 
 registerExecutor((payload) => _createTransactionRequest(payload as unknown as CreateTransactionRequest));
 
-export async function createTransaction(body: CreateTransactionRequest): Promise<ApiTransaction> {
+export async function createTransaction(body: CreateTransactionRequest, options?: { queueOffline?: boolean }): Promise<ApiTransaction> {
   // Generated once per submission attempt and reused for every retry of
   // that same attempt -- fetchWithRetry's in-request retries and, if it
   // still fails, the offline-queue replay of this same `body` all resend
@@ -441,7 +456,7 @@ export async function createTransaction(body: CreateTransactionRequest): Promise
   try {
     return await _createTransactionRequest(withKey);
   } catch (err) {
-    if (isNetworkError(err)) {
+    if (isNetworkError(err) && options?.queueOffline !== false) {
       enqueue(withKey as unknown as Record<string, unknown>);
       throw new QueuedOfflineError();
     }
@@ -457,6 +472,17 @@ export function fetchTransactions(params?: { date?: string; status?: Transaction
   return request(`/transactions${query ? `?${query}` : ''}`);
 }
 
+export function fetchAdvanceOrders(orderType: 'takeout' | 'delivery', dateFrom: string, dateBefore: string): Promise<ApiTransaction[]> {
+  const params = new URLSearchParams({ order_type: orderType, date_from: dateFrom, date_before: dateBefore });
+  return request(`/transactions/advance-orders?${params}`);
+}
+
+export function rescheduleAdvanceOrder(id: string, scheduledFor: string, expectedRevision: number): Promise<ApiTransaction> {
+  return request(`/transactions/${id}/advance-schedule`, {
+    method: 'PATCH', body: JSON.stringify({ scheduled_for: scheduledFor, expected_revision: expectedRevision }),
+  });
+}
+
 export function fetchTransaction(id: string): Promise<ApiTransaction> {
   return request(`/transactions/${id}`);
 }
@@ -465,11 +491,17 @@ export function closeTransaction(id: string): Promise<ApiTransaction> {
   return request(`/transactions/${id}/close`, { method: 'POST' });
 }
 
-/** Pay on delivery: the rider handed in the customer's money. */
-export function settleTransactionPayment(id: string, paymentMethod: 'cash' | 'gcash' = 'cash'): Promise<ApiTransaction> {
+/** Record payment for a deferred pickup or delivery order. */
+export function settleTransactionPayment(id: string, paymentMethod: TransactionPaymentMethod = 'cash', cardType?: TransactionCardType | null): Promise<ApiTransaction> {
   return request(`/transactions/${id}/settle-payment`, {
     method: 'POST',
-    body: JSON.stringify({ payment_method: paymentMethod }),
+    body: JSON.stringify({ payment_method: paymentMethod, card_type: cardType ?? null }),
+  });
+}
+
+export function updateRiderPayout(transactionId: string, riderPayout: number): Promise<ApiDeliveryDetail> {
+  return request(`/transactions/${transactionId}/rider-payout`, {
+    method: 'PATCH', body: JSON.stringify({ rider_payout: riderPayout }),
   });
 }
 
@@ -493,11 +525,25 @@ export interface BundleFulfillmentLine {
   quantity: number;
 }
 
+export interface BundleRecipeSource {
+  product_size_id: string;
+  pieces_per_serving: number;
+}
+
+export function fetchBundleRecipe(productId: string): Promise<BundleRecipeSource | null> {
+  return request(`/products/${productId}/bundle-recipe`);
+}
+
+export function saveBundleRecipe(productId: string, source: BundleRecipeSource): Promise<BundleRecipeSource> {
+  return request(`/products/${productId}/bundle-recipe`, { method: 'PUT', body: JSON.stringify(source) });
+}
+
 export interface ApiBundleFulfillmentResult {
   transaction_item_id: string;
   total_pieces: number;
   lines: BundleFulfillmentLine[];
   ingredients_deducted: { ingredient_id: string; ingredient_name: string; quantity: number; unit: string }[];
+  stock_deduction_status: 'applied' | 'pending_recipe';
 }
 
 export function submitBundleFulfillment(
@@ -507,7 +553,33 @@ export function submitBundleFulfillment(
 ): Promise<ApiBundleFulfillmentResult> {
   return request(`/transactions/${transactionId}/items/${itemId}/bundle-fulfillment`, {
     method: 'POST',
-    body: JSON.stringify({ lines }),
+    body: JSON.stringify({ lines, allow_pending_recipe: true }),
+  });
+}
+
+export interface PendingBundleDeduction {
+  transaction_item_id: string;
+  transaction_id: string;
+  order_number: number | null;
+  product_name: string;
+  reason: string;
+  created_at: string;
+}
+
+export function fetchPendingBundleDeductions(): Promise<PendingBundleDeduction[]> {
+  return request('/bundle-deductions/pending');
+}
+
+export function publishBundleRecipe(sizeId: string, items: {
+  ingredient_id: string; qty_per_serving: number; unit: string; prep_notes: string | null;
+}[]): Promise<{
+  recipe_items: ApiRecipeItem[];
+  reconciled_batches: number;
+  still_pending_batches: number;
+  reconciliation_error: string | null;
+}> {
+  return request(`/product-sizes/${sizeId}/bundle-recipe-publish`, {
+    method: 'PUT', body: JSON.stringify({ items }),
   });
 }
 
@@ -553,6 +625,7 @@ export interface ApiDeliveryDetail {
   landmark: string | null;
   barangay: string | null;
   delivery_fee: number | null;
+  rider_payout?: number | null;
   maps_pin_url: string | null;
   rider_id: string | null;
   rider_name: string | null;
@@ -1467,12 +1540,89 @@ export interface ApiDashboardSummary {
   utility_cost_today: number;
   utility_breakdown: ApiUtilityCostBreakdown[];
   by_department: ApiDepartmentBreakdown[];
+  by_order_source: { order_source: OrderSource; order_count: number; revenue: number }[];
   staff_clocked_in: number | null;
   hr_available: boolean;
 }
 
 export function fetchDashboardSummary(onDate?: string): Promise<ApiDashboardSummary> {
   return request(`/dashboard/summary${onDate ? `?date=${onDate}` : ''}`);
+}
+
+export type SalesPeriod = 'day' | 'week' | 'month';
+
+export interface ApiSalesInsights {
+  period: SalesPeriod;
+  anchor: string;
+  period_start: string;
+  period_end: string;
+  as_of: string;
+  comparison_start: string;
+  comparison_end: string;
+  revenue: number;
+  order_count: number;
+  average_order_value: number;
+  previous_revenue: number;
+  previous_order_count: number;
+  revenue_change_pct: number | null;
+  by_order_type: {
+    order_type: OrderType | 'unspecified';
+    revenue: number;
+    order_count: number;
+    average_order_value: number;
+    share_pct: number;
+    previous_revenue: number;
+    change_pct: number | null;
+  }[];
+  by_order_source: { order_source: OrderSource | 'unspecified'; revenue: number; order_count: number }[];
+  by_payment_method: { payment_method: string; revenue: number; order_count: number }[];
+  by_payment_source: { order_source: OrderSource | 'unspecified'; payment_method: string; revenue: number; order_count: number }[];
+  series: { bucket: string; revenue: number; order_count: number }[];
+  categories: {
+    category: string;
+    quantity_sold: number;
+    item_revenue: number;
+    items: { product_id: string; product_size_id: string; product_name: string; size_label: string; category: string; quantity_sold: number; item_revenue: number }[];
+  }[];
+  peak_hour: number | null;
+}
+
+export function fetchSalesInsights(period: SalesPeriod, anchor: string): Promise<ApiSalesInsights> {
+  const params = new URLSearchParams({ period, anchor });
+  return request(`/dashboard/sales-insights?${params}`);
+}
+
+export interface ApiTrendInsights {
+  date_from: string;
+  date_to: string;
+  as_of: string;
+  comparison_start: string;
+  comparison_end: string;
+  partial_current_day: boolean;
+  kpis: {
+    revenue: number; previous_revenue: number; revenue_change_pct: number | null;
+    order_count: number; previous_order_count: number; order_change_pct: number | null;
+    average_order_value: number; previous_average_order_value: number; average_order_value_change_pct: number | null;
+  };
+  daily: { date: string; previous_date: string; revenue: number; order_count: number; previous_revenue: number; previous_order_count: number }[];
+  heatmap: { weekday: number; hour: number; order_count: number }[];
+  sources: { source: string; revenue: number; order_count: number; revenue_share_pct: number; order_share_pct: number }[];
+  fulfillment: { fulfillment: string; revenue: number; order_count: number; revenue_share_pct: number; order_share_pct: number }[];
+  categories: { category: string; quantity_sold: number; gross_item_sales: number; share_pct: number }[];
+  gross_item_sales: number;
+  top_products: { product_id: string; name: string; category: string; quantity_sold: number; gross_item_sales: number; previous_quantity_sold: number; quantity_change_pct: number | null }[];
+  slowest_products: { product_id: string; name: string; category: string; quantity_sold: number; gross_item_sales: number }[];
+  pairings: { product_a: string; product_b: string; order_count: number; order_share_pct: number }[];
+  addon_attach: { order_count: number; rate_pct: number; addons: { addon_id: string; name: string; quantity: number; gross_sales: number }[] };
+  sizes: { product_id: string; product_size_id: string; product_name: string; size_label: string; quantity_sold: number; gross_item_sales: number; share_of_product_pct: number }[];
+  discounts: { name: string; order_count: number; order_revenue: number; discount_amount: number; order_share_pct: number; revenue_share_pct: number }[];
+  barangays: { barangay: string; revenue: number; order_count: number }[];
+  dine_in_guests: { average: number | null; orders_with_count: number; dine_in_orders: number };
+}
+
+export function fetchTrendInsights(dateFrom: string, dateTo: string): Promise<ApiTrendInsights> {
+  const params = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
+  return request(`/analytics/trend-insights?${params}`);
 }
 
 export interface ApiSalesTrendPoint {
@@ -1530,6 +1680,8 @@ export interface ApiPnLCostBreakdown {
   payroll: number;
   utilities: number;
   losses: number;
+  delivery_rider_payouts: number;
+  register_expenses: number;
 }
 
 export interface ApiPnLDepartmentMargin {
@@ -1562,6 +1714,7 @@ export interface ApiPnL {
   ingredients_missing_cost: number;
   ingredients_total: number;
   unfulfilled_bundle_sales: number;
+  unresolved_bundle_costs?: number;
   payroll_employee_count: number;
 }
 
@@ -1716,6 +1869,7 @@ export interface PosTableOverview {
   capacity_max: number;
   occupied: boolean;
   reserved: boolean;
+  layout_pending?: boolean;
   reservation: {
     reservation_number: number;
     customer_name: string;
@@ -1752,6 +1906,7 @@ export interface BusinessDayStatus {
   is_open: boolean;
   opened_at: string | null;
   menu_confirmed: boolean | null;
+  closed_shift_id?: string | null;
 }
 
 export interface ApiBusinessDay {
@@ -1764,6 +1919,7 @@ export interface ApiBusinessDay {
   closed_by: string | null;
   cash_register_total: number | null;
   system_eod_total: number | null;
+  expenses_total: number;
   variance: number | null;
 }
 
@@ -1775,6 +1931,7 @@ export function openBusinessDay(body: {
   employee_number: string;
   pin: string;
   menu_confirmed: boolean;
+  starting_cash: number;
 }): Promise<BusinessDayStatus> {
   return request('/business-days/open', { method: 'POST', body: JSON.stringify(body) });
 }
@@ -1787,13 +1944,60 @@ export function closeBusinessDay(body: {
   return request('/business-days/close', { method: 'POST', body: JSON.stringify(body) });
 }
 
+export interface ShiftMovement {
+  id: string;
+  time: string;
+  staff: string | null;
+  purpose: string;
+  kind: 'expense' | 'paid_in' | 'owner_transfer' | 'cash_refund';
+  amount: number;
+}
+
+export interface ShiftReport {
+  id: string;
+  shift_number: number;
+  business_date: string;
+  opened_at: string;
+  closed_at: string;
+  opened_by_name: string | null;
+  closed_by_name: string | null;
+  store_name: string;
+  register_name: string;
+  payments: Record<string, number>;
+  sales: { gross: number; discounts: number; cash_refunds: number; net: number; taxes: number; order_count: number };
+  cash_drawer: { starting_cash: number; cash_payments: number; cash_refunds: number; paid_in: number; paid_out: number; operating_expenses: number; owner_transfers: number; expected_cash: number; actual_cash: number; difference: number };
+  entries: ShiftMovement[];
+}
+
+export interface ShiftReportSummary {
+  id: string;
+  shift_number: number;
+  business_date: string;
+  opened_at: string;
+  closed_at: string;
+}
+
+export function fetchShiftReports(): Promise<ShiftReportSummary[]> {
+  return request('/shift-reports');
+}
+
+export function fetchShiftReport(id: string): Promise<ShiftReport> {
+  return request(`/shift-reports/${id}`);
+}
+
+export function recordShiftMovement(body: { kind: 'paid_in' | 'owner_transfer' | 'cash_refund'; purpose: string; amount: number; transaction_id?: string }): Promise<unknown> {
+  return request('/shift-reports/movements', { method: 'POST', body: JSON.stringify(body) });
+}
+
 export function fetchBusinessDays(): Promise<ApiBusinessDay[]> {
   return request('/business-days');
 }
 
 export interface ApiBusinessDayItemRow {
   product_id: string;
+  product_size_id: string;
   product_name: string;
+  size_label: string;
   category: string;
   quantity_sold: number;
   revenue: number;
@@ -2154,4 +2358,31 @@ export function postKitchenPrinterHeartbeat(body: {
   error_message?: string | null;
 }): Promise<KitchenPrinterStatus> {
   return request('/kitchen-printer/heartbeat', { method: 'POST', body: JSON.stringify(body) });
+}
+
+// ---------------------------------------------------------------------------
+// Cash register expenses
+// ---------------------------------------------------------------------------
+
+export interface ApiCashExpense {
+  id: string;
+  description: string;
+  amount: number;
+  business_date: string;
+  recorded_by: string;
+  recorded_by_name: string | null;
+  created_at: string;
+}
+
+export function fetchCashExpenses(businessDate?: string): Promise<ApiCashExpense[]> {
+  return request(`/cash-expenses${businessDate ? `?business_date=${encodeURIComponent(businessDate)}` : ''}`);
+}
+
+export function fetchCashExpenseReport(dateFrom: string, dateBefore: string): Promise<ApiCashExpense[]> {
+  const params = new URLSearchParams({ date_from: dateFrom, date_before: dateBefore });
+  return request(`/cash-expenses/report?${params}`);
+}
+
+export function createCashExpense(body: { description: string; amount: number }): Promise<ApiCashExpense> {
+  return request('/cash-expenses', { method: 'POST', body: JSON.stringify(body) });
 }

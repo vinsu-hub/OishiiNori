@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Banknote, Bike, CheckCircle2, ChefHat, PackageCheck, Phone, Wallet } from 'lucide-react';
+import { Banknote, Bike, CalendarClock, CheckCircle2, ChefHat, PackageCheck, Phone, Wallet } from 'lucide-react';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import {
   Dialog,
   DialogContent,
@@ -16,17 +17,24 @@ import {
 import {
   type ApiProduct,
   type ApiTransaction,
+  type TransactionPaymentMethod,
+  type TransactionCardType,
   fetchProducts,
   fetchTransactions,
   settleTransactionPayment,
+  updateRiderPayout,
 } from '@/lib/api';
 import { POLL_INTERVAL_MS, toIsoDatePH, todayIsoPH } from '@/lib/constants';
 import { formatCurrency, formatTimestamp12h } from '@/lib/utils';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
+import { AdvanceOrdersSection } from '@/components/pos/AdvanceOrdersSection';
 
 /** Where a pay-on-delivery order is right now, from the cashier's view. */
 function stage(t: ApiTransaction): { label: string; tone: 'kitchen' | 'ready' | 'out' | 'delivered'; Icon: typeof ChefHat } {
   if (t.delivery?.delivered_at) return { label: 'Delivered — rider bringing the cash', tone: 'delivered', Icon: Banknote };
+  if (t.kitchen_status === 'queued' && t.scheduled_for && Date.parse(t.scheduled_for) > Date.now() + 20 * 60_000) {
+    return { label: 'Advance order — upcoming', tone: 'kitchen', Icon: CalendarClock };
+  }
   if (t.kitchen_status === 'ready') return { label: 'Ready — waiting for rider pickup', tone: 'ready', Icon: PackageCheck };
   if (t.kitchen_status === 'completed') return { label: 'Out for delivery', tone: 'out', Icon: Bike };
   return { label: 'In the kitchen', tone: 'kitchen', Icon: ChefHat };
@@ -48,8 +56,11 @@ export default function PosDeliveries() {
   const [products, setProducts] = useState<ApiProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [settleTarget, setSettleTarget] = useState<ApiTransaction | null>(null);
-  const [settleMethod, setSettleMethod] = useState<'cash' | 'gcash'>('cash');
+  const [settleMethod, setSettleMethod] = useState<TransactionPaymentMethod>('cash');
+  const [settleCardType, setSettleCardType] = useState<TransactionCardType | null>(null);
   const [settling, setSettling] = useState(false);
+  const [payoutInputs, setPayoutInputs] = useState<Record<string, string>>({});
+  const [savingPayout, setSavingPayout] = useState<string | null>(null);
 
   useEffect(() => {
     fetchProducts(false).then(setProducts).catch(() => {});
@@ -87,9 +98,9 @@ export default function PosDeliveries() {
     if (!settleTarget) return;
     setSettling(true);
     try {
-      await settleTransactionPayment(settleTarget.id, settleMethod);
+      await settleTransactionPayment(settleTarget.id, settleMethod, settleCardType);
       toast.success(
-        `Order #${settleTarget.order_number ?? ''} paid — ${formatCurrency(orderTotal(settleTarget))} received from the rider.`
+        `Order #${settleTarget.order_number ?? ''} payment recorded — ${formatCurrency(orderTotal(settleTarget))}.`
       );
       setSettleTarget(null);
       load();
@@ -100,9 +111,31 @@ export default function PosDeliveries() {
     }
   }
 
+  async function savePayout(t: ApiTransaction) {
+    const amount = Number(payoutInputs[t.id] ?? t.delivery?.rider_payout ?? '');
+    if (!Number.isFinite(amount) || amount < 0) {
+      toast.error('Enter a rider payout of zero or more');
+      return;
+    }
+    setSavingPayout(t.id);
+    try {
+      const delivery = await updateRiderPayout(t.id, amount);
+      setTransactions((previous) => previous.map((row) => row.id === t.id
+        ? { ...row, delivery: row.delivery ? { ...row.delivery, rider_payout: delivery.rider_payout } : null }
+        : row));
+      setPayoutInputs((previous) => ({ ...previous, [t.id]: String(delivery.rider_payout ?? amount) }));
+      toast.success('Rider payout saved');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not save rider payout');
+    } finally {
+      setSavingPayout(null);
+    }
+  }
+
   return (
     <DashboardLayout title="Deliveries">
       <div className="p-6 space-y-6">
+        <section className="space-y-3"><div><h2 className="text-lg font-semibold">Advance deliveries</h2><p className="text-sm text-muted-foreground">Requested times mean food ready for the rider. Payment collection and rider payout stay in the sections below.</p></div><AdvanceOrdersSection orderType="delivery" /></section>
         <div className="grid gap-3 sm:grid-cols-3">
           <Card>
             <CardContent className="py-4">
@@ -171,6 +204,12 @@ export default function PosDeliveries() {
                           {t.delivery.rider_name && <p className="text-xs">Rider: {t.delivery.rider_name}</p>}
                         </div>
                       )}
+                      <div className="grid grid-cols-3 gap-2 rounded-md bg-muted/50 p-2 text-xs">
+                        <div><p className="text-muted-foreground">Customer fee</p><p className="font-semibold">{formatCurrency(t.delivery?.delivery_fee ?? 0)}</p></div>
+                        <div><label htmlFor={`rider-payout-${t.id}`} className="text-muted-foreground">Rider payout</label><Input id={`rider-payout-${t.id}`} type="number" min="0" step="0.01" className="mt-1 h-8" value={payoutInputs[t.id] ?? (t.delivery?.rider_payout == null ? '' : String(t.delivery.rider_payout))} onChange={(e) => setPayoutInputs((previous) => ({ ...previous, [t.id]: e.target.value }))} placeholder="₱" /></div>
+                        <div><p className="text-muted-foreground">Net after payout</p><p className="font-semibold">{formatCurrency(orderTotal(t) - (Number(payoutInputs[t.id] ?? t.delivery?.rider_payout ?? 0) || 0))}</p></div>
+                        <Button size="sm" variant="outline" className="col-span-3 h-8" disabled={savingPayout === t.id} onClick={() => savePayout(t)}>{savingPayout === t.id ? 'Saving…' : 'Save rider payout'}</Button>
+                      </div>
                       <ul className="text-sm">
                         {t.items.map((i) => (
                           <li key={i.id}>
@@ -206,6 +245,13 @@ export default function PosDeliveries() {
                 <div key={t.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm">
                   <span className="font-semibold">Order #{t.order_number ?? t.id.slice(0, 8)}</span>
                   <span className="text-muted-foreground">{t.delivery?.customer_name}</span>
+                  <span className="text-muted-foreground">Fee {formatCurrency(t.delivery?.delivery_fee ?? 0)}</span>
+                  <span className="text-muted-foreground">Rider {t.delivery?.rider_payout == null ? '—' : formatCurrency(t.delivery.rider_payout)}</span>
+                  <span className="font-medium">Net {formatCurrency(orderTotal(t) - (t.delivery?.rider_payout ?? 0))}</span>
+                  <div className="flex items-center gap-1">
+                    <Input aria-label={`Rider payout for order ${t.order_number ?? t.id}`} type="number" min="0" step="0.01" className="h-8 w-24" value={payoutInputs[t.id] ?? (t.delivery?.rider_payout == null ? '' : String(t.delivery.rider_payout))} onChange={(e) => setPayoutInputs((previous) => ({ ...previous, [t.id]: e.target.value }))} placeholder="₱ payout" />
+                    <Button size="sm" variant="outline" disabled={savingPayout === t.id} onClick={() => savePayout(t)}>{savingPayout === t.id ? '…' : 'Save'}</Button>
+                  </div>
                   <Badge variant="outline" className="gap-1">
                     <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
                     Paid{t.payment_method ? ` · ${t.payment_method.toUpperCase()}` : ''}
@@ -221,9 +267,9 @@ export default function PosDeliveries() {
       <Dialog open={!!settleTarget} onOpenChange={(open) => !open && setSettleTarget(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Cash received for order #{settleTarget?.order_number}</DialogTitle>
+            <DialogTitle>Payment received for order #{settleTarget?.order_number}</DialogTitle>
             <DialogDescription>
-              Count the money from the rider before confirming. It will be added to today’s sales in the drawer.
+              Confirm the customer’s payment method and amount with the rider before recording it.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -232,25 +278,26 @@ export default function PosDeliveries() {
               <span className="text-3xl font-bold">{settleTarget ? formatCurrency(orderTotal(settleTarget)) : ''}</span>
             </p>
             <div className="grid grid-cols-2 gap-2">
-              {(['cash', 'gcash'] as const).map((m) => (
+              {(['cash', 'gcash', 'card', 'bdo', 'maya'] as const).map((m) => (
                 <button
                   key={m}
                   type="button"
-                  onClick={() => setSettleMethod(m)}
+                  onClick={() => { setSettleMethod(m); setSettleCardType(null); }}
                   className={`rounded border py-3 text-sm ${
                     settleMethod === m ? 'border-transparent bg-primary text-primary-foreground' : 'bg-card'
                   }`}
                 >
-                  {m === 'cash' ? 'Cash from rider' : 'Customer paid by GCash'}
+                  {m === 'cash' ? 'Cash from rider' : m === 'card' ? 'Card' : `Customer paid by ${m === 'gcash' ? 'GCash' : m === 'bdo' ? 'BDO' : 'Maya'}`}
                 </button>
               ))}
             </div>
+            {settleMethod === 'card' && <div className="flex gap-2">{(['debit', 'credit'] as const).map((type) => <button key={type} type="button" onClick={() => setSettleCardType(type)} className={`flex-1 rounded border py-2 capitalize ${settleCardType === type ? 'bg-primary text-primary-foreground' : ''}`}>{type}</button>)}</div>}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSettleTarget(null)}>
               Cancel
             </Button>
-            <Button onClick={confirmSettle} disabled={settling}>
+            <Button onClick={confirmSettle} disabled={settling || (settleMethod === 'card' && !settleCardType)}>
               {settling ? 'Saving…' : 'Confirm payment received'}
             </Button>
           </DialogFooter>

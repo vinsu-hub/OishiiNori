@@ -1,23 +1,27 @@
 from collections import defaultdict
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from postgrest.exceptions import APIError
 
 from app.auth import CurrentUser, get_current_user, require_role, verify_employee_pin
+from app.bundles import atomic_bundles_available, bundle_rpc, completed_bundle_ids, legacy_recipe_sizes, pending_bundle_item_ids
 from app.deps import get_supabase
 from app.idempotency import check_idempotency_key, record_idempotency_key
 from app.ph_time import ph_day_bounds_utc, today_ph
 from app.routers.reservations import _blocking_reservation, _now_ph, _table_by_pos_number
+from app.routers.sales_insights import _page_rows, ID_BATCH_SIZE
 from app.routers.stock_items import adjust_stock_items_for_product_unit, adjust_stock_items_for_transaction
 from app.schemas import (
     BundleFulfillmentRequest,
     BundleFulfillmentResponse,
     CreateTransactionRequest,
-    DeductedIngredient,
     DeliveryCaptureIn,
     KitchenStatus,
     KitchenStatusUpdateRequest,
+    RiderPayoutUpdate,
+    RescheduleAdvanceOrderRequest,
     SettlePaymentRequest,
     SwitchTableRequest,
     TransactionResponse,
@@ -56,11 +60,35 @@ _bundle_fulfillments_supported: bool | None = None
 _held_ingredients_supported: bool | None = None
 _transaction_item_addons_supported: bool | None = None
 _transaction_order_context_supported: bool | None = None
+_transaction_order_source_supported: bool | None = None
 _transaction_order_number_supported: bool | None = None
 _business_days_supported: bool | None = None
 _transaction_card_vat_supported: bool | None = None
 _deliveries_transaction_id_supported: bool | None = None
 _payment_status_supported: bool | None = None
+_advance_supported: bool | None = None
+ADVANCE_LEAD = timedelta(minutes=20)
+
+
+def _advance_supported_check(supabase) -> bool:
+    global _advance_supported
+    if _advance_supported is None:
+        try:
+            supabase.table("transactions").select("scheduled_for,advance_schedule_revision").limit(1).execute()
+            _advance_supported = True
+        except APIError:
+            _advance_supported = False
+    return _advance_supported
+
+
+def _validate_advance_time(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise HTTPException(status_code=400, detail="Advance time must include a timezone")
+    now = datetime.now(timezone.utc)
+    utc_value = value.astimezone(timezone.utc)
+    if utc_value < now + timedelta(minutes=30) or utc_value > now + timedelta(days=7):
+        raise HTTPException(status_code=400, detail="Advance time must be 30 minutes to 7 days ahead")
+    return utc_value
 
 
 def _business_days_supported_check(supabase) -> bool:
@@ -138,6 +166,17 @@ def _transaction_order_context_supported_check(supabase) -> bool:
         except APIError:
             _transaction_order_context_supported = False
     return _transaction_order_context_supported
+
+
+def _transaction_order_source_supported_check(supabase) -> bool:
+    global _transaction_order_source_supported
+    if _transaction_order_source_supported is None:
+        try:
+            supabase.table("transactions").select("order_source").limit(1).execute()
+            _transaction_order_source_supported = True
+        except APIError:
+            _transaction_order_source_supported = False
+    return _transaction_order_source_supported
 
 
 def _payment_status_supported_check(supabase) -> bool:
@@ -331,32 +370,9 @@ def _adjust_ingredients_for_size(
 
 
 def _bundle_fulfilled_item_ids(supabase, item_ids: list[str]) -> set[str]:
-    """Which of these transaction_item ids already have bundle_fulfillments
-    rows -- the real source of truth for "has the kitchen logged this
-    bundle's rolls yet", surfaced so the frontend doesn't have to track it
-    in local-only state (which a reload would wipe). A bundle item either
-    has 0 or the full required set of fulfillment rows (bundle_fulfillment
-    requires the submitted total to match exactly in one shot), so
-    existence alone is sufficient -- no partial-fulfillment state exists.
-    """
     if not item_ids or not _bundle_fulfillments_supported_check(supabase):
         return set()
-    # Chunked so the underlying PostgREST `in.(id1,id2,...)` filter never
-    # risks exceeding URL/header length limits as order history grows --
-    # list_transactions's unpaginated, no-date-filter call path (Kitchen
-    # Display) can hand this the full transaction-item history.
-    fulfilled: set[str] = set()
-    chunk_size = 200
-    for i in range(0, len(item_ids), chunk_size):
-        chunk = item_ids[i : i + chunk_size]
-        result = (
-            supabase.table("bundle_fulfillments")
-            .select("transaction_item_id")
-            .in_("transaction_item_id", chunk)
-            .execute()
-        )
-        fulfilled.update(row["transaction_item_id"] for row in result.data)
-    return fulfilled
+    return completed_bundle_ids(supabase, item_ids)
 
 
 def _fetch_transaction_with_items(supabase, transaction_id: str) -> dict | None:
@@ -369,8 +385,10 @@ def _fetch_transaction_with_items(supabase, transaction_id: str) -> dict | None:
     )
     items = items_result.data
     fulfilled_ids = _bundle_fulfilled_item_ids(supabase, [i["id"] for i in items])
+    pending_ids = pending_bundle_item_ids(supabase, [i["id"] for i in items])
     for item in items:
         item["bundle_fulfilled"] = item["id"] in fulfilled_ids
+        item["bundle_deduction_status"] = ("pending_recipe" if item["id"] in pending_ids else "applied") if item["id"] in fulfilled_ids else None
     _attach_item_addons(supabase, items)
     transaction["items"] = items
     transaction.setdefault("kitchen_status", "queued")
@@ -463,7 +481,12 @@ def _create_transaction_row(
     force_vat_exempt: bool = False,
     related_transaction_id: str | None = None,
     delivery: DeliveryCaptureIn | None = None,
+    delivery_fee_override: float | None = None,
     pay_on_delivery: bool = False,
+    order_source: str = "pos",
+    scheduled_for: datetime | None = None,
+    pickup_customer_name: str | None = None,
+    pickup_customer_phone: str | None = None,
 ) -> TransactionResponse:
     """Insert a transaction + items, deduct non-bundle recipe ingredients,
     and compute discount/tax. Shared by POS sale creation (create_transaction
@@ -523,16 +546,19 @@ def _create_transaction_row(
     # digital_menu.py's submit_digital_order -- never trusted from the client.
     delivery_fee: float | None = None
     if order_type == "delivery" and delivery and _deliveries_transaction_id_supported_check(supabase):
-        fee_result = (
-            supabase.table("delivery_fees")
-            .select("fee")
-            .eq("barangay", delivery.barangay)
-            .maybe_single()
-            .execute()
-        )
-        if not fee_result or not fee_result.data:
-            raise HTTPException(status_code=400, detail=f"No delivery fee configured for {delivery.barangay}")
-        delivery_fee = float(fee_result.data["fee"])
+        if delivery_fee_override is not None:
+            delivery_fee = round(delivery_fee_override, 2)
+        else:
+            fee_result = (
+                supabase.table("delivery_fees")
+                .select("fee")
+                .eq("barangay", delivery.barangay)
+                .maybe_single()
+                .execute()
+            )
+            if not fee_result or not fee_result.data:
+                raise HTTPException(status_code=400, detail=f"No delivery fee configured for {delivery.barangay}")
+            delivery_fee = float(fee_result.data["fee"])
 
     discount = None
     discount_amount = 0.0
@@ -572,6 +598,8 @@ def _create_transaction_row(
         insert_payload["table_number"] = table_number
         insert_payload["guest_count"] = guest_count
         insert_payload["payment_method"] = payment_method
+    if _transaction_order_source_supported_check(supabase):
+        insert_payload["order_source"] = order_source
     if _transaction_card_vat_supported_check(supabase):
         insert_payload["card_type"] = card_type
         insert_payload["force_vat_exempt"] = force_vat_exempt
@@ -579,8 +607,16 @@ def _create_transaction_row(
         insert_payload["related_transaction_id"] = related_transaction_id
     if pay_on_delivery:
         if not _payment_status_supported_check(supabase):
-            raise HTTPException(status_code=501, detail="Pay on delivery needs database migration 0062")
+            raise HTTPException(status_code=501, detail="Deferred payment needs database migration 0062")
         insert_payload["payment_status"] = "unpaid"
+    if scheduled_for is not None:
+        if not _advance_supported_check(supabase):
+            raise HTTPException(status_code=501, detail="Advance orders need database migration 0068")
+        insert_payload.update({
+            "scheduled_for": scheduled_for.isoformat(),
+            "pickup_customer_name": pickup_customer_name,
+            "pickup_customer_phone": pickup_customer_phone,
+        })
 
     transaction_insert = supabase.table("transactions").insert(insert_payload).execute()
     transaction = transaction_insert.data[0]
@@ -699,6 +735,7 @@ def _create_transaction_row(
     transaction.setdefault("kitchen_status", "queued")
     transaction.setdefault("order_number", None)
     transaction.setdefault("order_type", None)
+    transaction.setdefault("order_source", order_source)
     transaction.setdefault("table_number", None)
     transaction.setdefault("guest_count", None)
     transaction.setdefault("payment_method", None)
@@ -731,12 +768,27 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
     # till reconciles. The digital-order approval path doesn't come through here.
     if body.pay_on_delivery and body.order_type != "delivery":
         raise HTTPException(status_code=400, detail="Pay on delivery is only for delivery orders")
+    if body.pay_on_pickup and (body.order_type != "takeout" or body.scheduled_for is None):
+        raise HTTPException(status_code=400, detail="Pay at pickup requires an advance takeout order")
+    if body.pay_on_pickup and body.pay_on_delivery:
+        raise HTTPException(status_code=400, detail="Choose one deferred payment option")
     if body.pay_on_delivery and not body.payment_method:
         body.payment_method = "cash"  # what the rider will collect
-    if not body.payment_method:
+    if not body.payment_method and not body.pay_on_pickup:
         raise HTTPException(status_code=400, detail="Payment method is required")
+    if body.pay_on_pickup and (body.payment_method or body.card_type):
+        raise HTTPException(status_code=400, detail="Choose the payment method when payment is received")
     if body.payment_method == "card" and not body.card_type:
         raise HTTPException(status_code=400, detail="Select debit or credit")
+    scheduled_for = None
+    if body.scheduled_for is not None:
+        if body.order_type not in ("takeout", "delivery") or body.related_transaction_id:
+            raise HTTPException(status_code=400, detail="Advance orders must be new takeout or delivery orders")
+        scheduled_for = _validate_advance_time(body.scheduled_for)
+        if body.order_type == "takeout" and (not (body.pickup_customer_name or "").strip() or not (body.pickup_customer_phone or "").strip()):
+            raise HTTPException(status_code=400, detail="Pickup customer name and phone are required")
+    elif body.pickup_customer_name or body.pickup_customer_phone:
+        raise HTTPException(status_code=400, detail="Pickup details require an advance takeout order")
 
     # WS-13: Business Day lock -- backend defense to match the frontend
     # overlay (POSTerminal.tsx), same belt-and-braces posture as the
@@ -744,14 +796,8 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
     # account needs to be able to use POS regardless of whether a cashier
     # has started the day (e.g. testing, an ad-hoc sale, covering a shift).
     if user.role != "executive" and _business_days_supported_check(supabase):
-        today_row = (
-            supabase.table("business_days")
-            .select("closed_at")
-            .eq("business_date", today_ph().isoformat())
-            .maybe_single()
-            .execute()
-        )
-        if not today_row or not today_row.data or today_row.data["closed_at"] is not None:
+        from app.routers.business_days import fetch_open_shift
+        if not fetch_open_shift(supabase):
             raise HTTPException(status_code=409, detail="Business day has not been started")
 
     # Owner's Request: the acting employee must re-verify their own kiosk
@@ -825,7 +871,12 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
         force_vat_exempt=body.force_vat_exempt,
         related_transaction_id=body.related_transaction_id,
         delivery=body.delivery,
-        pay_on_delivery=body.pay_on_delivery,
+        delivery_fee_override=body.delivery_fee,
+        pay_on_delivery=body.pay_on_delivery or body.pay_on_pickup,
+        order_source=body.order_source,
+        scheduled_for=scheduled_for,
+        pickup_customer_name=body.pickup_customer_name.strip() if body.pickup_customer_name else None,
+        pickup_customer_phone=body.pickup_customer_phone.strip() if body.pickup_customer_phone else None,
     )
 
     if consumed_override_id is not None:
@@ -901,6 +952,9 @@ def list_transactions(
     on_date: date | None = Query(None, alias="date"),
     status_filter: str | None = Query(None, alias="status"),
     kitchen_status: KitchenStatus | None = Query(None),
+    advance_order_type: Literal["takeout", "delivery"] | None = Query(None),
+    advance_from: datetime | None = Query(None),
+    advance_before: datetime | None = Query(None),
     user: CurrentUser = Depends(get_current_user),
 ):
     supabase = get_supabase()
@@ -916,10 +970,16 @@ def list_transactions(
         "voided_by, voided_at, void_reason, kitchen_status, kitchen_status_updated_at, "
         "order_type, table_number, guest_count, payment_method, related_transaction_id"
     )
+    if _transaction_order_source_supported_check(supabase):
+        columns += ", order_source"
     if _transaction_order_number_supported_check(supabase):
         columns += ", order_number"
     if _payment_status_supported_check(supabase):
         columns += ", payment_status, paid_at"
+    if _advance_supported_check(supabase):
+        columns += ", scheduled_for, pickup_customer_name, pickup_customer_phone, advance_schedule_revision, advance_schedule_updated_at, advance_schedule_updated_by"
+    elif advance_order_type:
+        raise HTTPException(status_code=501, detail="Advance orders need database migration 0068")
     query = supabase.table("transactions").select(columns)
     if on_date:
         start, end = ph_day_bounds_utc(on_date)
@@ -928,24 +988,35 @@ def list_transactions(
         query = query.eq("status", status_filter)
     if kitchen_status and _kitchen_status_supported_check(supabase):
         query = query.eq("kitchen_status", kitchen_status)
-    transactions_result = query.order("opened_at", desc=True).execute()
-    transactions = transactions_result.data
+    if advance_order_type:
+        if not advance_from or not advance_before or advance_from.tzinfo is None or advance_before.tzinfo is None or advance_before <= advance_from:
+            raise HTTPException(status_code=400, detail="Advance order time range is required")
+        query = (query.eq("order_type", advance_order_type).in_("order_source", ["pos", "grab"]).neq("status", "voided")
+                 .not_.is_("scheduled_for", "null")
+                 .gte("scheduled_for", advance_from.astimezone(timezone.utc).isoformat())
+                 .lt("scheduled_for", advance_before.astimezone(timezone.utc).isoformat())
+                 .order("scheduled_for").order("id"))
+        transactions = _page_rows(query)
+    else:
+        query = query.order("opened_at", desc=True).order("id")
+        transactions = _page_rows(query) if kitchen_status else query.execute().data
     if not transactions:
         return []
 
     transaction_ids = [t["id"] for t in transactions]
-    items_result = (
-        supabase.table("transaction_items")
-        .select("id, transaction_id, product_size_id, quantity, unit_price, held_ingredients")
-        .in_("transaction_id", transaction_ids)
-        .execute()
-    )
-    all_items = items_result.data
+    all_items = []
+    for offset in range(0, len(transaction_ids), ID_BATCH_SIZE):
+        item_query = (supabase.table("transaction_items")
+                      .select("id, transaction_id, product_size_id, quantity, unit_price, held_ingredients")
+                      .in_("transaction_id", transaction_ids[offset:offset + ID_BATCH_SIZE]))
+        all_items.extend(_page_rows(item_query.order("id")) if advance_order_type or kitchen_status else item_query.execute().data)
     fulfilled_ids = _bundle_fulfilled_item_ids(supabase, [i["id"] for i in all_items])
+    pending_ids = pending_bundle_item_ids(supabase, [i["id"] for i in all_items])
     _attach_item_addons(supabase, all_items)
     items_by_transaction: dict[str, list] = defaultdict(list)
     for item in all_items:
         item["bundle_fulfilled"] = item["id"] in fulfilled_ids
+        item["bundle_deduction_status"] = ("pending_recipe" if item["id"] in pending_ids else "applied") if item["id"] in fulfilled_ids else None
         items_by_transaction[item["transaction_id"]].append(item)
 
     _attach_deliveries(supabase, transactions)
@@ -955,6 +1026,7 @@ def list_transactions(
         t.setdefault("kitchen_status", "queued")
         t.setdefault("order_number", None)
         t.setdefault("order_type", None)
+        t.setdefault("order_source", "pos")
         t.setdefault("table_number", None)
         t.setdefault("guest_count", None)
         t.setdefault("payment_method", None)
@@ -962,6 +1034,20 @@ def list_transactions(
         t.setdefault("force_vat_exempt", False)
         out.append(TransactionResponse(**t, items=items_by_transaction.get(t["id"], [])))
     return out
+
+
+@router.get("/transactions/advance-orders", response_model=list[TransactionResponse])
+def list_advance_orders(
+    order_type: Literal["takeout", "delivery"] = Query(...),
+    date_from: datetime = Query(...),
+    date_before: datetime = Query(...),
+    user: CurrentUser = Depends(get_current_user),
+):
+    return list_transactions(
+        on_date=None, status_filter=None, kitchen_status=None,
+        advance_order_type=order_type, advance_from=date_from,
+        advance_before=date_before, user=user,
+    )
 
 
 @router.get("/transactions/{transaction_id}", response_model=TransactionResponse)
@@ -972,6 +1058,42 @@ def get_transaction(transaction_id: str, user: CurrentUser = Depends(get_current
         raise HTTPException(status_code=404, detail="Transaction not found")
     items = transaction.pop("items")
     return TransactionResponse(**transaction, items=items)
+
+
+@router.patch("/transactions/{transaction_id}/advance-schedule", response_model=TransactionResponse)
+def reschedule_advance_order(
+    transaction_id: str,
+    body: RescheduleAdvanceOrderRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    if user.role in ("kitchen", "rider", "stocker"):
+        raise HTTPException(status_code=403, detail="Only front-of-house staff can reschedule orders")
+    supabase = get_supabase()
+    if not _advance_supported_check(supabase):
+        raise HTTPException(status_code=501, detail="Advance orders need database migration 0068")
+    transaction = _fetch_transaction_with_items(supabase, transaction_id)
+    if not transaction or not transaction.get("scheduled_for"):
+        raise HTTPException(status_code=404, detail="Advance order not found")
+    if user.role == "employee" and transaction["employee_id"] != user.id:
+        raise HTTPException(status_code=403, detail="Cashiers may only reschedule their own orders")
+    current_due = datetime.fromisoformat(transaction["scheduled_for"].replace("Z", "+00:00"))
+    if transaction["status"] != "open" or transaction.get("kitchen_status") != "queued" or current_due <= datetime.now(timezone.utc) + ADVANCE_LEAD:
+        raise HTTPException(status_code=409, detail="This order has entered its kitchen preparation window")
+    if transaction.get("advance_schedule_revision", 0) != body.expected_revision:
+        raise HTTPException(status_code=409, detail="Schedule changed; refresh the order")
+    new_due = _validate_advance_time(body.scheduled_for)
+    if new_due == current_due.astimezone(timezone.utc):
+        raise HTTPException(status_code=400, detail="Choose a different time")
+    updated = (supabase.table("transactions")
+               .update({"scheduled_for": new_due.isoformat(),
+                        "advance_schedule_revision": body.expected_revision + 1,
+                        "advance_schedule_updated_at": datetime.now(timezone.utc).isoformat(),
+                        "advance_schedule_updated_by": user.id})
+               .eq("id", transaction_id).eq("advance_schedule_revision", body.expected_revision)
+               .eq("kitchen_status", "queued").eq("status", "open").execute())
+    if not updated.data:
+        raise HTTPException(status_code=409, detail="Order changed; refresh and try again")
+    return get_transaction(transaction_id, user)
 
 
 @router.post("/transactions/{transaction_id}/close", response_model=TransactionResponse)
@@ -1005,11 +1127,34 @@ def close_transaction(transaction_id: str, user: CurrentUser = Depends(get_curre
     return TransactionResponse(**updated_row, items=transaction["items"])
 
 
+@router.patch("/transactions/{transaction_id}/rider-payout")
+def update_rider_payout(
+    transaction_id: str,
+    body: RiderPayoutUpdate,
+    user: CurrentUser = Depends(get_current_user),
+):
+    if user.role in ("kitchen", "rider", "stocker"):
+        raise HTTPException(status_code=403, detail="You cannot edit delivery payout")
+    db = get_supabase()
+    tx = (db.table("transactions").select("id,order_type,status")
+          .eq("id", transaction_id).maybe_single().execute())
+    if not tx or not tx.data:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if tx.data["order_type"] != "delivery" or tx.data["status"] == "voided":
+        raise HTTPException(status_code=400, detail="Only active delivery orders can have a rider payout")
+    delivery = (db.table("deliveries").select("id")
+                .eq("transaction_id", transaction_id).maybe_single().execute())
+    if not delivery or not delivery.data:
+        raise HTTPException(status_code=404, detail="Delivery details not found")
+    updated = (db.table("deliveries").update({"rider_payout": round(body.rider_payout, 2)})
+               .eq("id", delivery.data["id"]).execute())
+    return updated.data[0]
+
+
 @router.post("/transactions/{transaction_id}/settle-payment", response_model=TransactionResponse)
 def settle_payment(transaction_id: str, body: SettlePaymentRequest, user: CurrentUser = Depends(get_current_user)):
-    """Pay on delivery: the rider is back with the customer's money. Marks the
-    sale paid (it now counts toward the drawer) -- any front-of-house staff
-    can receive it, not just the cashier who rang it up."""
+    """Record payment for a deferred pickup or delivery sale. Any front-of-house
+    staff can receive it, not just the cashier who entered the order."""
     if user.role in ("kitchen", "rider", "stocker"):
         raise HTTPException(status_code=403, detail="Only front-of-house staff can receive payments")
     supabase = get_supabase()
@@ -1022,14 +1167,21 @@ def settle_payment(transaction_id: str, body: SettlePaymentRequest, user: Curren
         raise HTTPException(status_code=400, detail="This order was voided")
     if transaction.get("payment_status") != "unpaid":
         raise HTTPException(status_code=409, detail="This order is already paid")
-    supabase.table("transactions").update(
+    if body.payment_method == "card" and not body.card_type:
+        raise HTTPException(status_code=400, detail="Select debit or credit")
+    if body.payment_method != "card" and body.card_type:
+        raise HTTPException(status_code=400, detail="Card type requires card payment")
+    settled = supabase.table("transactions").update(
         {
             "payment_status": "paid",
             "paid_at": datetime.now(timezone.utc).isoformat(),
             "paid_by": user.id,
             "payment_method": body.payment_method,
+            "card_type": body.card_type,
         }
-    ).eq("id", transaction_id).execute()
+    ).eq("id", transaction_id).eq("payment_status", "unpaid").neq("status", "voided").execute()
+    if not settled.data:
+        raise HTTPException(status_code=409, detail="Order is already paid or voided")
     refreshed = _fetch_transaction_with_items(supabase, transaction_id)
     items = refreshed.pop("items")
     return TransactionResponse(**refreshed, items=items)
@@ -1147,30 +1299,32 @@ def void_transaction_core(supabase, transaction: dict, actor_id: str, reason: st
     is_bundle_by_size = {s["id"]: s["products"]["is_bundle"] for s in (sizes_result.data if sizes_result else [])}
 
     bundle_supported = _bundle_fulfillments_supported_check(supabase)
+    atomic = bundle_supported and atomic_bundles_available(supabase)
+    bundle_ids = [r["id"] for r in transaction["items"] if is_bundle_by_size.get(r["product_size_id"])]
+    batches = (supabase.table("bundle_fulfillment_batches").select("transaction_item_id")
+               .in_("transaction_item_id", bundle_ids).execute().data) if atomic and bundle_ids else []
+    batch_ids = {r["transaction_item_id"] for r in batches}
+    legacy_rows = (supabase.table("bundle_fulfillments").select("*")
+                   .in_("transaction_item_id", bundle_ids).execute().data) if bundle_supported and bundle_ids else []
+    legacy_rows = [r for r in legacy_rows if r["transaction_item_id"] not in batch_ids]
+    # Resolve ALL historical rows before touching any stock on this order.
+    legacy_sizes = legacy_recipe_sizes(supabase, legacy_rows)
 
     for row in transaction["items"]:
         if is_bundle_by_size.get(row["product_size_id"]):
             if not bundle_supported:
                 continue
-            fulfillments = (
-                supabase.table("bundle_fulfillments")
-                .select("*")
-                .eq("transaction_item_id", row["id"])
-                .execute()
-            )
-            for f in fulfillments.data:
-                roll_size_result = (
-                    supabase.table("product_sizes")
-                    .select("id")
-                    .eq("product_id", f["maki_roll_product_id"])
-                    .execute()
+            if atomic and bundle_rpc(supabase, "restore_bundle_atomic", {
+                    "p_transaction_id": transaction_id, "p_item_id": row["id"], "p_employee_id": actor_id,
+                }):
+                continue
+            fulfillments = [f for f in legacy_rows if f["transaction_item_id"] == row["id"]]
+            for f in fulfillments:
+                _adjust_ingredients_for_size(
+                    supabase, legacy_sizes[f["maki_roll_product_id"]], f["quantity"], sign=1,
+                    employee_id=actor_id, transaction_id=transaction_id,
                 )
-                for roll_size in roll_size_result.data:
-                    _adjust_ingredients_for_size(
-                        supabase, roll_size["id"], f["quantity"], sign=1,
-                        employee_id=actor_id, transaction_id=transaction_id,
-                    )
-            if fulfillments.data:
+            if fulfillments:
                 supabase.table("bundle_fulfillments").delete().eq("transaction_item_id", row["id"]).execute()
         else:
             _adjust_ingredients_for_size(
@@ -1261,6 +1415,10 @@ def _set_kitchen_status(supabase, transaction: dict, new_status: str, user: Curr
         raise HTTPException(status_code=400, detail="Cannot update a voided order")
 
     current = transaction.get("kitchen_status", "queued")
+    if current == "queued" and new_status != "queued" and transaction.get("scheduled_for"):
+        due = datetime.fromisoformat(transaction["scheduled_for"].replace("Z", "+00:00"))
+        if due > datetime.now(timezone.utc) + ADVANCE_LEAD:
+            raise HTTPException(status_code=409, detail="Advance order is still upcoming")
     if new_status == current:
         raise HTTPException(status_code=400, detail=f"Order is already {new_status}")
 
@@ -1341,124 +1499,10 @@ def bundle_fulfillment(
     body: BundleFulfillmentRequest,
     user: CurrentUser = Depends(get_current_user),
 ):
-    """Kitchen logs which actual Oishii Maki Rolls (and how many of each)
-    went into a specific bundle line item (Platter / Sushi Boat), replacing
-    proportional auto-deduction for that item. The submitted line quantities
-    must sum to exactly bundle_components.total_pieces * the item's ordered
-    quantity; each roll's own product_size/recipe_items BOM is then deducted
-    the same way a direct sale of that many rolls would be.
-    """
-    supabase = get_supabase()
-    if not _bundle_fulfillments_supported_check(supabase):
-        raise HTTPException(status_code=501, detail=_MIGRATION_PENDING_DETAIL)
-    if not body.lines:
-        raise HTTPException(status_code=400, detail="At least one roll line is required")
-
-    item_result = (
-        supabase.table("transaction_items")
-        .select("*, product_sizes(id, product_id, products(is_bundle))")
-        .eq("id", item_id)
-        .maybe_single()
-        .execute()
-    )
-    if not item_result or not item_result.data or item_result.data["transaction_id"] != transaction_id:
-        raise HTTPException(status_code=404, detail="Order item not found on this transaction")
-    item = item_result.data
-    size = item["product_sizes"]
-    if not size["products"]["is_bundle"]:
-        raise HTTPException(status_code=400, detail="This order item is not a bundle product")
-
-    bundle_result = (
-        supabase.table("bundle_components")
-        .select("total_pieces")
-        .eq("product_size_id", size["id"])
-        .maybe_single()
-        .execute()
-    )
-    if not bundle_result or not bundle_result.data:
-        raise HTTPException(status_code=404, detail="No bundle configuration found for this product size")
-    total_pieces = bundle_result.data["total_pieces"]
-    required_total = round(total_pieces * float(item["quantity"]))
-
-    submitted_total = sum(line.quantity for line in body.lines)
-    if submitted_total != required_total:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Submitted roll quantities sum to {submitted_total}, expected {required_total} "
-            f"({total_pieces} pieces x {item['quantity']} ordered)",
-        )
-
-    existing = (
-        supabase.table("bundle_fulfillments").select("id").eq("transaction_item_id", item_id).execute()
-    )
-    if existing.data:
-        raise HTTPException(status_code=400, detail="This bundle item has already been fulfilled")
-
-    roll_product_ids = [line.maki_roll_product_id for line in body.lines]
-    rolls_result = (
-        supabase.table("products").select("id, name, is_bundle").in_("id", roll_product_ids).execute()
-    )
-    rolls_by_id = {r["id"]: r for r in rolls_result.data}
-    missing_rolls = [pid for pid in roll_product_ids if pid not in rolls_by_id]
-    if missing_rolls:
-        raise HTTPException(status_code=404, detail=f"Products not found: {missing_rolls}")
-    bundle_rolls = [pid for pid in roll_product_ids if rolls_by_id[pid]["is_bundle"]]
-    if bundle_rolls:
-        raise HTTPException(status_code=400, detail="A bundle-fulfillment line cannot itself be a bundle product")
-
-    ingredient_totals: dict[str, float] = defaultdict(float)
-    ingredient_names: dict[str, str] = {}
-    ingredient_units: dict[str, str] = {}
-
-    for line in body.lines:
-        roll_sizes = (
-            supabase.table("product_sizes").select("id").eq("product_id", line.maki_roll_product_id).execute()
-        )
-        if len(roll_sizes.data) != 1:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Product {line.maki_roll_product_id} does not resolve to exactly one size "
-                f"(found {len(roll_sizes.data)}) -- cannot deduct an unambiguous BOM for it",
-            )
-        roll_size_id = roll_sizes.data[0]["id"]
-
-        recipe_result = (
-            supabase.table("recipe_items")
-            .select("ingredient_id, qty_per_serving, unit, ingredients(name)")
-            .eq("product_size_id", roll_size_id)
-            .execute()
-        )
-        for recipe_item in recipe_result.data:
-            ingredient_id = recipe_item["ingredient_id"]
-            ingredient_names[ingredient_id] = recipe_item["ingredients"]["name"]
-            ingredient_units[ingredient_id] = recipe_item["unit"]
-            ingredient_totals[ingredient_id] += float(recipe_item["qty_per_serving"]) * line.quantity
-
-        _adjust_ingredients_for_size(
-            supabase, roll_size_id, line.quantity, sign=-1,
-            employee_id=user.id, transaction_id=transaction_id,
-        )
-
-        supabase.table("bundle_fulfillments").insert(
-            {
-                "transaction_item_id": item_id,
-                "maki_roll_product_id": line.maki_roll_product_id,
-                "quantity": line.quantity,
-                "fulfilled_by": user.id,
-            }
-        ).execute()
-
-    return BundleFulfillmentResponse(
-        transaction_item_id=item_id,
-        total_pieces=required_total,
-        lines=body.lines,
-        ingredients_deducted=[
-            DeductedIngredient(
-                ingredient_id=iid,
-                ingredient_name=ingredient_names[iid],
-                quantity=qty,
-                unit=ingredient_units[iid],
-            )
-            for iid, qty in ingredient_totals.items()
-        ],
-    )
+    """Keep the existing tablet request contract; resolve and commit in one RPC."""
+    return bundle_rpc(get_supabase(), "fulfill_bundle_with_pending_atomic" if body.allow_pending_recipe else "fulfill_bundle_atomic", {
+        "p_transaction_id": transaction_id,
+        "p_item_id": item_id,
+        "p_employee_id": user.id,
+        "p_lines": [line.model_dump() for line in body.lines],
+    })

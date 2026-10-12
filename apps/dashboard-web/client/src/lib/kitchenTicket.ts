@@ -6,7 +6,7 @@ import { EscPos, PAPER_WIDTH_CHARS, asciiSafe, center, wrapLine } from './escpos
 
 const ORDER_TYPE_LABEL: Record<string, string> = {
   dine_in: 'DINE IN',
-  takeout: 'TAKEOUT',
+  takeout: 'TAKE OUT',
   delivery: 'DELIVERY',
 };
 
@@ -21,8 +21,13 @@ export interface TicketOrder {
   id: string;
   order_number: number | null;
   order_type: string | null;
+  order_source?: string | null;
   table_number: number | null;
   opened_at: string;
+  scheduled_for?: string | null;
+  pickup_customer_name?: string | null;
+  pickup_customer_phone?: string | null;
+  advance_schedule_revision?: number;
   items: TicketItem[];
   delivery?: {
     customer_name: string;
@@ -44,13 +49,24 @@ function phTime12h(iso: string): string {
   });
 }
 
+function phReadyTime(iso: string): string {
+  return new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(iso));
+}
+
 export function buildTicketHeader(order: TicketOrder, width = PAPER_WIDTH_CHARS): string[] {
-  const orderType = order.order_type || 'takeout';
+  const orderType = order.order_type;
   const lines = [center(`ORDER #${order.order_number ?? order.id.slice(0, 8)}`, width)];
+  lines.push(center(orderType ? ORDER_TYPE_LABEL[orderType] ?? 'CHECK ORDER TYPE' : 'CHECK ORDER TYPE', width));
+  if (order.scheduled_for) {
+    lines.push(center(order.advance_schedule_revision ? 'ADVANCE - TIME UPDATED' : 'ADVANCE ORDER', width));
+    lines.push(center(orderType === 'delivery' ? 'RIDER READY' : 'PICKUP READY', width));
+    lines.push(...wrapLine('', asciiSafe(phReadyTime(order.scheduled_for)), width).map((line) => center(line, width)));
+    if (order.pickup_customer_name) lines.push(...wrapLine('', asciiSafe(order.pickup_customer_name), width).map((line) => center(line, width)));
+    if (order.pickup_customer_phone) lines.push(center(asciiSafe(order.pickup_customer_phone), width));
+  }
+  if (order.order_source === 'grab') lines.push(center('GRAB', width));
   if (orderType === 'dine_in' && order.table_number != null) {
     lines.push(center(`TABLE ${order.table_number}`, width));
-  } else {
-    lines.push(center(ORDER_TYPE_LABEL[orderType] ?? orderType.toUpperCase(), width));
   }
   const d = order.delivery;
   if (d) {
@@ -167,14 +183,24 @@ function wrapToWidth(ctx: CanvasRenderingContext2D, text: string, maxWidth: numb
 
 function ticketRuns(order: TicketOrder, index: TicketProductIndex): Run[] {
   const runs: Run[] = [];
-  const orderType = order.order_type || 'takeout';
+  const orderType = order.order_type;
   runs.push({ text: `ORDER #${order.order_number ?? order.id.slice(0, 8)}`, size: 44, weight: '900', align: 'center' });
   runs.push({
-    text: orderType === 'dine_in' && order.table_number != null ? `TABLE ${order.table_number}` : ORDER_TYPE_LABEL[orderType] ?? orderType.toUpperCase(),
+    text: orderType ? ORDER_TYPE_LABEL[orderType] ?? 'CHECK ORDER TYPE' : 'CHECK ORDER TYPE',
     size: 46,
     weight: '900',
     align: 'center',
   });
+  if (order.scheduled_for) {
+    runs.push({ text: order.advance_schedule_revision ? 'ADVANCE - TIME UPDATED' : 'ADVANCE ORDER', size: 32, weight: '900', align: 'center' });
+    runs.push({ text: orderType === 'delivery' ? 'RIDER READY' : 'PICKUP READY', size: 28, weight: '900', align: 'center' });
+    runs.push({ text: phReadyTime(order.scheduled_for), size: 28, weight: '900', align: 'center' });
+    if (order.pickup_customer_name) runs.push({ text: order.pickup_customer_name, size: 27, weight: '700', align: 'center' });
+    if (order.pickup_customer_phone) runs.push({ text: order.pickup_customer_phone, size: 26, weight: '700', align: 'center' });
+  }
+  if (orderType === 'dine_in' && order.table_number != null) {
+    runs.push({ text: `TABLE ${order.table_number}`, size: 40, weight: '900', align: 'center' });
+  }
   const d = order.delivery;
   if (d) {
     runs.push({ text: d.customer_name ?? '', size: 28, weight: '700', align: 'center' });

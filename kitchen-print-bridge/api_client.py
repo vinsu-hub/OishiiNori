@@ -63,7 +63,7 @@ def fetch_active_kitchen_transactions(config: Config, auth: BridgeAuth) -> list[
 
 
 def fetch_products(config: Config, auth: BridgeAuth) -> list[dict]:
-    return _get(config, auth, "/products").json()
+    return _get(config, auth, "/products", params={"active_only": "false"}).json()
 
 
 def post_heartbeat(

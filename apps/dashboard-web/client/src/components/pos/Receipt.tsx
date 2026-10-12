@@ -77,6 +77,10 @@ export interface ReceiptData {
   itemCount: number;
   /** Pay on delivery: the rider collects the total from the customer. */
   payOnDelivery?: boolean;
+  payOnPickup?: boolean;
+  scheduledFor?: string | null;
+  pickupCustomerName?: string | null;
+  pickupCustomerPhone?: string | null;
 }
 
 const ORDER_TYPE_LABEL: Record<string, string> = {
@@ -95,14 +99,11 @@ function esc(s: string): string {
   );
 }
 function orderTypeLabel(r: ReceiptData): string {
-  const type = r.orderType
-    ? (ORDER_TYPE_LABEL[r.orderType] ?? r.orderType)
-    : '';
-  return r.orderType === 'dine_in' && r.tableNumber != null
-    ? `${type} · Table ${r.tableNumber}`
-    : type;
+  return r.orderType ? (ORDER_TYPE_LABEL[r.orderType] ?? r.orderType) : '';
 }
 function paymentLabel(method: string): string {
+  if (method.toLowerCase() === 'bdo') return 'BDO';
+  if (method.toLowerCase() === 'gcash') return 'GCash';
   return method
     .replace(/_/g, ' ')
     .toLowerCase()
@@ -150,11 +151,11 @@ export function receiptHtml(r: ReceiptData): string {
   return `<div class="receipt">
     <header class="header"><div class="c b brand">${esc(name)}</div>${htmlText('c small detail', r.business.phone || '')}${htmlText('c small detail', r.business.tin ? `TIN: ${r.business.tin}` : '')}<div class="c slip-title">ORDER SLIP</div></header>
     <hr/><section class="order-number c"><div class="eyebrow">YOUR ORDER NUMBER</div><div class="b ticket">${r.orderNumber != null ? `#${r.orderNumber}` : '--'}</div><div class="small">Watch the screen for your number</div><div class="small">Now Serving = ready for pick-up</div></section>
-    <hr/><section class="meta small">${htmlText('meta-line', orderTypeLabel(r))}${htmlText('meta-line', timestamp(r.openedAt))}${htmlText('meta-line', r.cashierName ? `Cashier: ${r.cashierName}` : '')}${htmlText('meta-line', r.reference ? `Ref: ${r.reference}` : '')}</section>
+    <hr/><section class="meta small">${htmlText('meta-line', orderTypeLabel(r))}${r.orderType === 'dine_in' && r.tableNumber != null ? `<div class="receipt-table-number">TABLE ${r.tableNumber}</div>` : ''}${htmlText('meta-line', r.scheduledFor ? `ADVANCE ORDER · ${r.orderType === 'delivery' ? 'Ready for rider' : 'Pickup ready'} ${timestamp(r.scheduledFor)}` : '')}${htmlText('meta-line', r.pickupCustomerName ? `Pickup: ${r.pickupCustomerName} · ${r.pickupCustomerPhone ?? ''}` : '')}${htmlText('meta-line', timestamp(r.openedAt))}${htmlText('meta-line', r.cashierName ? `Cashier: ${r.cashierName}` : '')}${htmlText('meta-line', r.reference ? `Ref: ${r.reference}` : '')}</section>
     <hr/><section class="items">${items}${row('Items:', String(r.itemCount))}</section><hr/>
     <section class="totals">${row('Subtotal', formatCurrency(r.subtotal))}${r.discountAmount > 0 ? row(`Discount (${r.discountLabel || 'Discount'})`, `-${formatCurrency(r.discountAmount)}`) : ''}${r.deliveryFee > 0 ? row('Delivery fee', formatCurrency(r.deliveryFee)) : ''}${row('TOTAL', formatCurrency(r.totalAmount), true)}</section>
     ${r.taxAmount > 0 || r.vatExempt ? `<section class="vat small">${r.vatExempt ? row('VAT-exempt sales', formatCurrency(r.totalAmount - r.deliveryFee)) : row('VATable sales', formatCurrency(vatSales))}${!r.vatExempt && r.taxAmount > 0 ? row('VAT 12%', formatCurrency(r.taxAmount)) : ''}</section>` : ''}
-    ${r.payOnDelivery ? `<hr/><section class="payment"><div class="c b">PAY ON DELIVERY</div>${row('Rider collects', formatCurrency(r.totalAmount), true)}</section>` : r.paymentMethod ? `<hr/><section class="payment">${row('Paid via', paymentLabel(r.paymentMethod))}${r.cashTendered != null ? row('Cash tendered', formatCurrency(r.cashTendered)) : ''}${r.cashTendered != null ? row('Change', formatCurrency(r.changeDue ?? 0)) : ''}</section>` : ''}
+    ${r.payOnDelivery || r.payOnPickup ? `<hr/><section class="payment"><div class="c b">PAY ON ${r.payOnPickup ? 'PICKUP' : 'DELIVERY'}</div>${row(r.payOnPickup ? 'Due at pickup' : 'Rider collects', formatCurrency(r.totalAmount), true)}</section>` : r.paymentMethod ? `<hr/><section class="payment">${row('Paid via', paymentLabel(r.paymentMethod))}${r.cashTendered != null ? row('Cash tendered', formatCurrency(r.cashTendered)) : ''}${r.cashTendered != null ? row('Change', formatCurrency(r.changeDue ?? 0)) : ''}</section>` : ''}
     ${r.delivery ? `<hr/><section class="delivery small"><div class="b">Deliver to:</div>${htmlText('delivery-line', r.delivery.customerName)}${htmlText('delivery-line', r.delivery.phone)}${htmlText('delivery-line', deliveryAddress(r.delivery))}</section>` : ''}
     <hr/><footer class="c small"><div class="b legal">THIS IS NOT AN OFFICIAL RECEIPT</div><div>Keep this slip until your order is served.</div></footer>
   </div>`;
@@ -168,6 +169,7 @@ const RECEIPT_CSS = `
   .receipt .brand { font-size: 16px; letter-spacing: .06em; overflow-wrap: anywhere; }.receipt .detail, .receipt .meta-line, .receipt .delivery-line { overflow-wrap: anywhere; }
   .receipt .slip-title { margin-top: 4px; font-size: 13px; font-weight: 700; letter-spacing: .08em; }.receipt .eyebrow { font-size: 10px; font-weight: 700; letter-spacing: .08em; }
   .receipt .ticket { margin: 2px 0 4px; font-size: 36px; line-height: 1.05; letter-spacing: .02em; font-variant-numeric: tabular-nums; }
+  .receipt .receipt-table-number { margin: 3px 0; font-size: 21px; line-height: 1.1; font-weight: 900; letter-spacing: .03em; }
   .receipt .row { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; margin: 1px 0; }.receipt .row span:first-child { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }.receipt .row span:last-child { flex: 0 0 auto; text-align: right; font-variant-numeric: tabular-nums; }
   .receipt .totals .b { margin-top: 3px; font-size: 14px; }.receipt .vat { margin-top: 5px; }.receipt .legal { margin-top: 5px; font-size: 10px; }.receipt hr { border: 0; border-top: 1px dashed #000; margin: 6px 0; }
 `;
@@ -220,6 +222,18 @@ export function receiptEscpos(
   centered('Now Serving = ready for pick-up');
   p.align('left').line(divider);
   if (orderTypeLabel(r)) textLines('', orderTypeLabel(r));
+  if (r.orderType === 'dine_in' && r.tableNumber != null) {
+    p.bold(true).size('tall');
+    textLines('', `TABLE ${r.tableNumber}`);
+    p.size('normal').bold(false);
+  }
+  if (r.scheduledFor) {
+    p.bold(true).size('tall');
+    centered('ADVANCE ORDER');
+    p.size('normal').bold(false);
+    textLines('', `${r.orderType === 'delivery' ? 'Ready for rider' : 'Pickup ready'}: ${timestamp(r.scheduledFor)}`);
+    if (r.pickupCustomerName) textLines('', `Pickup: ${r.pickupCustomerName} ${r.pickupCustomerPhone ?? ''}`);
+  }
   textLines('', timestamp(r.openedAt));
   if (r.cashierName) textLines('Cashier: ', r.cashierName);
   if (r.reference) textLines('Ref: ', r.reference);
@@ -253,12 +267,12 @@ export function receiptEscpos(
     else rows('VATable sales', money(vatSales));
     if (!r.vatExempt && r.taxAmount > 0) rows('VAT 12%', money(r.taxAmount));
   }
-  if (r.payOnDelivery) {
+  if (r.payOnDelivery || r.payOnPickup) {
     p.line(divider).align('center').bold(true).size('tall');
-    centered('PAY ON DELIVERY');
+    centered(r.payOnPickup ? 'PAY ON PICKUP' : 'PAY ON DELIVERY');
     p.size('normal');
     p.align('left');
-    rows('Rider collects', money(r.totalAmount));
+    rows(r.payOnPickup ? 'Due at pickup' : 'Rider collects', money(r.totalAmount));
     p.bold(false);
   } else if (r.paymentMethod) {
     p.line(divider);

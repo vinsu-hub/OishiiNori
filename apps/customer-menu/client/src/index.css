@@ -1,6 +1,8 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Serif+JP:wght@500;600;700&display=swap');
 @import "tailwindcss";
 
+@font-face { font-family: 'Oishii Display'; src: url('/fonts/anton.ttf') format('truetype'); font-style: normal; font-weight: 400; font-display: swap; }
+
 @theme inline {
   /* "Quiet Japanese Editorial" -- warm paper, vermilion accent, charcoal
      ink. Deliberately distinct from the red/black/gold theme on
@@ -501,5 +503,32 @@
   .recipe-modal-actions button { width:100%; }
   .payment-options { grid-template-columns:1fr; }
   .order-receipt { margin-left:-2px; margin-right:-2px; }
+}
+
+
+/* Ordering storefront shares the main site's paper, ink, red, and food photo. */
+.menu-shell { background-color: #f4edda; }
+.site-header { background: rgba(244, 237, 218, .94); border-bottom-color: rgba(17, 20, 18, .18); }
+.brand-copy strong { font-family: 'Oishii Display', sans-serif; font-size: 22px; font-weight: 400; letter-spacing: .01em; text-transform: uppercase; }
+.brand-copy small { color: #8e1411; font-family: 'DM Sans', sans-serif; font-size: 10px; font-weight: 700; letter-spacing: .035em; }
+.brand-kicker { color: #c10708; font-size: 11px; font-weight: 800; letter-spacing: .13em; }
+.hero { background: #f4edda; color: #111412; isolation: isolate; min-height: 410px; }
+.hero::before { content: ''; position: absolute; z-index: -1; inset: 0 0 0 42%; background: url('/hero/sushi-boats.jpg') center / cover no-repeat; -webkit-mask-image: linear-gradient(to right, transparent, #000 32%); mask-image: linear-gradient(to right, transparent, #000 32%); }
+.hero-copy { max-width: 650px; }
+.hero h1 { font-family: 'Oishii Display', sans-serif; font-size: clamp(64px, 9vw, 128px); font-weight: 400; line-height: .9; letter-spacing: -.015em; text-transform: uppercase; text-shadow: 0 2px 14px #f4edda; }
+.hero h1 em { color: #c10708; }
+.hero-note { max-width: 36ch; color: #30302b; font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 600; background: rgba(244, 237, 218, .74); }
+.hero-stamp { border-color: #c10708; color: #c10708; background: rgba(244, 237, 218, .92); }
+.hero-jp { color: #111412; opacity: .35; }
+.category-tab.is-active, .item-tag, .ink-eyebrow { color: #c10708; }
+.category-tab.is-active::after, .add-button { background: #c10708; }
+.menu-intro h2, .section-heading h3, .about-band h2 { color: #111412; }
+.menu-intro h2 em, .about-band h2 em { color: #c10708; }
+@media (max-width: 640px) {
+  .hero { min-height: 380px; }
+  .hero::before { inset: 0; opacity: .32; -webkit-mask-image: linear-gradient(to bottom, #000, transparent 88%); mask-image: linear-gradient(to bottom, #000, transparent 88%); }
+  .hero h1 { font-size: clamp(63px, 19vw, 88px); }
+  .hero-note { background: rgba(244, 237, 218, .84); }
+  .hero-jp { display: none; }
 }
 

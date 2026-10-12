@@ -73,8 +73,14 @@ export default function PnL() {
             {pnl.unfulfilled_bundle_sales > 0 && (
               <div className="rounded-md border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900">
                 {pnl.unfulfilled_bundle_sales} bundle sale{pnl.unfulfilled_bundle_sales === 1 ? '' : 's'} this
-                period {pnl.unfulfilled_bundle_sales === 1 ? 'has' : 'have'} no fulfillment record (counted as
+                period {pnl.unfulfilled_bundle_sales === 1 ? 'has' : 'have'} no complete fulfillment record (counted as
                 ₱0 COGS).
+              </div>
+            )}
+
+            {(pnl.unresolved_bundle_costs ?? 0) > 0 && (
+              <div className="rounded-md border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900">
+                {pnl.unresolved_bundle_costs} bundle item(s) need recipe or stock-deduction review. Their costs are excluded, so COGS is understated.
               </div>
             )}
 
@@ -138,6 +144,14 @@ export default function PnL() {
                       <TableRow>
                         <TableCell className="font-medium">Losses</TableCell>
                         <TableCell>{formatCurrency(pnl.costs.losses)}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell className="font-medium">Delivery rider payouts</TableCell>
+                        <TableCell>{formatCurrency(pnl.costs.delivery_rider_payouts)}</TableCell>
+                      </TableRow>
+                      <TableRow>
+                        <TableCell className="font-medium">Register expenses</TableCell>
+                        <TableCell>{formatCurrency(pnl.costs.register_expenses)}</TableCell>
                       </TableRow>
                     </TableBody>
                   </Table>

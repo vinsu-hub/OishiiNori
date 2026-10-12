@@ -28,9 +28,14 @@ from postgrest.exceptions import APIError
 
 from app.auth import CurrentUser, get_current_user, require_role
 from app.deps import get_supabase
+from app.bundles import atomic_bundles_available, bundle_rpc
 from app.routers.recipes import _get_recipe_data
 from app.schemas import (
     ProductCreate,
+    BundleRecipeSource,
+    PendingBundleDeductionOut,
+    PublishBundleRecipeRequest,
+    PublishBundleRecipeResponse,
     ProductOut,
     ProductSizeCreate,
     ProductSizeOut,
@@ -46,6 +51,128 @@ router = APIRouter(tags=["menu_admin"])
 STORAGE_BUCKET = "product-images"
 ALLOWED_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
+
+
+@router.get("/products/{product_id}/bundle-recipe", response_model=BundleRecipeSource | None)
+def get_bundle_recipe(product_id: str, user: CurrentUser = Depends(get_current_user)):
+    require_role(user, "manager", "executive", "employee")
+    db = get_supabase()
+    if not atomic_bundles_available(db):
+        raise HTTPException(status_code=503, detail="Bundle recipe configuration requires migration 0063")
+    rows = db.table("bundle_recipe_sources").select("product_size_id,pieces_per_serving").eq("product_id", product_id).execute().data
+    return rows[0] if rows else None
+
+
+@router.put("/products/{product_id}/bundle-recipe", response_model=BundleRecipeSource)
+def set_bundle_recipe(product_id: str, body: BundleRecipeSource, user: CurrentUser = Depends(get_current_user)):
+    require_role(user, "manager", "executive", "employee")
+    db = get_supabase()
+    if not atomic_bundles_available(db):
+        raise HTTPException(status_code=503, detail="Bundle recipe configuration requires migration 0063")
+    rows = db.table("products").select("category,is_bundle").eq("id", product_id).execute().data
+    if not rows or rows[0]["is_bundle"] or rows[0]["category"] != "Oishii Maki Rolls":
+        raise HTTPException(status_code=400, detail="Only maki flavors can supply bundle recipes")
+    sizes = db.table("product_sizes").select("id").eq("id", body.product_size_id).eq("product_id", product_id).execute().data
+    if not sizes:
+        raise HTTPException(status_code=400, detail="Recipe size must belong to this flavor")
+    recipes = db.table("recipe_items").select("id").eq("product_size_id", body.product_size_id).limit(1).execute().data
+    if not recipes:
+        raise HTTPException(status_code=400, detail="Save the recipe ingredients for this size first")
+    db.table("bundle_recipe_sources").upsert({"product_id": product_id, **body.model_dump()}).execute()
+    return body
+
+
+def _pending_bundle_rows(db) -> list[dict]:
+    """Read-only manager queue; restored batches never appear as pending."""
+    pending = (db.table("bundle_pending_deductions")
+               .select("transaction_item_id,reason,created_at")
+               .is_("resolved_at", "null").execute().data)
+    if not pending:
+        return []
+    ids = [row["transaction_item_id"] for row in pending]
+    batches = (db.table("bundle_fulfillment_batches").select("transaction_item_id,restored_at")
+               .in_("transaction_item_id", ids).execute().data)
+    active_ids = {row["transaction_item_id"] for row in batches if row["restored_at"] is None}
+    pending = [row for row in pending if row["transaction_item_id"] in active_ids]
+    if not pending:
+        return []
+    items = (db.table("transaction_items")
+             .select("id,transaction_id,product_sizes(products(name))")
+             .in_("id", [row["transaction_item_id"] for row in pending]).execute().data)
+    by_id = {row["id"]: row for row in items}
+    transactions = (db.table("transactions").select("id,order_number,status")
+                    .in_("id", list({row["transaction_id"] for row in items})).execute().data) if items else []
+    tx_by_id = {row["id"]: row for row in transactions}
+    result = []
+    for row in pending:
+        item = by_id.get(row["transaction_item_id"])
+        if not item:
+            continue
+        tx = tx_by_id.get(item["transaction_id"], {})
+        if tx.get("status") == "voided":
+            continue
+        result.append({
+            **row,
+            "transaction_id": item["transaction_id"],
+            "order_number": tx.get("order_number"),
+            "product_name": ((item.get("product_sizes") or {}).get("products") or {}).get("name") or "Platter",
+        })
+    return sorted(result, key=lambda row: row["created_at"])
+
+
+@router.get("/bundle-deductions/pending", response_model=list[PendingBundleDeductionOut])
+def get_pending_bundle_deductions(user: CurrentUser = Depends(get_current_user)):
+    require_role(user, "manager", "executive")
+    try:
+        return _pending_bundle_rows(get_supabase())
+    except APIError as exc:
+        if exc.code in {"PGRST205", "42P01"}:
+            return []
+        raise
+
+
+@router.put("/product-sizes/{size_id}/bundle-recipe-publish", response_model=PublishBundleRecipeResponse)
+def publish_bundle_recipe(
+    size_id: str,
+    body: PublishBundleRecipeRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Save a whole roll recipe, then apply any newly resolvable pending stock.
+
+    The recipe RPC commits before reconciliation starts. A stock error never
+    undoes an accepted recipe or changes orders; the pending batch stays
+    visible for retry rather than pretending the deduction succeeded.
+    """
+    require_role(user, "manager", "executive")
+    db = get_supabase()
+    bundle_rpc(db, "publish_bundle_recipe_atomic", {
+        "p_size_id": size_id,
+        "p_rows": [row.model_dump() for row in body.items],
+    })
+    related = (db.table("bundle_fulfillments")
+               .select("transaction_item_id").eq("product_size_id", size_id).execute().data)
+    related_ids = {row["transaction_item_id"] for row in related}
+    pending = _pending_bundle_rows(db)
+    candidates = [row for row in pending if row["transaction_item_id"] in related_ids]
+    reconciled = 0
+    error = None
+    for row in candidates:
+        try:
+            if bundle_rpc(db, "reconcile_pending_bundle_atomic", {
+                "p_item_id": row["transaction_item_id"], "p_employee_id": user.id,
+            }):
+                reconciled += 1
+        except (HTTPException, APIError) as exc:
+            error = str(getattr(exc, "detail", None) or getattr(exc, "message", None) or exc)
+            # One failed platter must not prevent an independent one from
+            # reconciling. It remains in the pending queue for review/retry.
+    remaining = len([row for row in _pending_bundle_rows(db) if row["transaction_item_id"] in related_ids])
+    return PublishBundleRecipeResponse(
+        recipe_items=_get_recipe_data(db, size_id),
+        reconciled_batches=reconciled,
+        still_pending_batches=remaining,
+        reconciliation_error=error,
+    )
 
 
 # ---------------------------------------------------------------------------

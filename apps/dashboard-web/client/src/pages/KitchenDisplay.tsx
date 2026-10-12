@@ -21,6 +21,7 @@ import {
   KitchenStatus,
   fetchDigitalOrders,
   fetchProducts,
+  fetchAdvanceOrders,
   fetchTransactions,
   postKitchenPrinterHeartbeat,
   updateKitchenStatus,
@@ -41,6 +42,7 @@ import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 import { buildDigitalOrderLookup } from '@/lib/digitalOrderLookup';
 import { DigitalOrderInfo } from '@/components/shared/DigitalOrderInfo';
 import { playNewOrderBeep, playOverdueBeep } from '@/lib/orderSounds';
+import { advanceWindow, formatAdvanceTime } from '@/lib/advanceOrders';
 
 const KITCHEN_STATUSES: KitchenStatus[] = ['queued', 'preparing', 'ready', 'completed'];
 
@@ -64,7 +66,7 @@ function readAutoPrinted(): Set<string> {
 }
 function writeAutoPrinted(ids: Set<string>) {
   try {
-    localStorage.setItem(AUTO_PRINTED_KEY, JSON.stringify(Array.from(ids).slice(-300)));
+    localStorage.setItem(AUTO_PRINTED_KEY, JSON.stringify(Array.from(ids).slice(-5000)));
   } catch {
     /* storage unavailable */
   }
@@ -113,9 +115,25 @@ function elapsedSeconds(since: string, now: Date): number {
   return Math.max(0, Math.floor((now.getTime() - new Date(since).getTime()) / 1000));
 }
 
+const ADVANCE_PREP_LEAD_MS = 20 * 60_000;
+function isUpcoming(order: ApiTransaction, now: Date): boolean {
+  return order.kitchen_status === 'queued' && !!order.scheduled_for &&
+    new Date(order.scheduled_for).getTime() - now.getTime() > ADVANCE_PREP_LEAD_MS;
+}
+function kitchenElapsedSince(order: ApiTransaction): string {
+  if (order.kitchen_status === 'queued' && order.scheduled_for) {
+    return new Date(new Date(order.scheduled_for).getTime() - ADVANCE_PREP_LEAD_MS).toISOString();
+  }
+  return order.kitchen_status_updated_at || order.opened_at;
+}
+function printedKey(order: ApiTransaction): string {
+  return order.advance_schedule_revision ? `${order.id}:${order.advance_schedule_revision}` : order.id;
+}
+
 function ticketTier(order: ApiTransaction, now: Date): 'none' | 'warning' | 'overdue' {
   if (order.kitchen_status === 'completed') return 'none';
-  const elapsed = elapsedSeconds(order.kitchen_status_updated_at || order.opened_at, now);
+  if (isUpcoming(order, now)) return 'none';
+  const elapsed = elapsedSeconds(kitchenElapsedSince(order), now);
   if (elapsed >= OVERDUE_THRESHOLD_SECONDS) return 'overdue';
   if (elapsed >= WARNING_THRESHOLD_SECONDS) return 'warning';
   return 'none';
@@ -177,22 +195,29 @@ export default function KitchenDisplay() {
   // The product catalog only changes via an executive/manager action (Menu
   // Editing) -- fetch it once on mount instead of on every 20s poll tick.
   useEffect(() => {
-    fetchProducts(true)
+    // Existing orders still reference retired menu entries after a catalog split.
+    fetchProducts(false)
       .then(setProducts)
       .catch((e) => toast.error(`Failed to load products: ${e instanceof Error ? e.message : 'Unknown error'}`));
   }, []);
 
   const load = useCallback(() => {
-    Promise.all([fetchTransactions(), fetchDigitalOrders('approved')])
-      .then(([t, digitalOrders]) => {
+    const window = advanceWindow();
+    Promise.all([
+      fetchTransactions(), fetchDigitalOrders('approved'),
+      fetchAdvanceOrders('takeout', window.from, window.before),
+      fetchAdvanceOrders('delivery', window.from, window.before),
+    ])
+      .then(([regular, digitalOrders, advanceTakeout, advanceDelivery]) => {
+        const t = Array.from(new Map([...regular, ...advanceTakeout, ...advanceDelivery].map((tx) => [tx.id, tx])).values());
         setTransactions(t.filter((x) => x.status !== 'voided'));
         setDigitalOrderLookup(buildDigitalOrderLookup(digitalOrders));
         // Bundle fulfillment is a real backend field now (bundle_fulfillments
         // is the source of truth) -- re-seed from every poll so a reload (or
         // another terminal's action) is reflected, not just this session's
         // own optimistic updates via onFulfilled below.
-        setFulfilledItemIds((prev) => {
-          const next = new Set(prev);
+        setFulfilledItemIds(() => {
+          const next = new Set<string>();
           for (const tx of t) {
             for (const item of tx.items) {
               if (item.bundle_fulfilled) next.add(item.id);
@@ -205,8 +230,8 @@ export default function KitchenDisplay() {
         // very first load (ref starts null) so opening the page doesn't
         // chime for every already-queued order.
         const queueCandidates =
-          dateFilter === 'today' ? t.filter((tx) => toIsoDatePH(tx.opened_at) === todayIsoPH()) : t;
-        const queuedIds = new Set(queueCandidates.filter((tx) => tx.kitchen_status === 'queued').map((tx) => tx.id));
+          dateFilter === 'today' ? t.filter((tx) => toIsoDatePH(tx.scheduled_for || tx.opened_at) === todayIsoPH()) : t;
+        const queuedIds = new Set(queueCandidates.filter((tx) => tx.kitchen_status === 'queued' && !isUpcoming(tx, new Date())).map((tx) => tx.id));
         if (seenQueuedIdsRef.current) {
           const isNew = Array.from(queuedIds).some((id) => !seenQueuedIdsRef.current!.has(id));
           if (isNew && soundOn) playNewOrderBeep();
@@ -283,7 +308,7 @@ export default function KitchenDisplay() {
   }, [transactions]);
 
   const eligibleRolls = useMemo(
-    () => products.filter((p) => p.category === ROLL_CATEGORY && !p.is_bundle),
+    () => products.filter((p) => p.active && p.category === ROLL_CATEGORY && !p.is_bundle),
     [products]
   );
 
@@ -301,7 +326,7 @@ export default function KitchenDisplay() {
   const dateFilteredOrders = useMemo(
     () =>
       dateFilter === 'today'
-        ? transactions.filter((order) => toIsoDatePH(order.opened_at) === currentBusinessDate)
+        ? transactions.filter((order) => toIsoDatePH(order.scheduled_for || order.opened_at) === currentBusinessDate)
         : transactions,
     [currentBusinessDate, dateFilter, transactions]
   );
@@ -314,33 +339,39 @@ export default function KitchenDisplay() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dateFilteredOrders, stationFilter, sizeIndex]);
 
+  const upcomingOrders = useMemo(() =>
+    visibleOrders.filter((order) => isUpcoming(order, now)).sort((a, b) =>
+      (a.scheduled_for || '').localeCompare(b.scheduled_for || '')),
+  [visibleOrders, now]);
+  const activeOrders = useMemo(() => visibleOrders.filter((order) => !isUpcoming(order, now)), [visibleOrders, now]);
+
   // Fire the overdue beep once per visible ticket the instant it crosses the
   // tier, so the default Today view cannot alert for stale orders.
   useEffect(() => {
-    const overdueIds = new Set(visibleOrders.filter((t) => ticketTier(t, now) === 'overdue').map((t) => t.id));
+    const overdueIds = new Set(activeOrders.filter((t) => ticketTier(t, now) === 'overdue').map((t) => t.id));
     const isNewlyOverdue = Array.from(overdueIds).some((id) => !seenOverdueIdsRef.current.has(id));
     if (isNewlyOverdue && soundOn) playOverdueBeep();
     seenOverdueIdsRef.current = overdueIds;
-  }, [visibleOrders, now, soundOn]);
+  }, [activeOrders, now, soundOn]);
 
   const ordersByStatus = useMemo(() => {
     const map: Record<KitchenStatus, ApiTransaction[]> = { queued: [], preparing: [], ready: [], completed: [] };
-    for (const order of visibleOrders) {
+    for (const order of activeOrders) {
       map[order.kitchen_status].push(order);
     }
     return map;
-  }, [visibleOrders]);
+  }, [activeOrders]);
 
   const delayedCount = useMemo(() => {
     let count = 0;
-    for (const order of visibleOrders) {
+    for (const order of activeOrders) {
       const threshold = DELAYED_THRESHOLD_SECONDS[order.kitchen_status];
-      if (threshold != null && elapsedSeconds(order.kitchen_status_updated_at || order.opened_at, now) > threshold) {
+      if (threshold != null && elapsedSeconds(kitchenElapsedSince(order), now) > threshold) {
         count += 1;
       }
     }
     return count;
-  }, [visibleOrders, now]);
+  }, [activeOrders, now]);
 
   // Client-side approximation (no per-order "time entered preparing" field
   // exists) -- opened_at to kitchen_status_updated_at across today's
@@ -360,12 +391,12 @@ export default function KitchenDisplay() {
   }, [visibleOrders]);
 
   const longestOrder = useMemo(() => {
-    const active = visibleOrders.filter((o) => o.kitchen_status !== 'completed');
+    const active = activeOrders.filter((o) => o.kitchen_status !== 'completed');
     if (active.length === 0) return null;
     return active.reduce((longest, o) =>
-      elapsedSeconds(o.opened_at, now) > elapsedSeconds(longest.opened_at, now) ? o : longest
+      elapsedSeconds(kitchenElapsedSince(o), now) > elapsedSeconds(kitchenElapsedSince(longest), now) ? o : longest
     );
-  }, [visibleOrders, now]);
+  }, [activeOrders, now]);
 
   // ---- Auto-print: the kitchen tablet prints and accepts new orders itself ----
   // 'serial' = Chrome talks to the Bluetooth printer directly (Web Serial),
@@ -397,15 +428,18 @@ export default function KitchenDisplay() {
     return () => { cancelled = true; clearInterval(timer); };
   }, [autoPrintOn]);
 
-  // Today's queued orders, oldest first -- the auto-print queue.
+  // Print advance tickets immediately, but accept them only inside the prep window.
   const pendingAuto = useMemo(
     () =>
       autoPrintOn
         ? transactions
-            .filter((t) => t.kitchen_status === 'queued' && toIsoDatePH(t.opened_at) === todayIsoPH())
+            .filter((t) => t.kitchen_status === 'queued' && (
+              (!t.scheduled_for && toIsoDatePH(t.opened_at) === todayIsoPH()) ||
+              (!!t.scheduled_for && (!autoPrintedRef.current.has(printedKey(t)) || !isUpcoming(t, now)))
+            ))
             .sort((a, b) => a.opened_at.localeCompare(b.opened_at))
         : [],
-    [autoPrintOn, transactions]
+    [autoPrintOn, transactions, now]
   );
 
   const acceptPrinted = useCallback(async (order: ApiTransaction) => {
@@ -422,7 +456,8 @@ export default function KitchenDisplay() {
     (async () => {
       let changed = false;
       for (const order of pendingAuto) {
-        if (!autoPrintedRef.current.has(order.id)) {
+        const key = printedKey(order);
+        if (!autoPrintedRef.current.has(key)) {
           try {
             await sendHandsFree(kitchenTicketEscpos(order, ticketIndex));
           } catch (e) {
@@ -431,13 +466,15 @@ export default function KitchenDisplay() {
             toast.error(`Auto-print failed: ${message}`);
             break;
           }
-          autoPrintedRef.current.add(order.id);
+          autoPrintedRef.current.add(key);
           writeAutoPrinted(autoPrintedRef.current);
           postKitchenPrinterHeartbeat({ status: 'ok', printed_order_number: order.order_number }).catch(() => {});
           toast.success(`Ticket printed${order.order_number != null ? ` — order #${order.order_number}` : ''}`);
         }
-        await acceptPrinted(order);
-        changed = true;
+        if (!isUpcoming(order, new Date())) {
+          await acceptPrinted(order);
+          changed = true;
+        }
       }
       autoBusyRef.current = false;
       if (changed) load();
@@ -469,24 +506,26 @@ export default function KitchenDisplay() {
 
   /** Tap fallback: one tap prints the oldest waiting order and accepts it. */
   async function printNextPending() {
-    const order = pendingAuto.find((o) => !autoPrintedRef.current.has(o.id)) ?? pendingAuto[0];
+    const order = pendingAuto.find((o) => !autoPrintedRef.current.has(printedKey(o))) ?? pendingAuto[0];
     if (!order) return;
-    if (!autoPrintedRef.current.has(order.id)) {
+    const key = printedKey(order);
+    if (!autoPrintedRef.current.has(key)) {
       if (!printTicket(order)) return;
-      autoPrintedRef.current.add(order.id);
+      autoPrintedRef.current.add(key);
       writeAutoPrinted(autoPrintedRef.current);
     }
-    await acceptPrinted(order);
+    if (!isUpcoming(order, new Date())) await acceptPrinted(order);
     load();
   }
 
   async function handleAdvance(order: ApiTransaction) {
     const next = NEXT_STATUS[order.kitchen_status];
     if (!next) return;
+    if (isUpcoming(order, new Date())) return;
     // Print first, while still inside the tap (see printTicket).
-    if (next === 'preparing' && printOn && !autoPrintedRef.current.has(order.id)) {
+    if (next === 'preparing' && printOn && !autoPrintedRef.current.has(printedKey(order))) {
       if (printTicket(order)) {
-        autoPrintedRef.current.add(order.id);
+        autoPrintedRef.current.add(printedKey(order));
         writeAutoPrinted(autoPrintedRef.current);
       }
     }
@@ -664,6 +703,32 @@ export default function KitchenDisplay() {
 
         {loading && <p className="text-sm text-muted-foreground">Loading kitchen display...</p>}
 
+        {!loading && upcomingOrders.length > 0 && (
+          <section className="space-y-3" aria-label="Upcoming advance orders">
+            <h2 className="font-corp-display font-semibold">Upcoming advance orders ({upcomingOrders.length})</h2>
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              {upcomingOrders.map((order) => (
+                <Card key={order.id}>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="flex items-center gap-2 text-sm">
+                      #{order.order_number ?? order.id.slice(0, 8)}
+                      <Badge variant="outline">Advance {order.order_type === 'delivery' ? 'delivery' : 'pickup'}</Badge>
+                    </CardTitle>
+                    <p className="text-sm font-semibold">Ready {formatAdvanceTime(order.scheduled_for!)}</p>
+                    {order.pickup_customer_name && <p className="text-xs text-muted-foreground">{order.pickup_customer_name} · {order.pickup_customer_phone}</p>}
+                  </CardHeader>
+                  <CardContent className="text-sm">
+                    {resolveItems(order).map(({ item, product, size }) => (
+                      <p key={item.id}>{item.quantity}x {product.name} ({size.size_label})</p>
+                    ))}
+                    <p className="mt-2 text-xs text-muted-foreground">Moves to the prep queue 20 minutes before ready time.</p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </section>
+        )}
+
         {!loading && (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
             {KITCHEN_STATUSES.map((status) => (
@@ -707,6 +772,8 @@ export default function KitchenDisplay() {
                               {order.guest_count ? ` · ${order.guest_count} guests` : ''}
                             </Badge>
                           )}
+                          {order.order_source === 'grab' && <Badge className="bg-green-700 text-white">Grab</Badge>}
+                          {order.scheduled_for && <Badge variant="outline">Advance order</Badge>}
                           {order.is_owner_request && <Badge variant="secondary">Owner's Request</Badge>}
                           {order.related_transaction_id && (
                             <Badge variant="outline">
@@ -719,18 +786,21 @@ export default function KitchenDisplay() {
                           {tier === 'overdue' && <Badge variant="destructive">Overdue</Badge>}
                           {tier === 'warning' && <Badge variant="gold">Warning</Badge>}
                         </CardTitle>
+                        {order.scheduled_for && (
+                          <p className="text-sm font-semibold">Ready {formatAdvanceTime(order.scheduled_for)}</p>
+                        )}
                         <p className="text-xs text-muted-foreground">
                           opened {formatTimestamp12h(order.opened_at)} &middot;{' '}
                           <span
                             className={
                               DELAYED_THRESHOLD_SECONDS[order.kitchen_status] != null &&
-                              elapsedSeconds(order.kitchen_status_updated_at || order.opened_at, now) >
+                              elapsedSeconds(kitchenElapsedSince(order), now) >
                                 DELAYED_THRESHOLD_SECONDS[order.kitchen_status]!
                                 ? 'text-destructive font-medium'
                                 : undefined
                             }
                           >
-                            {elapsedLabel(elapsedSeconds(order.opened_at, now))} elapsed
+                            {elapsedLabel(elapsedSeconds(kitchenElapsedSince(order), now))} elapsed
                           </span>
                         </p>
                         {status === 'preparing' && avgPrepSeconds != null && avgPrepSeconds > 0 && (
@@ -767,7 +837,9 @@ export default function KitchenDisplay() {
                                   )}
                                   {product.is_bundle &&
                                     (fulfilled ? (
-                                      <Badge variant="default">Logged</Badge>
+                                      <Badge variant={item.bundle_deduction_status === 'pending_recipe' ? 'secondary' : 'default'}>
+                                        {item.bundle_deduction_status === 'pending_recipe' ? 'Rolls logged · stock pending' : 'Logged'}
+                                      </Badge>
                                     ) : (
                                       <Button
                                         size="sm"
@@ -848,9 +920,10 @@ export default function KitchenDisplay() {
           bundleSize={checklistTarget.size}
           itemQuantity={checklistTarget.item.quantity}
           eligibleRolls={eligibleRolls}
-          onFulfilled={() =>
-            setFulfilledItemIds((prev) => new Set(prev).add(checklistTarget.item.id))
-          }
+          onFulfilled={() => {
+            setFulfilledItemIds((prev) => new Set(prev).add(checklistTarget.item.id));
+            load();
+          }}
         />
       )}
 

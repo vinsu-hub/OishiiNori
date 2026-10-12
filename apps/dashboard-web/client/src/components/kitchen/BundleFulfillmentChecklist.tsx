@@ -68,21 +68,20 @@ export function BundleFulfillmentChecklist({
       .map(([maki_roll_product_id, quantity]) => ({ maki_roll_product_id, quantity }));
     setSubmitting(true);
     try {
-      await submitBundleFulfillment(transactionId, itemId, lines);
-      toast.success(`${bundleProduct.name} rolls logged`);
+      const result = await submitBundleFulfillment(transactionId, itemId, lines);
+      if (result.stock_deduction_status === 'pending_recipe') {
+        toast.warning(`${bundleProduct.name} rolls logged. Stock deduction is pending a verified recipe; the ticket can move on.`);
+      } else {
+        toast.success(`${bundleProduct.name} rolls logged and stock deducted`);
+      }
       setQuantities({});
       onFulfilled();
       onOpenChange(false);
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Failed to log rolls';
-      if (message.includes('already been fulfilled')) {
-        // Idempotent: another session already logged this item's rolls.
-        toast.info(`${bundleProduct.name} was already fulfilled`);
-        onFulfilled();
-        onOpenChange(false);
-      } else {
-        toast.error(message);
-      }
+      // Identical retries succeed on the server. A conflict may instead be a
+      // partial legacy fulfillment; never turn an error into local success.
+      toast.error(message);
     } finally {
       setSubmitting(false);
     }

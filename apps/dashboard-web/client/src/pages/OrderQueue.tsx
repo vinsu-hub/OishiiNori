@@ -92,7 +92,7 @@ export default function OrderQueue() {
   const seenReadyIdsRef = useRef<Set<string> | null>(null);
 
   useEffect(() => {
-    fetchProducts(true)
+    fetchProducts(false) // Retired products still have valid historical order lines.
       .then(setProducts)
       .catch((e) => toast.error(`Failed to load products: ${e instanceof Error ? e.message : 'Unknown error'}`));
   }, []);

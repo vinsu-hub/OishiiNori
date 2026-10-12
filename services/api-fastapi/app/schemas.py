@@ -47,12 +47,13 @@ TransactionStatus = Literal["open", "closed", "voided"]
 # report for why this is added here rather than worked around.
 KitchenStatus = Literal["queued", "preparing", "ready", "completed"]
 OrderType = Literal["dine_in", "takeout", "delivery"]
+OrderSource = Literal["pos", "online", "grab", "qr"]
 # Distinct from PaymentMethod below (a plain str, used by digital_orders,
 # since its value set is admin-manageable) -- POS's set is fixed (cash,
 # gcash, card), and reusing/widening that type would change the
 # digital-order schema's own
 # semantics.
-TransactionPaymentMethod = Literal["cash", "gcash", "card"]
+TransactionPaymentMethod = Literal["cash", "gcash", "card", "bdo", "maya"]
 TransactionCardType = Literal["debit", "credit"]
 MovementType = Literal[
     "trans_in", "trans_out", "delivery", "transfer_in", "transfer_out", "count_adjustment",
@@ -198,6 +199,7 @@ class DeliveryDetailOut(BaseModel):
     landmark: str | None = None
     barangay: str | None = None
     delivery_fee: float | None = None
+    rider_payout: float | None = None
     maps_pin_url: str | None = None
     rider_id: str | None = None
     rider_name: str | None = None
@@ -216,6 +218,10 @@ class DeliveryCaptureIn(BaseModel):
     barangay: str
 
 
+class RiderPayoutUpdate(BaseModel):
+    rider_payout: float = Field(ge=0, le=100_000)
+
+
 class CreateTransactionRequest(BaseModel):
     employee_id: str
     items: list[TransactionItemCreate]
@@ -225,6 +231,7 @@ class CreateTransactionRequest(BaseModel):
     owner_request_pin: str | None = None
     owner_request_note: str | None = None
     order_type: OrderType | None = None
+    order_source: OrderSource = "pos"
     table_number: int | None = Field(default=None, gt=0)
     guest_count: int | None = Field(default=None, gt=0)
     payment_method: TransactionPaymentMethod | None = None
@@ -233,9 +240,16 @@ class CreateTransactionRequest(BaseModel):
     # same "requirement depends on another field" posture as
     # CreateDigitalOrderRequest's own delivery fields).
     delivery: DeliveryCaptureIn | None = None
+    delivery_fee: float | None = Field(default=None, ge=0, le=100_000)
     # Pay on delivery (0062): the rider collects the cash. Delivery orders
     # only; the sale is recorded unpaid until settled at the counter.
     pay_on_delivery: bool = False
+    # A scheduled takeout order can be collected at pickup instead of charged
+    # when it is placed. The existing settle-payment route records collection.
+    pay_on_pickup: bool = False
+    scheduled_for: datetime | None = None
+    pickup_customer_name: str | None = Field(default=None, max_length=120)
+    pickup_customer_phone: str | None = Field(default=None, max_length=40)
     # Independent of any discount's own vat_exempt -- lets the cashier book
     # an order non-VAT with no VAT-exempt discount applied (POS VAT/Non-VAT
     # toggle). A discount's own vat_exempt still applies regardless of this.
@@ -274,6 +288,7 @@ class TransactionItemResponse(BaseModel):
     unit_price: float
     held_ingredients: list[str] = Field(default_factory=list)
     bundle_fulfilled: bool = False
+    bundle_deduction_status: Literal["applied", "pending_recipe"] | None = None
     addons: list[TransactionItemAddonResponse] = Field(default_factory=list)
 
 
@@ -297,6 +312,7 @@ class TransactionResponse(BaseModel):
     kitchen_status: KitchenStatus = "queued"
     kitchen_status_updated_at: datetime | None = None
     order_type: OrderType | None = None
+    order_source: OrderSource = "pos"
     table_number: int | None = None
     guest_count: int | None = None
     payment_method: TransactionPaymentMethod | None = None
@@ -304,6 +320,12 @@ class TransactionResponse(BaseModel):
     force_vat_exempt: bool = False
     related_transaction_id: str | None = None
     payment_status: Literal["paid", "unpaid"] = "paid"
+    scheduled_for: datetime | None = None
+    pickup_customer_name: str | None = None
+    pickup_customer_phone: str | None = None
+    advance_schedule_revision: int = 0
+    advance_schedule_updated_at: datetime | None = None
+    advance_schedule_updated_by: str | None = None
     paid_at: datetime | None = None
     items: list[TransactionItemResponse] = Field(default_factory=list)
     delivery: DeliveryDetailOut | None = None
@@ -313,12 +335,18 @@ class VoidTransactionRequest(BaseModel):
     reason: str
 
 
+class RescheduleAdvanceOrderRequest(BaseModel):
+    scheduled_for: datetime
+    expected_revision: int = Field(ge=0)
+
+
 class SwitchTableRequest(BaseModel):
     new_table_number: int = Field(gt=0)
 
 
 class SettlePaymentRequest(BaseModel):
-    payment_method: Literal["cash", "gcash"] = "cash"
+    payment_method: TransactionPaymentMethod = "cash"
+    card_type: TransactionCardType | None = None
 
 
 class KitchenStatusUpdateRequest(BaseModel):
@@ -332,6 +360,12 @@ class BundleFulfillmentLine(BaseModel):
 
 class BundleFulfillmentRequest(BaseModel):
     lines: list[BundleFulfillmentLine]
+    allow_pending_recipe: bool = False
+
+
+class BundleRecipeSource(BaseModel):
+    product_size_id: str
+    pieces_per_serving: int = Field(gt=0, strict=True)
 
 
 class DeductedIngredient(BaseModel):
@@ -346,6 +380,34 @@ class BundleFulfillmentResponse(BaseModel):
     total_pieces: int
     lines: list[BundleFulfillmentLine]
     ingredients_deducted: list[DeductedIngredient]
+    stock_deduction_status: Literal["applied", "pending_recipe"] = "applied"
+
+
+class PublishedBundleRecipeLine(BaseModel):
+    ingredient_id: str
+    qty_per_serving: float = Field(gt=0)
+    unit: str
+    prep_notes: str | None = None
+
+
+class PublishBundleRecipeRequest(BaseModel):
+    items: list[PublishedBundleRecipeLine] = Field(min_length=1)
+
+
+class PublishBundleRecipeResponse(BaseModel):
+    recipe_items: list[RecipeItemOut]
+    reconciled_batches: int
+    still_pending_batches: int
+    reconciliation_error: str | None = None
+
+
+class PendingBundleDeductionOut(BaseModel):
+    transaction_item_id: str
+    transaction_id: str
+    order_number: int | None = None
+    product_name: str
+    reason: str
+    created_at: datetime
 
 
 # ---------------------------------------------------------------------------
@@ -984,6 +1046,21 @@ class UtilityLogResponse(BaseModel):
     updated_at: datetime
 
 
+class CashExpenseCreate(BaseModel):
+    description: str = Field(min_length=1, max_length=240)
+    amount: float = Field(gt=0, le=1_000_000)
+
+
+class CashExpenseResponse(BaseModel):
+    id: str
+    description: str
+    amount: float
+    business_date: date
+    recorded_by: str
+    recorded_by_name: str | None = None
+    created_at: datetime
+
+
 # ---------------------------------------------------------------------------
 # Kiosk / attendance
 # ---------------------------------------------------------------------------
@@ -1278,6 +1355,12 @@ class DepartmentBreakdown(BaseModel):
     item_count: float
 
 
+class OrderSourceBreakdown(BaseModel):
+    order_source: OrderSource
+    order_count: int
+    revenue: float
+
+
 class DashboardSummaryResponse(BaseModel):
     date: date
     revenue: float
@@ -1289,12 +1372,85 @@ class DashboardSummaryResponse(BaseModel):
     utility_cost_today: float
     utility_breakdown: list[UtilityCostBreakdown]
     by_department: list[DepartmentBreakdown]
+    by_order_source: list[OrderSourceBreakdown] = Field(default_factory=list)
     # None (with hr_available=False) rather than 0 when the hr schema isn't
     # exposed yet -- distinguishes "no one clocked in" from "couldn't check",
     # same resilience pattern as transactions.py's kitchen_status feature
     # detection.
     staff_clocked_in: int | None = None
     hr_available: bool = True
+
+
+class SalesInsightsBreakdown(BaseModel):
+    order_type: Literal["dine_in", "takeout", "delivery", "unspecified"]
+    revenue: float
+    order_count: int
+    average_order_value: float
+    share_pct: float
+    previous_revenue: float
+    change_pct: float | None
+
+
+class SalesInsightsSource(BaseModel):
+    order_source: Literal["pos", "online", "grab", "qr", "unspecified"]
+    revenue: float
+    order_count: int
+
+
+class SalesInsightsPayment(BaseModel):
+    payment_method: str
+    revenue: float
+    order_count: int
+
+
+class SalesInsightsPaymentSource(SalesInsightsPayment):
+    order_source: Literal["pos", "online", "grab", "qr", "unspecified"]
+
+
+class SalesInsightsPoint(BaseModel):
+    bucket: str
+    revenue: float
+    order_count: int
+
+
+class SalesInsightsItem(BaseModel):
+    product_id: str
+    product_size_id: str
+    product_name: str
+    size_label: str
+    category: str
+    quantity_sold: float
+    item_revenue: float
+
+
+class SalesInsightsCategory(BaseModel):
+    category: str
+    quantity_sold: float
+    item_revenue: float
+    items: list[SalesInsightsItem]
+
+
+class SalesInsightsResponse(BaseModel):
+    period: Literal["day", "week", "month"]
+    anchor: date
+    period_start: datetime
+    period_end: datetime
+    as_of: datetime
+    comparison_start: datetime
+    comparison_end: datetime
+    revenue: float
+    order_count: int
+    average_order_value: float
+    previous_revenue: float
+    previous_order_count: int
+    revenue_change_pct: float | None
+    by_order_type: list[SalesInsightsBreakdown]
+    by_order_source: list[SalesInsightsSource]
+    by_payment_method: list[SalesInsightsPayment]
+    by_payment_source: list[SalesInsightsPaymentSource]
+    series: list[SalesInsightsPoint]
+    categories: list[SalesInsightsCategory]
+    peak_hour: int | None
 
 
 class SalesTrendPoint(BaseModel):
@@ -1326,7 +1482,9 @@ class TopProductsResponse(BaseModel):
 
 class BusinessDayItemRow(BaseModel):
     product_id: str
+    product_size_id: str
     product_name: str
+    size_label: str
     category: str
     quantity_sold: float
     revenue: float
@@ -1349,6 +1507,8 @@ class PnLCostBreakdown(BaseModel):
     payroll: float
     utilities: float
     losses: float
+    delivery_rider_payouts: float = 0
+    register_expenses: float = 0
 
 
 class PnLDepartmentMargin(BaseModel):
@@ -1381,6 +1541,7 @@ class PnLResponse(BaseModel):
     ingredients_missing_cost: int
     ingredients_total: int
     unfulfilled_bundle_sales: int
+    unresolved_bundle_costs: int = 0
     payroll_employee_count: int
 
 
@@ -1456,6 +1617,7 @@ class BusinessDayOpenRequest(BaseModel):
     employee_number: str
     pin: str
     menu_confirmed: bool
+    starting_cash: float = Field(ge=0)
 
 
 class BusinessDayCloseRequest(BaseModel):
@@ -1465,13 +1627,13 @@ class BusinessDayCloseRequest(BaseModel):
 
 
 class BusinessDayStatusOut(BaseModel):
-    """Cashier-safe shape -- deliberately never carries
-    cash_register_total/system_eod_total (see BusinessDayAdminOut)."""
+    """Open/close status never carries drawer totals; closed shift reports do."""
 
     business_date: date
     is_open: bool
     opened_at: datetime | None = None
     menu_confirmed: bool | None = None
+    closed_shift_id: str | None = None
 
 
 RefundStatus = Literal["pending", "approved", "rejected"]
@@ -1509,6 +1671,7 @@ class BusinessDayAdminOut(BaseModel):
     closed_by: str | None = None
     cash_register_total: float | None = None
     system_eod_total: float | None = None
+    expenses_total: float = 0
     variance: float | None = None
 
 

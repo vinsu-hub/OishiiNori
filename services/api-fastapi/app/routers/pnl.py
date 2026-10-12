@@ -23,8 +23,10 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, Query
 
 from app.auth import CurrentUser, get_current_user, require_role_or_grant
+from app.bundles import atomic_bundles_available, completed_bundle_ids, pending_bundle_item_ids
 from app.deps import get_supabase
 from app.routers.analytics import _range_bounds
+from app.routers.sales_insights import _page_rows
 from app.routers.hr import _compute_payroll_summary
 from app.routers.transactions import _bundle_fulfillments_supported_check
 from app.schemas import (
@@ -97,14 +99,15 @@ def get_pnl(period: PnLPeriod = Query("today"), user: CurrentUser = Depends(get_
             else:
                 non_bundle_items.append((it["product_size_id"], float(it["quantity"]), dept))
 
-    # --- Bundle fulfillment lookup -- unfulfilled count + roll->size
-    # resolution (mirrors transactions.py's own bundle-fulfillment/void
-    # logic: a roll product resolves to exactly one product_size) ---
+    # New bundles use exact saved deductions. Historical rows have no size
+    # snapshot, so only an unambiguous single-size product can be costed.
     size_ids = {s for s, _, _ in non_bundle_items}
     bundle_item_ids = [iid for iid, _ in bundle_items]
     fulfillment_rows: list[dict] = []
     fulfilled_item_ids: set[str] = set()
     roll_size_by_product: dict[str, str] = {}
+    snapshot_deductions: list[dict] = []
+    unresolved_items: set[str] = set()
     if bundle_item_ids and _bundle_fulfillments_supported_check(supabase):
         fulfillment_rows = (
             supabase.table("bundle_fulfillments")
@@ -113,7 +116,19 @@ def get_pnl(period: PnLPeriod = Query("today"), user: CurrentUser = Depends(get_
             .execute()
             .data
         )
-        fulfilled_item_ids = {r["transaction_item_id"] for r in fulfillment_rows}
+        fulfilled_item_ids = completed_bundle_ids(supabase, bundle_item_ids)
+        batch_ids = set()
+        if atomic_bundles_available(supabase):
+            batches = supabase.table("bundle_fulfillment_batches").select("transaction_item_id,restored_at").in_("transaction_item_id", bundle_item_ids).execute().data
+            batch_ids = {r["transaction_item_id"] for r in batches}
+            active_ids = [r["transaction_item_id"] for r in batches if r["restored_at"] is None]
+            unresolved_items.update(pending_bundle_item_ids(supabase, active_ids))
+            if active_ids:
+                snapshot_deductions = supabase.table("bundle_ingredient_deductions").select("transaction_item_id,quantity,ingredients(unit_cost)").in_("transaction_item_id", active_ids).execute().data
+        unresolved_items.update(r["transaction_item_id"] for r in fulfillment_rows
+                                if r["transaction_item_id"] not in fulfilled_item_ids and r["transaction_item_id"] not in batch_ids)
+        fulfillment_rows = [r for r in fulfillment_rows
+                            if r["transaction_item_id"] in fulfilled_item_ids and r["transaction_item_id"] not in batch_ids]
         roll_product_ids = list({r["maki_roll_product_id"] for r in fulfillment_rows})
         if roll_product_ids:
             roll_sizes = (
@@ -123,7 +138,12 @@ def get_pnl(period: PnLPeriod = Query("today"), user: CurrentUser = Depends(get_
                 .execute()
                 .data
             )
-            roll_size_by_product = {r["product_id"]: r["id"] for r in roll_sizes}
+            sizes_by_product: dict[str, list[str]] = defaultdict(list)
+            for row in roll_sizes:
+                sizes_by_product[row["product_id"]].append(row["id"])
+            roll_size_by_product = {pid: sizes[0] for pid, sizes in sizes_by_product.items() if len(sizes) == 1}
+            unresolved_items.update(r["transaction_item_id"] for r in fulfillment_rows
+                                    if r["maki_roll_product_id"] not in roll_size_by_product)
             size_ids |= set(roll_size_by_product.values())
     unfulfilled_bundle_sales = sum(1 for iid, _ in bundle_items if iid not in fulfilled_item_ids)
 
@@ -150,11 +170,17 @@ def get_pnl(period: PnLPeriod = Query("today"), user: CurrentUser = Depends(get_
         cogs_by_dept[dept] += recipe_cost_by_size.get(size_id, 0.0) * qty
     bundle_dept_by_item = dict(bundle_items)
     for row in fulfillment_rows:
+        if row["transaction_item_id"] in unresolved_items:
+            continue
         size_id = roll_size_by_product.get(row["maki_roll_product_id"])
         if size_id is None:
             continue
         dept = bundle_dept_by_item.get(row["transaction_item_id"], "kitchen")
         cogs_by_dept[dept] += recipe_cost_by_size.get(size_id, 0.0) * float(row["quantity"])
+    for row in snapshot_deductions:
+        unit_cost = (row.get("ingredients") or {}).get("unit_cost")
+        if unit_cost is not None:
+            cogs_by_dept[bundle_dept_by_item[row["transaction_item_id"]]] += float(row["quantity"]) * float(unit_cost)
     cogs_total = sum(cogs_by_dept.values())
 
     # --- Payroll -- live aggregator, gross wages only (no statutory
@@ -183,6 +209,20 @@ def get_pnl(period: PnLPeriod = Query("today"), user: CurrentUser = Depends(get_
             continue
         utility_total += consumption * float(log["unit_cost"])
 
+    register_expenses = sum(
+        float(row["amount"])
+        for row in _page_rows(supabase.table("cash_expenses").select("id,amount")
+                              .gte("business_date", date_from.isoformat())
+                              .lte("business_date", date_to.isoformat()).order("id"))
+    )
+    delivery_rider_payouts = 0.0
+    if transaction_ids:
+        payout_rows = (supabase.table("deliveries").select("rider_payout")
+                       .in_("transaction_id", transaction_ids).execute().data)
+        delivery_rider_payouts = sum(
+            float(row["rider_payout"]) for row in payout_rows if row.get("rider_payout") is not None
+        )
+
     # --- Losses -- own P&L line, never netted into COGS ---
     loss_rows = (
         supabase.table("loss_records")
@@ -203,7 +243,7 @@ def get_pnl(period: PnLPeriod = Query("today"), user: CurrentUser = Depends(get_
     ingredients_missing_cost = sum(1 for i in ingredients if i["unit_cost"] is None)
 
     gross_profit = revenue - cogs_total
-    net_profit = gross_profit - payroll_total - utility_total - loss_total
+    net_profit = gross_profit - payroll_total - utility_total - loss_total - delivery_rider_payouts - register_expenses
     food_cost_pct = (cogs_total / revenue) if revenue > 0 else None
 
     dept_keys = set(items_by_dept_revenue) | set(cogs_by_dept)
@@ -234,12 +274,14 @@ def get_pnl(period: PnLPeriod = Query("today"), user: CurrentUser = Depends(get_
         net_profit=net_profit,
         food_cost_pct=food_cost_pct,
         costs=PnLCostBreakdown(
-            cogs=cogs_total, payroll=payroll_total, utilities=utility_total, losses=loss_total
+            cogs=cogs_total, payroll=payroll_total, utilities=utility_total, losses=loss_total,
+            delivery_rider_payouts=delivery_rider_payouts, register_expenses=register_expenses,
         ),
         losses_by_reason=[PnLLossByReason(reason=r, cost_impact=c) for r, c in loss_by_reason.items()],
         department_margins=department_margins,
         ingredients_missing_cost=ingredients_missing_cost,
         ingredients_total=ingredients_total,
         unfulfilled_bundle_sales=unfulfilled_bundle_sales,
+        unresolved_bundle_costs=len(unresolved_items),
         payroll_employee_count=payroll_summary["employee_count"],
     )

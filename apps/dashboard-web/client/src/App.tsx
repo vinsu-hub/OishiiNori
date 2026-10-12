@@ -55,6 +55,9 @@ const Delivery = lazyWithReload(() => import('./pages/Delivery'), 'Delivery');
 const DeliveryRequests = lazyWithReload(() => import('./pages/DeliveryRequests'), 'DeliveryRequests');
 
 const PosDeliveries = lazyWithReload(() => import('./pages/PosDeliveries'), 'PosDeliveries');
+const AdvanceOrders = lazyWithReload(() => import('./pages/AdvanceOrders'), 'AdvanceOrders');
+const Expenses = lazyWithReload(() => import('./pages/Expenses'), 'Expenses');
+const ShiftReports = lazyWithReload(() => import('./pages/ShiftReports'), 'ShiftReports');
 const OnlineOrders = lazyWithReload(() => import('./pages/OnlineOrders'), 'OnlineOrders');
 const ScheduledOrders = lazyWithReload(() => import('./pages/ScheduledOrders'), 'ScheduledOrders');
 const StockVS = lazyWithReload(() => import('./pages/StockVS'), 'StockVS');
@@ -112,6 +115,9 @@ function Router() {
         <Route path={'/delivery'} component={Delivery} />
         <Route path={'/delivery-requests'} component={DeliveryRequests} />
         <Route path={'/pos-deliveries'} component={PosDeliveries} />
+        <Route path={'/advance-orders'} component={AdvanceOrders} />
+        <Route path={'/expenses'} component={Expenses} />
+        <Route path={'/shift-reports'} component={ShiftReports} />
         <Route path={'/online-orders'} component={OnlineOrders} />
         <Route path={'/scheduled-orders'} component={ScheduledOrders} />
         <Route path={'/stock/vs'} component={StockVS} />

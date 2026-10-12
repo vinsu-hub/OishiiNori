@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { DashboardLayout } from '@/components/DashboardLayout';
+import { useAuth } from '@/contexts/AuthContext';
+import { BundleRecipeEditor } from '@/components/kitchen/BundleRecipeEditor';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -39,6 +41,9 @@ import {
   type ApiItemUnit,
   fetchProducts,
   fetchRecipe,
+  fetchPendingBundleDeductions,
+  publishBundleRecipe,
+  type PendingBundleDeduction,
   updateProduct,
   updateProductSize,
   updateRecipeItem,
@@ -87,6 +92,7 @@ interface RecipeRow {
   id?: string;
   ingredient_id: string;
   qty_per_serving: string;
+  savedQty?: string;
   unit: string;
   /** Unit the quantity is typed in -- 'base' or an item_units id. Saved
    * converted to the ingredient's base unit, which is what sales deduct. */
@@ -104,6 +110,12 @@ function newRecipeRow(): RecipeRow {
 // had to be built: there was no path anywhere in the app to add a brand-new
 // ingredient before this.
 const NEW_INGREDIENT_VALUE = '__new__';
+const CEO_RECIPE_PENDING_NAMES = new Set([
+  'Tantanmen', 'Kuro Chasumen', 'Spicy Miso', 'Black Garlic', 'Tiramisu Rate',
+  'Katsudon Curry (Pork)', 'Katsudon Curry (Chicken)',
+  'Cheesy Katsu oBento (Pork)', 'Cheesy Katsu oBento (Chicken)',
+  'Katsu oBento (Pork)', 'Katsu oBento (Chicken)',
+]);
 
 function recipeRowFromApi(r: ApiRecipeItem): RecipeRow {
   return {
@@ -111,6 +123,7 @@ function recipeRowFromApi(r: ApiRecipeItem): RecipeRow {
     id: r.id,
     ingredient_id: r.ingredient_id,
     qty_per_serving: String(r.qty_per_serving),
+    savedQty: String(r.qty_per_serving),
     unit: r.unit,
     unitKey: 'base',
     prep_notes: r.prep_notes || '',
@@ -118,7 +131,10 @@ function recipeRowFromApi(r: ApiRecipeItem): RecipeRow {
 }
 
 export default function MenuEditing() {
+  const { user } = useAuth();
+  const canPublishBundleRecipe = user?.role === 'manager' || user?.role === 'executive';
   const [products, setProducts] = useState<ApiProduct[]>([]);
+  const [pendingDeductions, setPendingDeductions] = useState<PendingBundleDeduction[]>([]);
   const [ingredients, setIngredients] = useState<ApiIngredient[]>([]);
   const [itemUnits, setItemUnits] = useState<ApiItemUnit[]>([]);
   const [newUnitRow, setNewUnitRow] = useState<string | null>(null);
@@ -138,6 +154,14 @@ export default function MenuEditing() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const loadPending = useCallback(() => {
+    if (!canPublishBundleRecipe) return;
+    fetchPendingBundleDeductions().then(setPendingDeductions)
+      .catch((e) => toast.error(`Failed to load pending platter deductions: ${e.message}`));
+  }, [canPublishBundleRecipe]);
+
+  useEffect(() => { loadPending(); }, [loadPending]);
 
   const ingredientsById = useMemo(() => {
     const map = new Map<string, ApiIngredient>();
@@ -173,6 +197,8 @@ export default function MenuEditing() {
   const [originalRecipeIds, setOriginalRecipeIds] = useState<Set<string>>(new Set());
   const [loadingRecipe, setLoadingRecipe] = useState(false);
   const [savingRecipe, setSavingRecipe] = useState(false);
+  const [confirmedMismatchRowIds, setConfirmedMismatchRowIds] = useState<Set<string>>(new Set());
+  const [editedMismatchRowIds, setEditedMismatchRowIds] = useState<Set<string>>(new Set());
 
   // Inline "+ New ingredient..." form state -- keyed by which recipe row
   // (by localId) currently has it open, so only one row shows the form at a time.
@@ -210,6 +236,8 @@ export default function MenuEditing() {
     setRecipeSizeId(product.sizes[0]?.id || '');
     setRecipeRows([]);
     setOriginalRecipeIds(new Set());
+    setConfirmedMismatchRowIds(new Set());
+    setEditedMismatchRowIds(new Set());
 
     setImageFile(null);
     setImagePreview(null);
@@ -224,6 +252,8 @@ export default function MenuEditing() {
       .then((items) => {
         setRecipeRows(items.map(recipeRowFromApi));
         setOriginalRecipeIds(new Set(items.map((i) => i.id)));
+        setConfirmedMismatchRowIds(new Set());
+        setEditedMismatchRowIds(new Set());
       })
       .catch((e) => toast.error(`Failed to load recipe: ${e.message}`))
       .finally(() => setLoadingRecipe(false));
@@ -318,6 +348,22 @@ export default function MenuEditing() {
 
   function updateRecipeRow(localId: string, patch: Partial<RecipeRow>) {
     setRecipeRows((rows) => rows.map((r) => (r.localId === localId ? { ...r, ...patch } : r)));
+    if ('ingredient_id' in patch) {
+      setEditedMismatchRowIds((ids) => {
+        const next = new Set(ids);
+        next.delete(localId);
+        return next;
+      });
+    } else if ('qty_per_serving' in patch) {
+      setEditedMismatchRowIds((ids) => new Set(ids).add(localId));
+    }
+    if ('ingredient_id' in patch || 'qty_per_serving' in patch || 'unitKey' in patch) {
+      setConfirmedMismatchRowIds((ids) => {
+        const next = new Set(ids);
+        next.delete(localId);
+        return next;
+      });
+    }
   }
 
   function addRecipeRow() {
@@ -375,8 +421,47 @@ export default function MenuEditing() {
       toast.error('Every recipe line needs an ingredient and a quantity greater than 0');
       return;
     }
+    const isMakiRoll = editing?.category === 'Oishii Maki Rolls' && !editing.is_bundle;
+    if (isMakiRoll && !canPublishBundleRecipe) {
+      toast.error('A manager or executive must publish maki roll recipes');
+      return;
+    }
+    const unconfirmed = activeRows.filter((row) => {
+      const base = ingredientsById.get(row.ingredient_id)?.base_unit;
+      return base && row.unit && row.unit !== base &&
+        (!editedMismatchRowIds.has(row.localId) || !confirmedMismatchRowIds.has(row.localId));
+    });
+    if (unconfirmed.length) {
+      toast.error('Verify each highlighted quantity in the ingredient stock unit before saving');
+      return;
+    }
     setSavingRecipe(true);
     try {
+      if (isMakiRoll) {
+        if (!activeRows.length || activeRows.length !== recipeRows.length) {
+          toast.error('A maki roll recipe needs at least one complete ingredient line');
+          return;
+        }
+        const result = await publishBundleRecipe(recipeSizeId, activeRows.map((row) => ({
+          ingredient_id: row.ingredient_id,
+          qty_per_serving: Number(row.qty_per_serving) * recipeUnitFactor(row),
+          unit: ingredientsById.get(row.ingredient_id)?.base_unit || row.unit.trim(),
+          prep_notes: row.prep_notes.trim() || null,
+        })));
+        toast.success(result.reconciled_batches
+          ? `Recipe saved; stock applied to ${result.reconciled_batches} pending platter(s)`
+          : 'Recipe saved');
+        if (result.still_pending_batches || result.reconciliation_error) {
+          toast.warning(`${result.still_pending_batches} platter(s) still need stock reconciliation${result.reconciliation_error ? `: ${result.reconciliation_error}` : ''}`);
+        }
+        const items = await fetchRecipe(recipeSizeId);
+        setRecipeRows(items.map(recipeRowFromApi));
+        setOriginalRecipeIds(new Set(items.map((i) => i.id)));
+        setConfirmedMismatchRowIds(new Set());
+        setEditedMismatchRowIds(new Set());
+        loadPending();
+        return;
+      }
       const currentIds = new Set(activeRows.filter((r) => r.id).map((r) => r.id as string));
       const removed = Array.from(originalRecipeIds).filter((id) => !currentIds.has(id));
 
@@ -543,6 +628,20 @@ export default function MenuEditing() {
           <Button onClick={openCreate}>Add menu item</Button>
         </div>
 
+        {canPublishBundleRecipe && pendingDeductions.length > 0 && (
+          <Card className="border-amber-300 bg-amber-50">
+            <CardContent className="pt-4 space-y-2">
+              <p className="font-semibold text-amber-950">Platter stock deductions awaiting verified recipes ({pendingDeductions.length})</p>
+              <p className="text-sm text-amber-900">Kitchen rolls are logged. Correct each affected maki recipe in its ingredient stock unit to apply stock once. Do not guess a conversion.</p>
+              {pendingDeductions.map((pending) => (
+                <p key={pending.transaction_item_id} className="text-sm text-amber-950">
+                  Order {pending.order_number ?? pending.transaction_id.slice(0, 8)} · {pending.product_name}: {pending.reason}
+                </p>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+
         {loading && <p className="text-sm text-muted-foreground">Loading menu...</p>}
         {!loading && (
           <Table>
@@ -679,6 +778,9 @@ export default function MenuEditing() {
               </TabsContent>
 
               <TabsContent value="recipe" className="space-y-3 pt-4">
+                {editing.category === 'Oishii Maki Rolls' && !editing.is_bundle && (
+                  <BundleRecipeEditor key={editing.id} product={editing} />
+                )}
                 <div className="space-y-1">
                   <Label>Size</Label>
                   <Select value={recipeSizeId} onValueChange={setRecipeSizeId}>
@@ -698,6 +800,11 @@ export default function MenuEditing() {
                 {loadingRecipe && <p className="text-sm text-muted-foreground">Loading recipe...</p>}
                 {!loadingRecipe && recipeSizeId && (
                   <div className="space-y-3">
+                    {recipeRows.length === 0 && CEO_RECIPE_PENDING_NAMES.has(editing.name) && (
+                      <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                        Recipe pending CEO input. Add verified ingredients and quantities here when provided; no stock will be deducted until a recipe is saved.
+                      </p>
+                    )}
                     {recipeRows.map((row) => (
                       <div key={row.localId} className="grid grid-cols-12 gap-2 items-end">
                         <div className={creatingIngredientFor === row.localId ? 'col-span-12 space-y-1' : 'col-span-4 space-y-1'}>
@@ -707,9 +814,9 @@ export default function MenuEditing() {
                             onValueChange={(v) => {
                               if (v === NEW_INGREDIENT_VALUE) {
                                 openNewIngredientForm(row.localId);
-                                updateRecipeRow(row.localId, { ingredient_id: v, unitKey: 'base' });
+                                updateRecipeRow(row.localId, { ingredient_id: v, unitKey: 'base', unit: '' });
                               } else {
-                                updateRecipeRow(row.localId, { ingredient_id: v, unitKey: 'base' });
+                                updateRecipeRow(row.localId, { ingredient_id: v, unitKey: 'base', unit: '' });
                               }
                             }}
                           >
@@ -780,7 +887,8 @@ export default function MenuEditing() {
                                 type="number"
                                 min={0}
                                 step="0.01"
-                                value={row.qty_per_serving}
+                                value={row.unit && row.unit !== ingredientsById.get(row.ingredient_id)?.base_unit && !editedMismatchRowIds.has(row.localId) ? '' : row.qty_per_serving}
+                                placeholder={row.unit && row.unit !== ingredientsById.get(row.ingredient_id)?.base_unit ? 'Enter verified quantity' : undefined}
                                 onChange={(e) => updateRecipeRow(row.localId, { qty_per_serving: e.target.value })}
                               />
                             </div>
@@ -811,6 +919,17 @@ export default function MenuEditing() {
                             </div>
                           </>
                         )}
+                        {row.unit && ingredientsById.get(row.ingredient_id)?.base_unit && row.unit !== ingredientsById.get(row.ingredient_id)?.base_unit && (
+                          <label className="col-span-12 flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950">
+                            <input type="checkbox" className="mt-0.5" disabled={!editedMismatchRowIds.has(row.localId)} checked={confirmedMismatchRowIds.has(row.localId)}
+                              onChange={(e) => setConfirmedMismatchRowIds((ids) => {
+                                const next = new Set(ids);
+                                if (e.target.checked) next.add(row.localId); else next.delete(row.localId);
+                                return next;
+                              })} />
+                            <span>Saved recipe was {row.savedQty} {row.unit}, but {ingredientsById.get(row.ingredient_id)?.name} stock uses {ingredientsById.get(row.ingredient_id)?.base_unit}. Enter the verified quantity above, then confirm it is in the selected unit. No conversion is assumed.</span>
+                          </label>
+                        )}
                       </div>
                     ))}
                     <div className="flex items-center justify-between">
@@ -818,11 +937,14 @@ export default function MenuEditing() {
                         <Plus className="w-4 h-4" />
                         Add ingredient
                       </Button>
-                      <Button disabled={savingRecipe} onClick={handleSaveRecipe} className="gap-2">
+                      <Button disabled={savingRecipe || (editing.category === 'Oishii Maki Rolls' && !editing.is_bundle && !canPublishBundleRecipe)} onClick={handleSaveRecipe} className="gap-2">
                         {savingRecipe ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                         Save recipe
                       </Button>
                     </div>
+                    {editing.category === 'Oishii Maki Rolls' && !editing.is_bundle && !canPublishBundleRecipe && (
+                      <p className="text-xs text-muted-foreground">A manager or executive must publish maki roll recipes.</p>
+                    )}
                   </div>
                 )}
                 {!recipeSizeId && <p className="text-sm text-muted-foreground">This item has no sizes yet -- add one under Sizes &amp; Prices first.</p>}

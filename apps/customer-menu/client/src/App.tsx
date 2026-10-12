@@ -161,7 +161,7 @@ export default function App() {
   const [loadingMenu, setLoadingMenu] = useState(true);
   const [recipeCache, setRecipeCache] = useState<Record<string, ApiRecipeItem[]>>({});
 
-  const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [activeCategory, setActiveCategory] = useState<string>('All');
   const [query, setQuery] = useState('');
   const [cart, setCart] = useState<CartLine[]>([]);
   const [addons, setAddons] = useState<AddonLine[]>([]);
@@ -252,7 +252,6 @@ export default function App() {
       .then(([p, a]) => {
         setProducts(p);
         setAddonCatalog(a);
-        if (p.length > 0) setActiveCategory(p[0].category);
       })
       .catch((e) => toast(e instanceof Error ? e.message : 'Failed to load menu', 'error'))
       .finally(() => setLoadingMenu(false));
@@ -283,7 +282,7 @@ export default function App() {
         seen.set(p.category, { id: p.category, label: p.category, jp: categoryJp(p.category), icon: categoryIcon(p.category) });
       }
     }
-    return [...seen.values()];
+    return [{ id: 'All', label: 'All', jp: '全て', icon: Utensils }, ...seen.values()];
   }, [products]);
 
   const sections = useMemo(() => {
@@ -298,10 +297,10 @@ export default function App() {
 
   const filteredSections = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return sections.filter((s) => s.id === activeCategory);
+    if (!needle) return activeCategory === 'All' ? sections.filter((s) => s.id !== 'All') : sections.filter((s) => s.id === activeCategory);
     return sections
       .map((s) => ({ ...s, items: s.items.filter((item) => item.name.toLowerCase().includes(needle)) }))
-      .filter((s) => s.items.length > 0);
+      .filter((s) => s.id !== 'All' && s.items.length > 0);
   }, [sections, query, activeCategory]);
 
   function getRecipe(sizeId: string): ApiRecipeItem[] {
@@ -549,7 +548,8 @@ export default function App() {
           <div className="item-modal" style={{ position: 'static', maxWidth: 380 }}>
             <div className="modal-body" style={{ textAlign: 'center' }}>
               <img src="/logo.jpg" alt="Oishii Nori" className="brand-logo" style={{ width: 64, height: 64, margin: '0 auto 14px' }} />
-              <h2>{advanceMode ? 'Advance Order' : 'Order Online'}</h2>
+              <p className="brand-kicker">YOUR SUSHI STORY</p>
+              <h2>{advanceMode ? 'Plan your next craving.' : 'How will your story start?'}</h2>
               <p>{advanceMode ? 'Choose delivery or pickup, then select your preferred date and time at checkout.' : 'How would you like to receive your order?'}</p>
               <button
                 className="primary-button"
@@ -588,8 +588,9 @@ export default function App() {
         <div className="item-modal" style={{ position: 'static', maxWidth: 380 }}>
           <div className="modal-body" style={{ textAlign: 'center' }}>
             <img src="/logo.jpg" alt="Oishii Nori" className="brand-logo" style={{ width: 64, height: 64, margin: '0 auto 14px' }} />
-            <h2>Welcome to Oishii Nori</h2>
-            <p>Scan the QR code on your table to order, reserve a table for later, or order delivery/pickup.</p>
+            <p className="brand-kicker">OISHII NORI · YOUR SUSHI STORY</p>
+            <h2>Good food starts here.</h2>
+            <p>Japanese favorites with a Filipino twist, made fresh for your table, pickup, or delivery.</p>
             <button
               className="primary-button"
               type="button"
@@ -637,7 +638,7 @@ export default function App() {
                   : effectiveChannel === 'pickup'
                     ? 'Pickup'
                     : `Table ${tableNumber}`}{' '}
-                · simple. fresh. Japanese.
+                · Your Sushi Story
               </small>
             </span>
           </a>
@@ -689,16 +690,16 @@ export default function App() {
                 {effectiveChannel === 'delivery' ? 'DELIVERY' : effectiveChannel === 'pickup' ? 'PICKUP' : `TABLE ${tableNumber}`}
               </p>
               <h1>
-                Simple.
+                Your
                 <br />
-                <em>Fresh.</em>
+                <em>Sushi</em>
                 <br />
-                Japanese.
+                Story.
               </h1>
               <p className="hero-note">
-                Find your next favorite bite,
+                Japanese favorites with a Filipino twist,
                 <br />
-                then make room for one more.
+                made fresh for your next craving.
               </p>
             </div>
             <div className="hero-jp" aria-hidden="true">美味しい</div>
@@ -715,14 +716,14 @@ export default function App() {
                 THE MENU <span>· お品書き</span>
               </p>
               <h2>
-                Choose your
+                Find your
                 <br />
-                <em>comfort.</em>
+                <em>next craving.</em>
               </h2>
             </div>
             <div className="intro-side">
               <span className="vertical-kana">一緒に食べよう</span>
-              <p>Made for long lunches, late cravings, and tables that keep ordering.</p>
+              <p>From sushi and ramen to katsu and cafe drinks, choose the food that makes this story yours.</p>
             </div>
           </section>
 
@@ -837,7 +838,7 @@ export default function App() {
           <section className="about-band">
             <div className="about-line" />
             <div>
-              <p className="eyebrow">A LITTLE NOTE · 小さな話</p>
+              <p className="eyebrow">YOUR SUSHI STORY · 小さな話</p>
               <h2>
                 Good food
                 <br />
@@ -845,8 +846,7 @@ export default function App() {
               </h2>
             </div>
             <p>
-              From baked sushi to a bowl of ramen, Oishii Nori is made for the satisfying in-between: a familiar favorite, a new
-              discovery, and the extra order you didn't plan on.
+              From our Filipino-owned kitchen to your table, every favorite is a chance to make a new sushi story together.
             </p>
           </section>
         </main>

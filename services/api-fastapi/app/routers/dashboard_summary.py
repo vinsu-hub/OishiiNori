@@ -39,7 +39,7 @@ def get_dashboard_summary(
 
     transactions_result = (
         supabase.table("transactions")
-        .select("id, total_amount, discount_amount, tax_amount")
+        .select("id, total_amount, discount_amount, tax_amount, order_source")
         .gte("opened_at", start)
         .lte("opened_at", end)
         .neq("status", "voided")
@@ -50,6 +50,11 @@ def get_dashboard_summary(
     discount_total = sum(float(t["discount_amount"]) for t in transactions)
     tax_total = sum(float(t["tax_amount"]) for t in transactions)
     order_count = len(transactions)
+    source_totals: dict[str, dict[str, float]] = defaultdict(lambda: {"order_count": 0.0, "revenue": 0.0})
+    for transaction in transactions:
+        source = transaction.get("order_source") or "pos"
+        source_totals[source]["order_count"] += 1
+        source_totals[source]["revenue"] += float(transaction["total_amount"])
 
     loss_result = (
         supabase.table("loss_records")
@@ -125,6 +130,10 @@ def get_dashboard_summary(
         utility_cost_today=utility_cost_today,
         utility_breakdown=utility_breakdown,
         by_department=department_rows,
+        by_order_source=[
+            {"order_source": source, "order_count": int(values["order_count"]), "revenue": values["revenue"]}
+            for source, values in sorted(source_totals.items())
+        ],
         staff_clocked_in=staff_clocked_in,
         hr_available=hr_available,
     )

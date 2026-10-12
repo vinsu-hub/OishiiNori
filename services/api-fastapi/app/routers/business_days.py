@@ -1,14 +1,13 @@
-"""Business Day cycle (WS-13): POS is locked until the cashier confirms
+"""Business Day and shared shift cycle: POS is locked until the cashier confirms
 Start-of-Day (their OWN kiosk ID+PIN, re-verified the same way Owner's
 Request / the reservation override already do via verify_employee_pin)
 plus a menu-up-to-date acknowledgement. End-of-Day records the cashier's
-counted cash-register total; the system's own EOD revenue total is
-computed and stored at close time but never returned to a non-manager/
-executive caller -- BusinessDayStatusOut (used by /today, /open, /close)
-simply has no field for it.
+counted cash-register total. New shift reports reveal the expected cash
+and difference only after close; BusinessDayStatusOut (used by /today,
+/open, /close) never carries those amounts.
 """
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from postgrest.exceptions import APIError
@@ -16,7 +15,7 @@ from postgrest.exceptions import APIError
 from app.auth import CurrentUser, get_current_user, require_role, require_role_or_grant, verify_employee_pin
 from app.deps import get_supabase
 from app.ph_time import ph_day_bounds_utc, today_ph
-from app.routers.analytics import _aggregate_items_sold
+from app.routers.sales_insights import _page_rows, ID_BATCH_SIZE
 from app.schemas import (
     BusinessDayAdminOut,
     BusinessDayCloseRequest,
@@ -65,11 +64,20 @@ def _fetch_today(supabase, d) -> dict | None:
     return result.data if result else None
 
 
+def fetch_open_shift(supabase) -> dict | None:
+    """The shared shift can remain open after Philippine midnight."""
+    rows = (supabase.table("business_days").select("*")
+            .is_("closed_at", "null").is_("closing_at", "null")
+            .order("opened_at", desc=True).limit(1).execute().data)
+    return rows[0] if rows else None
+
+
 def _status_out(d, row: dict | None) -> dict:
     if not row or row["closed_at"] is not None:
-        return {"business_date": d, "is_open": False, "opened_at": None, "menu_confirmed": None}
+        return {"business_date": row["business_date"] if row else d, "is_open": False, "opened_at": None, "menu_confirmed": None,
+                "closed_shift_id": row["id"] if row and row.get("report_version") == 1 else None}
     return {
-        "business_date": d,
+        "business_date": row["business_date"],
         "is_open": True,
         "opened_at": row["opened_at"],
         "menu_confirmed": row["menu_confirmed"],
@@ -83,7 +91,7 @@ def is_open_today(supabase) -> bool:
     d = today_ph()
     if not _business_days_supported_check(supabase):
         return False
-    row = _fetch_today(supabase, d)
+    row = fetch_open_shift(supabase)
     return _status_out(d, row)["is_open"]
 
 
@@ -97,7 +105,7 @@ def get_today_status(user: CurrentUser = Depends(get_current_user)):
     d = today_ph()
     if not _business_days_supported_check(supabase):
         return _status_out(d, None)
-    return _status_out(d, _fetch_today(supabase, d))
+    return _status_out(d, fetch_open_shift(supabase))
 
 
 @router.get("/public/business-day-status", response_model=BusinessDayStatusOut)
@@ -109,7 +117,7 @@ def get_public_today_status():
     d = today_ph()
     if not _business_days_supported_check(supabase):
         return _status_out(d, None)
-    return _status_out(d, _fetch_today(supabase, d))
+    return _status_out(d, fetch_open_shift(supabase))
 
 
 @router.post("/business-days/open", response_model=BusinessDayStatusOut)
@@ -118,13 +126,12 @@ def open_business_day(body: BusinessDayOpenRequest, user: CurrentUser = Depends(
     supabase = get_supabase()
     d = today_ph()
 
+    if fetch_open_shift(supabase):
+        raise HTTPException(status_code=409, detail="A shift is already open")
     existing = _fetch_today(supabase, d)
-    if existing and existing["closed_at"] is None:
-        raise HTTPException(status_code=409, detail="Today's business day is already open")
-    if existing and existing["closed_at"] is not None:
-        # business_date is unique -- a day, once closed, can't be reopened
-        # (matches WS-13's own semantics: End-of-Day is a one-way close).
-        raise HTTPException(status_code=409, detail="Today's business day was already closed and can't be reopened")
+    if existing:
+        # The original one-row-per-date constraint remains in place.
+        raise HTTPException(status_code=409, detail="This business date already has a shift")
 
     result = (
         supabase.table("business_days")
@@ -133,6 +140,8 @@ def open_business_day(body: BusinessDayOpenRequest, user: CurrentUser = Depends(
                 "business_date": d.isoformat(),
                 "opened_by": user.id,
                 "menu_confirmed": body.menu_confirmed,
+                "starting_cash": round(body.starting_cash, 2),
+                "report_version": 1,
             }
         )
         .execute()
@@ -146,12 +155,44 @@ def close_business_day(body: BusinessDayCloseRequest, user: CurrentUser = Depend
     supabase = get_supabase()
     d = today_ph()
 
-    existing = _fetch_today(supabase, d)
+    existing = fetch_open_shift(supabase)
     if not existing:
-        raise HTTPException(status_code=404, detail="Today's business day was never opened")
+        # A server interruption during report assembly can leave the close
+        # reservation behind. Permit a retry after five minutes.
+        closing = (supabase.table("business_days").select("*").is_("closed_at", "null")
+                   .not_.is_("closing_at", "null").order("closing_at", desc=True)
+                   .limit(1).execute().data)
+        if closing and datetime.fromisoformat(closing[0]["closing_at"]) < datetime.now(timezone.utc) - timedelta(minutes=5):
+            supabase.table("business_days").update({"closing_at": None}).eq("id", closing[0]["id"]).eq("closing_at", closing[0]["closing_at"]).execute()
+            existing = fetch_open_shift(supabase)
+    if not existing:
+        raise HTTPException(status_code=404, detail="No shift is open")
     if existing["closed_at"] is not None:
         raise HTTPException(status_code=409, detail="Today's business day is already closed")
 
+    if existing.get("report_version") == 1:
+        from app.routers.shift_reports import build_shift_report
+        closing_at = datetime.now(timezone.utc)
+        reserved = (supabase.table("business_days").update({"closing_at": closing_at.isoformat()})
+                    .eq("id", existing["id"]).is_("closed_at", "null")
+                    .is_("closing_at", "null").execute().data)
+        if not reserved:
+            raise HTTPException(status_code=409, detail="Shift is already closing")
+        try:
+            report = build_shift_report(supabase, existing, closing_at, body.cash_register_total)
+            updated = (supabase.table("business_days").update({
+                "closed_at": report["closed_at"], "closed_by": user.id,
+                "cash_register_total": round(body.cash_register_total, 2),
+                "system_eod_total": report["cash_drawer"]["expected_cash"],
+                "shift_report": report,
+            }).eq("id", existing["id"]).is_("closed_at", "null").execute().data)
+        except Exception:
+            supabase.table("business_days").update({"closing_at": None}).eq("id", existing["id"]).is_("closed_at", "null").execute()
+            raise
+        return _status_out(d, updated[0])
+
+    # Legacy shift opened before migration 0069 uses the original close flow.
+    d = date.fromisoformat(existing["business_date"])
     start, end = ph_day_bounds_utc(d)
     tx_result = (
         supabase.table("transactions")
@@ -178,6 +219,12 @@ def close_business_day(body: BusinessDayCloseRequest, user: CurrentUser = Depend
     except Exception:
         pass
     system_eod_total = sum(float(t["total_amount"]) for t in tx_result.data if t.get("id") not in unpaid_ids)
+    # Cash expenses are tracked separately but reduce the expected closing
+    # register balance; keep the gross sales figure in each transaction.
+    expense_rows = _page_rows(supabase.table("cash_expenses").select("id,amount")
+                              .eq("business_date", d.isoformat()).order("id"))
+    expenses_total = sum(float(row["amount"]) for row in expense_rows)
+    system_eod_total -= expenses_total
 
     update_result = (
         supabase.table("business_days")
@@ -203,34 +250,60 @@ def list_business_days(user: CurrentUser = Depends(get_current_user)):
     require_role_or_grant(user, "business-day-report", "manager", "executive")
     supabase = get_supabase()
     result = supabase.table("business_days").select("*").order("business_date", desc=True).execute()
+    expense_totals: dict[str, float] = {}
+    if result.data:
+        expense_rows = _page_rows(supabase.table("cash_expenses").select("id,business_date,amount")
+                                  .gte("business_date", min(r["business_date"] for r in result.data))
+                                  .lte("business_date", max(r["business_date"] for r in result.data))
+                                  .order("id"))
+        for expense in expense_rows:
+            key = expense["business_date"]
+            expense_totals[key] = expense_totals.get(key, 0.0) + float(expense["amount"])
     rows = []
     for row in result.data:
+        expenses_total = expense_totals.get(row["business_date"], 0.0)
+        # Older closed days predate the expense log and have no adjustment.
+        net_system_total = (float(row["system_eod_total"]) if row.get("system_eod_total") is not None else None)
         variance = None
-        if row.get("cash_register_total") is not None and row.get("system_eod_total") is not None:
-            variance = float(row["cash_register_total"]) - float(row["system_eod_total"])
-        rows.append({**row, "variance": variance})
+        if row.get("cash_register_total") is not None and net_system_total is not None:
+            variance = float(row["cash_register_total"]) - net_system_total
+        rows.append({**row, "expenses_total": expenses_total, "variance": variance})
     return rows
 
 
 @router.get("/business-days/{business_date}/items", response_model=BusinessDayItemsResponse)
 def get_business_day_items(business_date: date, user: CurrentUser = Depends(get_current_user)):
-    """Total items sold that business day, by product/category -- the
-    per-day drill-down for the report above. Reuses analytics.py's
-    _aggregate_items_sold (same non-voided-sale aggregation Trend
-    Analysis's top-products already does) scoped to a single day instead
-    of a range. Returned unsorted -- the frontend sorts client-side so
-    every column, including category, is sortable with no re-fetch."""
+    """Items by sold size for every non-voided order, including unpaid."""
     require_role_or_grant(user, "business-day-report", "manager", "executive")
     supabase = get_supabase()
-    rows = _aggregate_items_sold(supabase, business_date, business_date)
+    start, end = ph_day_bounds_utc(business_date)
+    transactions = _page_rows(supabase.table("transactions").select("id")
+                              .gte("opened_at", start).lte("opened_at", end)
+                              .neq("status", "voided").order("id"))
+    rows: dict[str, dict] = {}
+    ids = [row["id"] for row in transactions]
+    for offset in range(0, len(ids), ID_BATCH_SIZE):
+        items = _page_rows(supabase.table("transaction_items")
+                           .select("id, product_size_id, quantity, unit_price, product_sizes(product_id, size_label, products(name, category))")
+                           .in_("transaction_id", ids[offset:offset + ID_BATCH_SIZE]).order("id"))
+        for item in items:
+            size = item.get("product_sizes") or {}
+            product = size.get("products") or {}
+            size_id = item.get("product_size_id")
+            if not size_id:
+                continue
+            entry = rows.setdefault(size_id, {
+                "product_id": size.get("product_id") or "unknown",
+                "product_size_id": size_id,
+                "product_name": product.get("name") or "Unknown item",
+                "size_label": size.get("size_label") or "Unspecified size",
+                "category": product.get("category") or "Uncategorized",
+                "quantity_sold": 0.0, "revenue": 0.0,
+            })
+            quantity = float(item["quantity"])
+            entry["quantity_sold"] += quantity
+            entry["revenue"] += quantity * float(item["unit_price"])
     items = [
-        BusinessDayItemRow(
-            product_id=r["product_id"],
-            product_name=r["name"],
-            category=r["category"],
-            quantity_sold=r["quantity_sold"],
-            revenue=r["revenue"],
-        )
-        for r in rows
+        BusinessDayItemRow(**row) for row in rows.values()
     ]
     return BusinessDayItemsResponse(business_date=business_date, items=items)

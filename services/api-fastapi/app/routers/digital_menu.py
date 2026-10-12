@@ -98,7 +98,13 @@ def _fetch_digital_order(supabase, order_id: str) -> dict | None:
 
 @router.get("/public/menu", response_model=list[ProductOut])
 def public_menu():
-    return _list_products_data(get_supabase(), active_only=True, department=None)
+    # POS packaging SKUs are cash-register line items, not customer-facing
+    # dishes. Keep the shared product catalog for the POS but hide these
+    # sales-only containers from the online ordering menu.
+    return [
+        product for product in _list_products_data(get_supabase(), active_only=True, department=None)
+        if product["category"].casefold() != "packaging"
+    ]
 
 
 @router.get("/public/addons", response_model=list[MenuAddonOut])
@@ -465,6 +471,7 @@ def _fire_digital_order(supabase, order: dict, actor_id: str):
         # the kitchen ticket unambiguously reads as a to-go/carried-out order,
         # regardless of which of the two non-QR channels this came from.
         order_type="takeout" if order.get("order_channel") != "dine_in_qr" else None,
+        order_source="qr" if order.get("order_channel") == "dine_in_qr" else "online",
     )
 
     # Add-ons aren't real catalog products, so they were never part of

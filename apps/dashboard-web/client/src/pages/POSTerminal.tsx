@@ -26,6 +26,7 @@ import {
   Users,
   ShoppingBag,
   Truck,
+  CalendarClock,
   Percent,
   PauseCircle,
   X,
@@ -48,6 +49,7 @@ import {
   ApiRecipeItem,
   BusinessDayStatus,
   OrderType,
+  OrderSource,
   PosTableOverview,
   PosTableStatus,
   TransactionPaymentMethod,
@@ -69,6 +71,7 @@ import {
   posTableStatus,
 } from '@/lib/api';
 import { getTabletRole } from '@/lib/printerPrefs';
+import { phLocalToIso, phInputTime } from '@/lib/advanceOrders';
 import { formatCurrency, formatTime12h, formatTimestamp12h } from '@/lib/utils';
 import {
   ReceiptDialog,
@@ -119,6 +122,7 @@ const POS_DRAFT_KEY = 'oishii.pos.draft.v1';
 interface PosDraft {
   cart: CartLine[];
   orderType: OrderType;
+  orderSource: OrderSource;
   tableNumber: string;
   guestCount: number;
   discountTypeId: string;
@@ -132,6 +136,7 @@ interface PosDraft {
   deliveryAddress: string;
   deliveryLandmark: string;
   deliveryBarangay: string;
+  deliveryFeeAmount: string;
 }
 
 function loadHeldCarts(): HeldCart[] {
@@ -206,7 +211,7 @@ export default function POSTerminal() {
 
   const [startDayOpen, setStartDayOpen] = useState(false);
   const [startDayStep, setStartDayStep] = useState<'credentials' | 'menu-check'>('credentials');
-  const [startDayForm, setStartDayForm] = useState({ employeeNumber: '', pin: '' });
+  const [startDayForm, setStartDayForm] = useState({ employeeNumber: '', pin: '', startingCash: '' });
   const [startDaySubmitting, setStartDaySubmitting] = useState(false);
 
   const [endDayOpen, setEndDayOpen] = useState(false);
@@ -250,7 +255,7 @@ export default function POSTerminal() {
   function resetStartDayDialog() {
     setStartDayOpen(false);
     setStartDayStep('credentials');
-    setStartDayForm({ employeeNumber: '', pin: '' });
+    setStartDayForm({ employeeNumber: '', pin: '', startingCash: '' });
   }
 
   function resetEndDayDialog() {
@@ -266,6 +271,7 @@ export default function POSTerminal() {
         employee_number: startDayForm.employeeNumber.trim(),
         pin: startDayForm.pin.trim(),
         menu_confirmed: menuConfirmed,
+        starting_cash: Number(startDayForm.startingCash),
       });
       setBusinessDay(status);
       resetStartDayDialog();
@@ -293,6 +299,7 @@ export default function POSTerminal() {
       setBusinessDay(status);
       resetEndDayDialog();
       toast.success('Business day closed');
+      if (status.closed_shift_id) navigate('/shift-reports');
     } catch (e) {
       handleBusinessDayError(e);
     } finally {
@@ -326,6 +333,7 @@ export default function POSTerminal() {
   // paymentMethod reset after a successful charge since they're a per-sale
   // fact, not a terminal-wide setting.
   const [orderType, setOrderType] = useState<OrderType>('dine_in');
+  const [orderSource, setOrderSource] = useState<OrderSource>('pos');
   const [tableNumber, setTableNumber] = useState('');
   // Floor-plan tables for the Dine In picker (label + live occupied/reserved).
   const [tableOptions, setTableOptions] = useState<PosTableOverview[]>([]);
@@ -335,6 +343,12 @@ export default function POSTerminal() {
   const [cashReceived, setCashReceived] = useState('');
   // Delivery orders only: the rider collects the cash (Facebook/phone orders).
   const [payOnDelivery, setPayOnDelivery] = useState(false);
+  const [advanceOpen, setAdvanceOpen] = useState(false);
+  const [advanceReadyAt, setAdvanceReadyAt] = useState('');
+  const [advancePickupName, setAdvancePickupName] = useState('');
+  const [advancePickupPhone, setAdvancePickupPhone] = useState('');
+  const [advancePayAtPickup, setAdvancePayAtPickup] = useState(false);
+  const advanceAttemptKey = useRef<string | null>(null);
   const [cardTypePromptOpen, setCardTypePromptOpen] = useState(false);
   // Independent of any discount's own vat_exempt -- lets a cashier book an
   // order non-VAT with no VAT-exempt discount applied.
@@ -349,6 +363,7 @@ export default function POSTerminal() {
   const [deliveryAddress, setDeliveryAddress] = useState('');
   const [deliveryLandmark, setDeliveryLandmark] = useState('');
   const [deliveryBarangay, setDeliveryBarangay] = useState('');
+  const [deliveryFeeAmount, setDeliveryFeeAmount] = useState('');
   const [deliveryFees, setDeliveryFees] = useState<ApiDeliveryFee[]>([]);
 
   // ---- Draft cache: an order in progress survives switching tabs/pages ----
@@ -365,6 +380,7 @@ export default function POSTerminal() {
         if (hasContent) {
           setCart(d.cart ?? []);
           setOrderType(d.orderType ?? 'dine_in');
+          setOrderSource(d.orderSource ?? 'pos');
           setTableNumber(d.tableNumber ?? '');
           setGuestCount(d.guestCount ?? 2);
           setDiscountTypeId(d.discountTypeId ?? 'none');
@@ -378,6 +394,7 @@ export default function POSTerminal() {
           setDeliveryAddress(d.deliveryAddress ?? '');
           setDeliveryLandmark(d.deliveryLandmark ?? '');
           setDeliveryBarangay(d.deliveryBarangay ?? '');
+          setDeliveryFeeAmount(d.deliveryFeeAmount ?? '');
           toast.info('Restored the order you were working on.');
         }
       }
@@ -393,7 +410,10 @@ export default function POSTerminal() {
         /* Delivery is still selectable with no fee readout if this fails -- not worth blocking. */
       });
   }, []);
-  const selectedDeliveryFee = deliveryFees.find((f) => f.barangay === deliveryBarangay)?.fee ?? null;
+  const parsedDeliveryFee = deliveryFeeAmount.trim() === '' ? null : Number(deliveryFeeAmount);
+  const selectedDeliveryFee = parsedDeliveryFee != null && Number.isFinite(parsedDeliveryFee) && parsedDeliveryFee >= 0
+    ? parsedDeliveryFee
+    : null;
 
   // Reservation block: when the typed table has a live confirmed reservation
   // the POS shows it as reserved and blocks the charge until a manager
@@ -502,7 +522,25 @@ export default function POSTerminal() {
   // immediately read as occupied).
   const loadTableOptions = React.useCallback(() => {
     fetchPosTablesOverview()
-      .then(setTableOptions)
+      .then((mapped) => {
+        const byNumber = new Map(mapped.map((table) => [table.pos_table_number, table]));
+        // The owner has finalized the number of tables, while physical
+        // placement/capacity is still pending. Keep numbered POS choices
+        // available without fabricating reservation capacity or layout data.
+        for (let number = 1; number <= 17; number++) {
+          if (!byNumber.has(number)) byNumber.set(number, {
+            pos_table_number: number,
+            label: `Table ${number}`,
+            capacity_min: null,
+            capacity_max: 0,
+            occupied: false,
+            reserved: false,
+            reservation: null,
+            layout_pending: true,
+          });
+        }
+        setTableOptions(Array.from(byNumber.values()).sort((a, b) => a.pos_table_number - b.pos_table_number));
+      })
       .catch(() => {
         // Leave the picker empty rather than blocking Dine In; the charge-time
         // reservation check still runs regardless.
@@ -732,6 +770,7 @@ export default function POSTerminal() {
       if (!deliveryCustomerPhone.trim()) b.push('Enter a phone number');
       if (!deliveryAddress.trim()) b.push('Enter the delivery address');
       if (!deliveryBarangay) b.push('Pick a barangay');
+      if (selectedDeliveryFee == null) b.push('Enter the delivery fee');
     }
     const codSale = orderType === 'delivery' && payOnDelivery;
     if (!codSale) {
@@ -749,18 +788,23 @@ export default function POSTerminal() {
     deliveryCustomerPhone,
     deliveryAddress,
     deliveryBarangay,
+    selectedDeliveryFee,
     paymentMethod,
     cardType,
     cashReceivedIsSufficient,
     payOnDelivery,
     kitchenLocked,
   ]);
+  const advanceChargeBlockers = advancePayAtPickup && orderType === 'takeout'
+    ? chargeBlockers.filter((blocker) => !['Select a payment method', 'Select debit or credit', 'Enter the cash received'].includes(blocker))
+    : chargeBlockers;
 
   useEffect(() => {
     if (!draftRestoredRef.current) return;
     const draft: PosDraft = {
       cart,
       orderType,
+      orderSource,
       tableNumber,
       guestCount,
       discountTypeId,
@@ -774,6 +818,7 @@ export default function POSTerminal() {
       deliveryAddress,
       deliveryLandmark,
       deliveryBarangay,
+      deliveryFeeAmount,
     };
     try {
       localStorage.setItem(POS_DRAFT_KEY, JSON.stringify(draft));
@@ -783,6 +828,7 @@ export default function POSTerminal() {
   }, [
     cart,
     orderType,
+    orderSource,
     tableNumber,
     guestCount,
     discountTypeId,
@@ -796,6 +842,7 @@ export default function POSTerminal() {
     deliveryAddress,
     deliveryLandmark,
     deliveryBarangay,
+    deliveryFeeAmount,
   ]);
 
   function addToCart(product: ApiProduct, size: ApiProductSize) {
@@ -936,6 +983,7 @@ export default function POSTerminal() {
     setVatOverride('non_vat');
     setCashReceived('');
     clearOwnerRequest();
+    advanceAttemptKey.current = null;
   }
 
   function handleHoldOrder() {
@@ -982,13 +1030,15 @@ export default function POSTerminal() {
     });
   }
 
-  async function handleCharge() {
+  async function handleCharge(advance?: { scheduledFor: string; pickupName: string; pickupPhone: string; payAtPickup: boolean }) {
     if (!user) return;
-    if (chargeBlockers.length > 0) {
-      toast.error(`Can't charge yet: ${chargeBlockers[0]}`);
+    const blockers = advance?.payAtPickup ? advanceChargeBlockers : chargeBlockers;
+    if (blockers.length > 0) {
+      toast.error(`Can't charge yet: ${blockers[0]}`);
       return;
     }
     const codSale = orderType === 'delivery' && payOnDelivery;
+    const payAtPickup = orderType === 'takeout' && !!advance?.payAtPickup;
     setSubmitting(true);
     try {
       const transaction = await createTransaction({
@@ -1005,11 +1055,18 @@ export default function POSTerminal() {
         owner_request_pin: ownerRequestConfirmed?.pin,
         owner_request_note: ownerRequestConfirmed?.note || undefined,
         order_type: orderType,
+        order_source: orderSource,
+        delivery_fee: orderType === 'delivery' ? selectedDeliveryFee ?? undefined : undefined,
         table_number: orderType === 'dine_in' ? Number(tableNumber) : null,
         guest_count: orderType === 'dine_in' ? guestCount : null,
-        payment_method: codSale ? 'cash' : paymentMethod ?? undefined, // guaranteed set past chargeBlockers
+        payment_method: payAtPickup ? null : codSale ? 'cash' : paymentMethod ?? undefined,
         pay_on_delivery: codSale || undefined,
-        card_type: cardType ?? undefined,
+        pay_on_pickup: payAtPickup || undefined,
+        scheduled_for: advance?.scheduledFor,
+        pickup_customer_name: advance?.pickupName || undefined,
+        pickup_customer_phone: advance?.pickupPhone || undefined,
+        idempotency_key: advance ? (advanceAttemptKey.current ??= generateId()) : undefined,
+        card_type: payAtPickup ? null : cardType ?? undefined,
         force_vat_exempt: vatOverride === 'non_vat',
         reservation_override_id: overrideId ?? undefined,
         reservation_id: orderType === 'dine_in' ? reservationId ?? undefined : undefined,
@@ -1024,7 +1081,7 @@ export default function POSTerminal() {
                 barangay: deliveryBarangay,
               }
             : undefined,
-      });
+      }, { queueOffline: !advance });
       const deliveryFee = orderType === 'delivery' ? transaction.delivery?.delivery_fee ?? 0 : 0;
       setReceipt({
         orderNumber: transaction.order_number,
@@ -1043,15 +1100,19 @@ export default function POSTerminal() {
         totalAmount: transaction.total_amount + deliveryFee,
         paymentMethod: transaction.payment_method,
         payOnDelivery: codSale,
+        payOnPickup: payAtPickup,
+        scheduledFor: transaction.scheduled_for,
+        pickupCustomerName: transaction.pickup_customer_name,
+        pickupCustomerPhone: transaction.pickup_customer_phone,
         business: receiptBusiness,
         cashierName: user.name ?? null,
         reference: transaction.id.slice(0, 8).toUpperCase(),
         subtotal,
         discountLabel: selectedDiscount ? `${selectedDiscount.name} (${selectedDiscount.percentage}%)` : null,
         vatExempt: selectedDiscount?.vat_exempt || vatOverride === 'non_vat',
-        cashTendered: !codSale && paymentMethod === 'cash' ? cashReceivedAmount : null,
+        cashTendered: !codSale && !payAtPickup && paymentMethod === 'cash' ? cashReceivedAmount : null,
         changeDue:
-          !codSale && paymentMethod === 'cash'
+          !codSale && !payAtPickup && paymentMethod === 'cash'
             ? Math.max(0, Math.round((cashReceivedAmount - (transaction.total_amount + deliveryFee)) * 100) / 100)
             : null,
         itemCount: cart.reduce((sum, line) => sum + line.quantity, 0),
@@ -1071,6 +1132,11 @@ export default function POSTerminal() {
         )} (discount ${formatCurrency(transaction.discount_amount)}, tax ${formatCurrency(transaction.tax_amount)})`
       );
       clearOrder();
+      setAdvanceOpen(false);
+      setAdvanceReadyAt('');
+      setAdvancePickupName('');
+      setAdvancePickupPhone('');
+      advanceAttemptKey.current = null;
       setTableNumber('');
       setTableStatus(null);
       setOverrideId(null);
@@ -1084,8 +1150,12 @@ export default function POSTerminal() {
       setDeliveryAddress('');
       setDeliveryLandmark('');
       setDeliveryBarangay('');
+      setDeliveryFeeAmount('');
+      setOrderSource('pos');
       setPayOnDelivery(false);
+      setAdvancePayAtPickup(false);
       if (codSale) toast.info('Pay on delivery -- track it in the Deliveries tab and tap "Cash received" when the rider is back.');
+      if (payAtPickup) toast.info('Payment is due at pickup. Record it in Advance Orders when received.');
       loadTableOptions();
     } catch (e) {
       if (e instanceof QueuedOfflineError) {
@@ -1112,6 +1182,21 @@ export default function POSTerminal() {
       }
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  function submitAdvanceOrder() {
+    try {
+      if (orderType !== 'takeout' && orderType !== 'delivery') throw new Error('Choose Takeout or Delivery');
+      const scheduledFor = phLocalToIso(advanceReadyAt);
+      const wait = Date.parse(scheduledFor) - Date.now();
+      if (wait < 30 * 60_000 || wait > 7 * 86_400_000) throw new Error('Choose a time 30 minutes to 7 days ahead');
+      if (orderType === 'takeout' && (!advancePickupName.trim() || !advancePickupPhone.trim())) {
+        throw new Error('Enter the pickup customer name and phone');
+      }
+      void handleCharge({ scheduledFor, pickupName: advancePickupName.trim(), pickupPhone: advancePickupPhone.trim(), payAtPickup: advancePayAtPickup });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Choose a valid advance time');
     }
   }
 
@@ -1500,14 +1585,14 @@ export default function POSTerminal() {
                   </SelectItem>
                 )}
                 {tableOptions.map((o) => {
-                  const seats =
+                  const seats = o.layout_pending ? 'layout pending' :
                     o.capacity_min && o.capacity_min !== o.capacity_max
                       ? `${o.capacity_min}–${o.capacity_max}`
                       : `${o.capacity_max}`;
                   const status = o.occupied ? ' · Occupied' : o.reserved ? ' · Reserved' : '';
                   return (
                     <SelectItem key={o.pos_table_number} value={String(o.pos_table_number)} disabled={o.occupied}>
-                      {o.label} · seats {seats}
+                      {o.label}{o.layout_pending ? ` · ${seats}` : ` · seats ${seats}`}
                       {status}
                     </SelectItem>
                   );
@@ -1591,7 +1676,11 @@ export default function POSTerminal() {
                 className="h-8 text-sm"
               />
               <div className="flex items-center gap-2">
-                <Select value={deliveryBarangay} onValueChange={setDeliveryBarangay}>
+                <Select value={deliveryBarangay} onValueChange={(value) => {
+                  setDeliveryBarangay(value);
+                  const suggested = deliveryFees.find((fee) => fee.barangay === value)?.fee;
+                  if (suggested != null) setDeliveryFeeAmount(String(suggested));
+                }}>
                   <SelectTrigger className="h-8 text-sm flex-1">
                     <SelectValue placeholder="Barangay" />
                   </SelectTrigger>
@@ -1603,11 +1692,11 @@ export default function POSTerminal() {
                     ))}
                   </SelectContent>
                 </Select>
-                {selectedDeliveryFee != null && (
-                  <Badge variant="secondary" className="font-normal shrink-0">
-                    Fee: {formatCurrency(selectedDeliveryFee)}
-                  </Badge>
-                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Label htmlFor="pos-delivery-fee" className="shrink-0 text-xs">Delivery fee (₱)</Label>
+                <Input id="pos-delivery-fee" type="number" min="0" step="0.01" value={deliveryFeeAmount} onChange={(e) => setDeliveryFeeAmount(e.target.value)} className="h-8 max-w-40 text-sm" placeholder="Enter fee" />
+                {selectedDeliveryFee != null && <Badge variant="secondary" className="font-normal">{formatCurrency(selectedDeliveryFee)}</Badge>}
               </div>
             </div>
           )}
@@ -1810,11 +1899,11 @@ export default function POSTerminal() {
                 Payment Method <span className="text-destructive">*</span>
               </Label>
               <div
-                className={`grid grid-cols-3 gap-2 mt-1 ${
+                className={`grid grid-cols-3 sm:grid-cols-5 gap-2 mt-1 ${
                   cart.length > 0 && !paymentMethod ? 'rounded ring-1 ring-destructive/50 p-1' : ''
                 }`}
               >
-                {(['cash', 'gcash', 'card'] as const).map((m) => (
+                {(['cash', 'gcash', 'card', 'bdo', 'maya'] as const).map((m) => (
                   <button
                     key={m}
                     type="button"
@@ -1840,7 +1929,7 @@ export default function POSTerminal() {
                         : 'bg-card text-muted-foreground border-border'
                     }`}
                   >
-                    {m}
+                    {m === 'gcash' ? 'GCash' : m.toUpperCase() === 'BDO' ? 'BDO' : m === 'maya' ? 'Maya' : m}
                     {m === 'card' && paymentMethod === 'card' && cardType && (
                       <span className="block text-[10px] font-normal capitalize opacity-90">{cardType}</span>
                     )}
@@ -1905,7 +1994,7 @@ export default function POSTerminal() {
               {ownerRequestConfirmed ? "Owner's Request -- confirmed" : "Owner's Request"}
             </Button>
 
-            <div className="grid grid-cols-3 gap-2">
+            <div className={`grid gap-2 ${orderType === 'takeout' || orderType === 'delivery' ? 'grid-cols-2' : 'grid-cols-3'}`}>
               <Button
                 variant="outline"
                 size="sm"
@@ -1919,9 +2008,20 @@ export default function POSTerminal() {
               <Button variant="outline" size="sm" className="gap-1" onClick={handleHoldOrder}>
                 <PauseCircle className="w-3.5 h-3.5" /> Hold <kbd className="ml-auto text-[10px] opacity-60">F4</kbd>
               </Button>
+              {(orderType === 'takeout' || orderType === 'delivery') && <Button variant="outline" size="sm" className="gap-1" disabled={submitting || cart.length === 0 || !!addonTo} onClick={() => { setAdvanceReadyAt(phInputTime(new Date(Date.now() + 60 * 60_000))); setAdvancePayAtPickup(false); setAdvanceOpen(true); }}>
+                <CalendarClock className="w-3.5 h-3.5" /> Place as advance order
+              </Button>}
               <Button variant="destructive" size="sm" className="gap-1" onClick={clearOrder}>
                 <X className="w-3.5 h-3.5" /> Clear <kbd className="ml-auto text-[10px] opacity-60">Esc</kbd>
               </Button>
+            </div>
+            <div className="mt-2 flex items-center gap-2 text-xs">
+              <span className="text-muted-foreground">Order source</span>
+              {(['pos', 'grab'] as const).map((source) => (
+                <Button key={source} type="button" size="sm" variant={orderSource === source ? 'default' : 'outline'} className="h-8" onClick={() => setOrderSource(source)}>
+                  {source === 'pos' ? 'POS' : 'Grab'}
+                </Button>
+              ))}
             </div>
 
           </div>
@@ -1956,7 +2056,7 @@ export default function POSTerminal() {
               className="w-full"
               size="lg"
               disabled={submitting || chargeBlockers.length > 0}
-              onClick={handleCharge}
+              onClick={() => handleCharge()}
             >
               {submitting
                 ? 'Charging...'
@@ -2009,12 +2109,18 @@ export default function POSTerminal() {
                     onChange={(e) => setStartDayForm({ ...startDayForm, pin: e.target.value })}
                   />
                 </div>
+                <div>
+                  <Label>Starting cash in drawer (₱)</Label>
+                  <Input type="number" min="0" step="0.01" value={startDayForm.startingCash}
+                    onChange={(e) => setStartDayForm({ ...startDayForm, startingCash: e.target.value })} />
+                </div>
               </div>
               <DialogFooter>
                 <Button
                   onClick={() => {
-                    if (!startDayForm.employeeNumber || !startDayForm.pin) {
-                      toast.error('Employee number and PIN are required');
+                    if (!startDayForm.employeeNumber || !startDayForm.pin || startDayForm.startingCash === '' ||
+                        !Number.isFinite(Number(startDayForm.startingCash)) || Number(startDayForm.startingCash) < 0) {
+                      toast.error('Employee number, PIN, and starting cash are required');
                       return;
                     }
                     setStartDayStep('menu-check');
@@ -2151,6 +2257,27 @@ export default function POSTerminal() {
           <DialogFooter>
             <Button onClick={() => setCredentialMismatchOpen(false)}>Got it</Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={advanceOpen} onOpenChange={(open) => !open && !submitting && setAdvanceOpen(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Place as advance order</DialogTitle>
+            <DialogDescription>{orderType === 'delivery' ? 'Choose when the food must be ready for the rider.' : 'Choose when the order must be ready for pickup.'} The kitchen receives an advance ticket now.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2"><Label htmlFor="advance-ready">Ready date and time (Philippine time)</Label><Input id="advance-ready" type="datetime-local" value={advanceReadyAt} onChange={(e) => setAdvanceReadyAt(e.target.value)} /></div>
+            {orderType === 'takeout' && <>
+              <div className="space-y-2"><Label htmlFor="advance-name">Pickup customer name</Label><Input id="advance-name" value={advancePickupName} maxLength={120} onChange={(e) => setAdvancePickupName(e.target.value)} /></div>
+              <div className="space-y-2"><Label htmlFor="advance-phone">Pickup phone</Label><Input id="advance-phone" type="tel" value={advancePickupPhone} maxLength={40} onChange={(e) => setAdvancePickupPhone(e.target.value)} /></div>
+              <label className="flex items-center gap-2 text-sm"><Checkbox checked={advancePayAtPickup} onCheckedChange={(checked) => setAdvancePayAtPickup(checked === true)} /> Collect payment at pickup</label>
+            </>}
+            {orderType === 'delivery' && <p className="text-sm text-muted-foreground">Delivery for {deliveryCustomerName || 'customer'} · {deliveryCustomerPhone || 'phone needed'}. Address and rider payment details come from the POS order.</p>}
+            <p className="text-sm">{payOnDelivery && orderType === 'delivery' ? 'Payment will be collected on delivery.' : advancePayAtPickup && orderType === 'takeout' ? `Due at pickup: ${formatCurrency(cashTotal)}` : `Charge now: ${formatCurrency(cashTotal)}`}</p>
+            {advanceChargeBlockers.length > 0 && <p className="text-sm text-destructive">Before placing: {advanceChargeBlockers.join(' · ')}</p>}
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setAdvanceOpen(false)} disabled={submitting}>Cancel</Button><Button onClick={submitAdvanceOrder} disabled={submitting || advanceChargeBlockers.length > 0}>{submitting ? 'Placing…' : (payOnDelivery && orderType === 'delivery') || (advancePayAtPickup && orderType === 'takeout') ? 'Place advance order' : 'Charge & place advance order'}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

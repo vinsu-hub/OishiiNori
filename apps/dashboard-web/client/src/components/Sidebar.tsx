@@ -153,6 +153,9 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
     // Pay-on-delivery (Facebook/phone) orders the POS rang up: track the rider
     // and record the cash when it comes back.
     { icon: Bike, label: 'Deliveries', href: '/pos-deliveries' },
+    { icon: CalendarClock, label: 'Advance Orders', href: '/advance-orders' },
+    { icon: Wallet, label: 'Expenses', href: '/expenses' },
+    { icon: ClipboardList, label: 'Shift Reports', href: '/shift-reports' },
     ...(isManagerOrExecutive || hasGrant('online-orders')
       ? [{ icon: Truck, label: 'Online Orders', href: '/online-orders' }]
       : []),

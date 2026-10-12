@@ -137,9 +137,12 @@ def poll_once(
     # Ignore stale queued orders (e.g. from a previous day that was never
     # accepted) so switching the trigger on can't dump old tickets.
     cutoff = datetime.now(timezone.utc) - timedelta(hours=config.max_ticket_age_hours)
-    transactions = [t for t in transactions if _opened_at(t) >= cutoff]
+    transactions = [t for t in transactions if (
+        datetime.fromisoformat(t["advance_schedule_updated_at"].replace("Z", "+00:00"))
+        if t.get("advance_schedule_updated_at") else _opened_at(t)
+    ) >= cutoff]
 
-    pending = [t for t in transactions if not store.is_printed(t["id"])]
+    pending = [t for t in transactions if not store.is_printed(t["id"], t.get("advance_schedule_revision") or 0)]
     if not pending:
         # Still alive and polling successfully -- report so the dashboard's
         # "last seen" doesn't go stale just because there's nothing to print.
@@ -163,6 +166,7 @@ def poll_once(
                 transaction["id"],
                 transaction.get("order_number"),
                 datetime.now(timezone.utc).isoformat(),
+                transaction.get("advance_schedule_revision") or 0,
             )
             logger.info("Printed order %s (transaction %s)", transaction.get("order_number"), transaction["id"])
             last_printed_order_number = transaction.get("order_number")

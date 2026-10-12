@@ -19,7 +19,7 @@ PH_TZ = ZoneInfo("Asia/Manila")
 
 _ORDER_TYPE_LABEL = {
     "dine_in": "DINE IN",
-    "takeout": "TAKEOUT",
+    "takeout": "TAKE OUT",
     "delivery": "DELIVERY",
 }
 
@@ -61,6 +61,11 @@ def _ph_time_12h(iso_timestamp: str) -> str:
     return local.strftime("%I:%M %p").lstrip("0")
 
 
+def _ph_ready_time(iso_timestamp: str) -> str:
+    dt = datetime.fromisoformat(iso_timestamp.replace("Z", "+00:00"))
+    return dt.astimezone(PH_TZ).strftime("%b %d, %Y %I:%M %p").replace(" 0", " ")
+
+
 def _wrap_line(prefix: str, text: str, width: int) -> list[str]:
     """A held-ingredient/addon note is usually short, but never trust that
     -- wrap rather than let a long ingredient name blow past the paper
@@ -86,15 +91,26 @@ def _wrap_line(prefix: str, text: str, width: int) -> list[str]:
 
 def build_ticket_header(transaction: dict, width: int) -> list[str]:
     order_number = transaction.get("order_number")
-    order_type = transaction.get("order_type") or "takeout"
+    order_type = transaction.get("order_type")
     table_number = transaction.get("table_number")
     delivery = transaction.get("delivery")
 
     lines = [f"ORDER #{order_number if order_number is not None else transaction['id'][:8]}".center(width)]
+    lines.append(_ORDER_TYPE_LABEL.get(order_type, "CHECK ORDER TYPE").center(width))
+    if transaction.get("scheduled_for"):
+        label = "ADVANCE - TIME UPDATED" if transaction.get("advance_schedule_revision") else "ADVANCE ORDER"
+        lines.append(label.center(width))
+        prefix = "RIDER READY" if order_type == "delivery" else "PICKUP READY"
+        lines.append(prefix.center(width))
+        lines.extend(line.center(width) for line in _wrap_line("", _ph_ready_time(transaction["scheduled_for"]), width))
+        if transaction.get("pickup_customer_name"):
+            lines.extend(line.center(width) for line in _wrap_line("", _ascii_safe(transaction["pickup_customer_name"]), width))
+        if transaction.get("pickup_customer_phone"):
+            lines.append(_ascii_safe(transaction["pickup_customer_phone"]).center(width))
+    if transaction.get("order_source") == "grab":
+        lines.append("GRAB".center(width))
     if order_type == "dine_in" and table_number is not None:
         lines.append(f"TABLE {table_number}".center(width))
-    else:
-        lines.append(_ORDER_TYPE_LABEL.get(order_type, order_type.upper()).center(width))
     if delivery:
         # Wrapped, not hard-truncated -- a long customer name/address must
         # never silently lose characters off the end (a real name did,
