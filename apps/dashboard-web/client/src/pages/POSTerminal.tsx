@@ -387,10 +387,10 @@ export default function POSTerminal() {
             toast.info('Select the item for this discount before charging.');
           }
           setVatOverride(d.vatOverride ?? 'non_vat');
-          setPaymentMethod(d.paymentMethod ?? null);
+          setPaymentMethod(d.orderSource === 'grab' ? 'grab' : d.paymentMethod === 'grab' ? null : d.paymentMethod ?? null);
           setCardType(d.cardType ?? null);
           setCashReceived(d.cashReceived ?? '');
-          setPayOnDelivery(!!d.payOnDelivery);
+          setPayOnDelivery(d.orderSource === 'grab' ? false : !!d.payOnDelivery);
           setDeliveryCustomerName(d.deliveryCustomerName ?? '');
           setDeliveryCustomerPhone(d.deliveryCustomerPhone ?? '');
           setDeliveryAddress(d.deliveryAddress ?? '');
@@ -1891,7 +1891,7 @@ export default function POSTerminal() {
               </div>
             </div>
 
-            {orderType === 'delivery' && (
+            {orderSource !== 'grab' && orderType === 'delivery' && (
               <button
                 type="button"
                 onClick={() => setPayOnDelivery((v) => !v)}
@@ -1909,7 +1909,12 @@ export default function POSTerminal() {
               </button>
             )}
 
-            {!(orderType === 'delivery' && payOnDelivery) && (
+            {orderSource === 'grab' ? (
+              <div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm">
+                <p className="font-semibold">Grab settlement</p>
+                <p className="text-xs text-muted-foreground">Paid through Grab. No cash is added to the register drawer.</p>
+              </div>
+            ) : !(orderType === 'delivery' && payOnDelivery) && (
             <div>
               <Label className="text-xs">
                 Payment Method <span className="text-destructive">*</span>
@@ -2034,7 +2039,14 @@ export default function POSTerminal() {
             <div className="mt-2 flex items-center gap-2 text-xs">
               <span className="text-muted-foreground">Order source</span>
               {(['pos', 'grab'] as const).map((source) => (
-                <Button key={source} type="button" size="sm" variant={orderSource === source ? 'default' : 'outline'} className="h-8" onClick={() => setOrderSource(source)}>
+                <Button key={source} type="button" size="sm" variant={orderSource === source ? 'default' : 'outline'} className="h-8" onClick={() => {
+                  setOrderSource(source);
+                  setPaymentMethod(source === 'grab' ? 'grab' : null);
+                  setCardType(null);
+                  setCashReceived('');
+                  setPayOnDelivery(false);
+                  setAdvancePayAtPickup(false);
+                }}>
                   {source === 'pos' ? 'POS' : 'Grab'}
                 </Button>
               ))}
@@ -2287,7 +2299,7 @@ export default function POSTerminal() {
             {orderType === 'takeout' && <>
               <div className="space-y-2"><Label htmlFor="advance-name">Pickup customer name</Label><Input id="advance-name" value={advancePickupName} maxLength={120} onChange={(e) => setAdvancePickupName(e.target.value)} /></div>
               <div className="space-y-2"><Label htmlFor="advance-phone">Pickup phone</Label><Input id="advance-phone" type="tel" value={advancePickupPhone} maxLength={40} onChange={(e) => setAdvancePickupPhone(e.target.value)} /></div>
-              <label className="flex items-center gap-2 text-sm"><Checkbox checked={advancePayAtPickup} onCheckedChange={(checked) => setAdvancePayAtPickup(checked === true)} /> Collect payment at pickup</label>
+              {orderSource !== 'grab' && <label className="flex items-center gap-2 text-sm"><Checkbox checked={advancePayAtPickup} onCheckedChange={(checked) => setAdvancePayAtPickup(checked === true)} /> Collect payment at pickup</label>}
             </>}
             {orderType === 'delivery' && <p className="text-sm text-muted-foreground">Delivery for {deliveryCustomerName || 'customer'} · {deliveryCustomerPhone || 'phone needed'}. Address and rider payment details come from the POS order.</p>}
             <p className="text-sm">{payOnDelivery && orderType === 'delivery' ? 'Payment will be collected on delivery.' : advancePayAtPickup && orderType === 'takeout' ? `Due at pickup: ${formatCurrency(cashTotal)}` : `Charge now: ${formatCurrency(cashTotal)}`}</p>

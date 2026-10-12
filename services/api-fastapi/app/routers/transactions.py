@@ -792,6 +792,15 @@ def _create_transaction_row(
     return TransactionResponse(**transaction, items=inserted_items, delivery=delivery_out)
 
 
+def _validate_grab_settlement(order_source: str, payment_method: str | None,
+                              pay_on_delivery: bool = False, pay_on_pickup: bool = False) -> None:
+    if order_source == "grab":
+        if payment_method != "grab" or pay_on_delivery or pay_on_pickup:
+            raise HTTPException(status_code=400, detail="Grab orders require Grab settlement")
+    elif payment_method == "grab":
+        raise HTTPException(status_code=400, detail="Grab settlement is only for Grab orders")
+
+
 @router.post("/transactions", response_model=TransactionResponse)
 def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depends(get_current_user)):
     """Create a sale via the POS. Auth/ownership and Owner's Request
@@ -820,6 +829,7 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
         raise HTTPException(status_code=400, detail="Pay at pickup requires an advance takeout order")
     if body.pay_on_pickup and body.pay_on_delivery:
         raise HTTPException(status_code=400, detail="Choose one deferred payment option")
+    _validate_grab_settlement(body.order_source, body.payment_method, body.pay_on_delivery, body.pay_on_pickup)
     if body.pay_on_delivery and not body.payment_method:
         body.payment_method = "cash"  # what the rider will collect
     if not body.payment_method and not body.pay_on_pickup:
@@ -1218,6 +1228,7 @@ def settle_payment(transaction_id: str, body: SettlePaymentRequest, user: Curren
         raise HTTPException(status_code=400, detail="This order was voided")
     if transaction.get("payment_status") != "unpaid":
         raise HTTPException(status_code=409, detail="This order is already paid")
+    _validate_grab_settlement(transaction.get("order_source") or "pos", body.payment_method)
     if body.payment_method == "card" and not body.card_type:
         raise HTTPException(status_code=400, detail="Select debit or credit")
     if body.payment_method != "card" and body.card_type:

@@ -53,7 +53,7 @@ OrderSource = Literal["pos", "online", "grab", "qr"]
 # gcash, card), and reusing/widening that type would change the
 # digital-order schema's own
 # semantics.
-TransactionPaymentMethod = Literal["cash", "gcash", "card", "bdo", "maya"]
+TransactionPaymentMethod = Literal["cash", "gcash", "card", "bdo", "maya", "grab"]
 TransactionCardType = Literal["debit", "credit"]
 MovementType = Literal[
     "trans_in", "trans_out", "delivery", "transfer_in", "transfer_out", "count_adjustment",
@@ -1679,6 +1679,7 @@ class BusinessDayAdminOut(BaseModel):
     system_eod_total: float | None = None
     expenses_total: float = 0
     variance: float | None = None
+    report_version: int | None = None
 
 
 # ---------------------------------------------------------------------------

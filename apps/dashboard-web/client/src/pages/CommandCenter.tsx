@@ -23,9 +23,9 @@ const SALES_POLL_INTERVAL_MS = 120_000;
 const salesChartConfig: ChartConfig = { revenue: { label: 'Paid sales', color: 'var(--primary)' } };
 const ORDER_TYPE_LABELS = { dine_in: 'Dine-in', takeout: 'Takeout', delivery: 'Delivery', unspecified: 'Unspecified' };
 const SOURCE_LABELS = { pos: 'POS', online: 'Online', grab: 'Grab', qr: 'Table QR', unspecified: 'Unspecified' };
-const CORE_PAYMENT_METHODS = ['cash', 'gcash', 'debit', 'credit', 'bdo', 'maya'];
+const CORE_PAYMENT_METHODS = ['cash', 'gcash', 'debit', 'credit', 'bdo', 'maya', 'grab'];
 function paymentLabel(method: string): string {
-  return ({ cash: 'Cash', gcash: 'GCash', debit: 'Debit', credit: 'Credit', bdo: 'BDO', maya: 'Maya', unspecified_card: 'Unspecified card', unspecified: 'Unspecified' } as Record<string, string>)[method]
+  return ({ cash: 'Cash', gcash: 'GCash', debit: 'Debit', credit: 'Credit', bdo: 'BDO', maya: 'Maya', grab: 'Grab settlement', unspecified_card: 'Unspecified card', unspecified: 'Unspecified' } as Record<string, string>)[method]
     ?? method;
 }
 

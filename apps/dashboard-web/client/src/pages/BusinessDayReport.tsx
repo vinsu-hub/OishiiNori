@@ -6,9 +6,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Loader2 } from 'lucide-react';
-import { ApiBusinessDay, ApiBusinessDayItemRow, ApiCashExpense, fetchBusinessDayItems, fetchBusinessDays, fetchCashExpenses } from '@/lib/api';
+import { ApiBusinessDay, ApiBusinessDayItemRow, ApiCashExpense, ShiftReport, fetchBusinessDayItems, fetchBusinessDays, fetchCashExpenses, fetchShiftReport } from '@/lib/api';
 import { formatCurrency, formatTimestamp12h } from '@/lib/utils';
 import { STOCK_TABLE_CELL_CLASS, STOCK_TABLE_HEAD_CLASS, STOCK_TABLE_ROW_CLASS } from '@/components/stock/stockTableStyle';
+import { DailyOrderAudit } from '@/components/shared/DailyOrderAudit';
 
 type ItemSortKey = 'product_name' | 'size_label' | 'category' | 'quantity_sold' | 'revenue';
 
@@ -208,6 +209,8 @@ export default function BusinessDayReport() {
   const [expensesByDate, setExpensesByDate] = useState<Record<string, ApiCashExpense[]>>({});
   const [expensesLoading, setExpensesLoading] = useState<string | null>(null);
   const [expensesError, setExpensesError] = useState<Record<string, string>>({});
+  const [shiftById, setShiftById] = useState<Record<string, ShiftReport>>({});
+  const [shiftError, setShiftError] = useState<Record<string, string>>({});
 
   const load = useCallback(() => {
     setLoading(true);
@@ -221,12 +224,18 @@ export default function BusinessDayReport() {
     load();
   }, [load]);
 
-  function toggleExpand(businessDate: string) {
+  function toggleExpand(day: ApiBusinessDay) {
+    const businessDate = day.business_date;
     if (expandedDate === businessDate) {
       setExpandedDate(null);
       return;
     }
     setExpandedDate(businessDate);
+    if (day.closed_at && day.report_version === 1 && !shiftById[day.id]) {
+      fetchShiftReport(day.id)
+        .then((shift) => setShiftById((prev) => ({ ...prev, [day.id]: shift })))
+        .catch((e) => setShiftError((prev) => ({ ...prev, [day.id]: e instanceof Error ? e.message : 'Could not load cash breakdown' })));
+    }
     if (!itemsByDate[businessDate]) {
       setItemsLoading(businessDate);
       fetchBusinessDayItems(businessDate)
@@ -294,7 +303,7 @@ export default function BusinessDayReport() {
                       <React.Fragment key={d.id}>
                         <TableRow
                           className={`${STOCK_TABLE_ROW_CLASS} cursor-pointer`}
-                          onClick={() => toggleExpand(d.business_date)}
+                          onClick={() => toggleExpand(d)}
                         >
                           <TableCell className={STOCK_TABLE_CELL_CLASS}>
                             {expanded ? (
@@ -336,6 +345,20 @@ export default function BusinessDayReport() {
                         {expanded && (
                           <TableRow className={STOCK_TABLE_ROW_CLASS}>
                             <TableCell colSpan={8} className="bg-muted/30 p-3">
+                              {d.report_version === 1 && <div className="mb-5 rounded-md border bg-background p-3 text-sm">
+                                <p className="mb-2 font-semibold">Shift cash and payment breakdown</p>
+                                {shiftError[d.id] ? <p role="alert" className="text-destructive">{shiftError[d.id]}</p> : !shiftById[d.id] ? <p>Loading shift breakdown…</p> : <>
+                                  <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
+                                    <p>Cash payments: {formatCurrency(shiftById[d.id].cash_drawer.cash_payments)}</p>
+                                    <p>Operating expenses: {formatCurrency(shiftById[d.id].cash_drawer.operating_expenses)}</p>
+                                    <p>Expected drawer cash: {formatCurrency(shiftById[d.id].cash_drawer.expected_cash)}</p>
+                                    <p className="font-bold">Actual counted cash: {formatCurrency(shiftById[d.id].cash_drawer.actual_cash)}</p>
+                                    <p>Drawer difference: {formatCurrency(shiftById[d.id].cash_drawer.difference)}</p>
+                                    {Object.entries(shiftById[d.id].payments).map(([method, value]) => <p key={method}>{method === 'Grab' ? 'Grab settlement' : method}: {formatCurrency(value)}</p>)}
+                                  </div>
+                                  <p className="mt-2 text-xs text-muted-foreground">Grab settlement and other digital payments are outside the cash drawer.</p>
+                                </>}
+                              </div>}
                               <p className="text-xs font-medium text-muted-foreground mb-1 px-1">
                                 Items sold by product and size · {d.business_date} · all non-voided orders, including unpaid
                               </p>
@@ -356,6 +379,7 @@ export default function BusinessDayReport() {
                                     {expensesByDate[d.business_date].map((row) => <TableRow key={row.id}><TableCell>{formatTimestamp12h(row.created_at)}</TableCell><TableCell>{row.description}</TableCell><TableCell>{row.recorded_by_name ?? 'Unknown staff'}</TableCell><TableCell className="text-right">{formatCurrency(row.amount)}</TableCell></TableRow>)}
                                   </TableBody></Table></div>}
                               </div>
+                              <div className="mt-5"><DailyOrderAudit date={d.business_date} /></div>
                             </TableCell>
                           </TableRow>
                         )}

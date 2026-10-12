@@ -56,7 +56,7 @@ function OrderCard({ order }: { order: OrderHistoryEntry }) {
         <div><p className="text-xs text-muted-foreground">Recorded paid</p><p className="font-semibold tabular-nums">{formatCurrency(order.recorded_paid)}</p></div>
         <div><p className="text-xs text-muted-foreground">Order total</p><p className="font-semibold tabular-nums">{formatCurrency(order.total_due)}</p></div>
       </div>
-      <p className="text-xs text-muted-foreground">{order.payment_method || 'Payment option not recorded'}{order.discount ? ` · ${order.discount.name} −${formatCurrency(order.discount.amount)}` : ''}</p>
+      <p className="text-xs text-muted-foreground">{order.payment_method === 'grab' ? 'Grab settlement' : order.payment_method || 'Payment option not recorded'}{order.discount ? ` · ${order.discount.name} −${formatCurrency(order.discount.amount)}` : ''}</p>
       <details className="group border-t pt-3 text-sm">
         <summary className="cursor-pointer select-none font-medium text-primary">Full order details <span className="text-xs group-open:hidden">▾</span><span className="hidden text-xs group-open:inline">▴</span></summary>
         <div className="mt-4 space-y-4">
@@ -68,7 +68,7 @@ function OrderCard({ order }: { order: OrderHistoryEntry }) {
             <Detail label="Scheduled for" value={order.scheduled_for ? phDateTime.format(new Date(order.scheduled_for)) : null} />
             <Detail label="Completed" value={order.closed_at ? phDateTime.format(new Date(order.closed_at)) : null} />
             <Detail label="Delivered" value={order.delivered_at ? phDateTime.format(new Date(order.delivered_at)) : null} />
-            <Detail label="Payment option" value={order.payment_method} />
+            <Detail label="Payment option" value={order.payment_method === 'grab' ? 'Grab settlement' : order.payment_method} />
             <Detail label="Payment status" value={paymentLabel} />
             <Detail label="Payment time" value={order.paid_at ? phDateTime.format(new Date(order.paid_at)) : order.payment_status === 'paid' ? 'At checkout; exact time not stored' : null} />
             <Detail label="Payment proof" value={order.payment_proof_submitted ? 'Submitted; approval is tracked separately' : null} />

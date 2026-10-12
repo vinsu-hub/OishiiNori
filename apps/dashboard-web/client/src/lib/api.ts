@@ -314,7 +314,7 @@ export type OrderType = 'dine_in' | 'takeout' | 'delivery';
 export type OrderSource = 'pos' | 'online' | 'grab' | 'qr';
 // Distinct from any digital-order payment-method type -- POS supports one
 // more value (card).
-export type TransactionPaymentMethod = 'cash' | 'gcash' | 'card' | 'bdo' | 'maya';
+export type TransactionPaymentMethod = 'cash' | 'gcash' | 'card' | 'bdo' | 'maya' | 'grab';
 export type TransactionCardType = 'debit' | 'credit';
 
 export interface ApiMenuAddon {
@@ -1990,6 +1990,7 @@ export interface ApiBusinessDay {
   system_eod_total: number | null;
   expenses_total: number;
   variance: number | null;
+  report_version?: number | null;
 }
 
 export function fetchTodayBusinessDay(): Promise<BusinessDayStatus> {

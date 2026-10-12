@@ -104,6 +104,7 @@ function orderTypeLabel(r: ReceiptData): string {
   return r.orderType ? (ORDER_TYPE_LABEL[r.orderType] ?? r.orderType) : '';
 }
 function paymentLabel(method: string): string {
+  if (method.toLowerCase() === 'grab') return 'Grab settlement';
   if (method.toLowerCase() === 'bdo') return 'BDO';
   if (method.toLowerCase() === 'gcash') return 'GCash';
   return method

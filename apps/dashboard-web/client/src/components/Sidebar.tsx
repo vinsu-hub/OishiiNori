@@ -162,6 +162,12 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
     { icon: CalendarClock, label: 'Advance Orders', href: '/advance-orders' },
     { icon: Wallet, label: 'Expenses', href: '/expenses' },
     { icon: ClipboardList, label: 'Shift Reports', href: '/shift-reports' },
+    ...(isManagerOrExecutive || hasGrant('business-day-report')
+      ? [{ icon: ClipboardList, label: 'Business Day Report', href: '/business-day-report' }]
+      : []),
+    ...(isExecutive || hasGrant('command-center')
+      ? [{ icon: LayoutDashboard, label: 'Command Center', href: '/command-center' }]
+      : []),
     ...(isManagerOrExecutive || hasGrant('online-orders')
       ? [{ icon: Truck, label: 'Online Orders', href: '/online-orders', badge: pendingPickupCount }]
       : []),
@@ -172,9 +178,6 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
   ];
 
   const afterStockItems: NavItem[] = [
-    ...(isManagerOrExecutive || hasGrant('business-day-report')
-      ? [{ icon: ClipboardList, label: 'Business Day Report', href: '/business-day-report' }]
-      : []),
     ...(isManagerOrExecutive || hasGrant('refund-approval')
       ? [{ icon: Undo2, label: 'Refund Approval', href: '/refund-approval' }]
       : []),
@@ -213,9 +216,6 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
       : []),
     ...(isManagerOrExecutive || hasGrant('hr-payroll-settings')
       ? [{ icon: Wallet, label: 'Payroll Settings', href: '/hr/payroll-settings' }]
-      : []),
-    ...(isExecutive || hasGrant('command-center')
-      ? [{ icon: LayoutDashboard, label: 'Command Center', href: '/command-center' }]
       : []),
     ...(isExecutive || hasGrant('trends')
       ? [{ icon: TrendingUp, label: 'Trend Analysis', href: '/trends' }]
