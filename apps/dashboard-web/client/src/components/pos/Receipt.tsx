@@ -29,6 +29,8 @@ export interface ReceiptLine {
   quantity: number;
   unitPrice: number;
   addons: { name: string; quantity: number; unitPrice: number }[];
+  discountName?: string | null;
+  discountAmount?: number;
 }
 export interface ReceiptBusiness {
   name: string | null;
@@ -144,7 +146,7 @@ export function receiptHtml(r: ReceiptData): string {
         row(
           `${line.quantity}x ${line.name}`,
           formatCurrency(line.unitPrice * line.quantity),
-        ) + addons
+        ) + addons + (line.discountName ? row(`  1 unit: ${line.discountName}`, '') : '')
       );
     })
     .join('');
@@ -248,6 +250,7 @@ export function receiptEscpos(
         `  + ${addon.quantity}x ${addon.name}`,
         money(addon.unitPrice * addon.quantity),
       );
+    if (line.discountName) rows(`  1 unit: ${line.discountName}`, '');
   }
   rows('Items:', String(r.itemCount));
   p.line(divider);

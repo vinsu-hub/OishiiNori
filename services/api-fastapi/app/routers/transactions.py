@@ -1,5 +1,6 @@
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -31,6 +32,23 @@ from app.schemas import (
 router = APIRouter(tags=["transactions"])
 
 KITCHEN_STATUS_ORDER = ["queued", "preparing", "ready", "completed"]
+
+
+def _single_discount_item_index(items: list, order_discount_type_id: str | None) -> int | None:
+    indexes = [index for index, item in enumerate(items) if item.discount_type_id]
+    if len(indexes) > 1:
+        raise HTTPException(status_code=400, detail="Only one item can receive a discount")
+    if indexes and order_discount_type_id:
+        raise HTTPException(status_code=400, detail="Cannot combine item and order discounts")
+    index = indexes[0] if indexes else None
+    if index is not None and items[index].quantity < 1:
+        raise HTTPException(status_code=400, detail="A discounted item needs at least one unit")
+    return index
+
+
+def _one_unit_discount(price: float, percentage: float) -> float:
+    return float((Decimal(str(price)) * Decimal(str(percentage)) / Decimal("100"))
+                 .quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 def _get_vat_rate(supabase) -> float:
@@ -67,7 +85,19 @@ _transaction_card_vat_supported: bool | None = None
 _deliveries_transaction_id_supported: bool | None = None
 _payment_status_supported: bool | None = None
 _advance_supported: bool | None = None
+_item_discounts_supported: bool | None = None
 ADVANCE_LEAD = timedelta(minutes=20)
+
+
+def _item_discounts_supported_check(supabase) -> bool:
+    global _item_discounts_supported
+    if _item_discounts_supported is None:
+        try:
+            supabase.table("transaction_items").select("discount_amount,discount_vat_exempt").limit(1).execute()
+            _item_discounts_supported = True
+        except APIError:
+            _item_discounts_supported = False
+    return _item_discounts_supported
 
 
 def _advance_supported_check(supabase) -> bool:
@@ -560,14 +590,21 @@ def _create_transaction_row(
                 raise HTTPException(status_code=400, detail=f"No delivery fee configured for {delivery.barangay}")
             delivery_fee = float(fee_result.data["fee"])
 
+    discounted_item_index = _single_discount_item_index(items, discount_type_id)
+    if discounted_item_index is not None and not _item_discounts_supported_check(supabase):
+        raise HTTPException(status_code=501, detail="Item discounts need database migration 0070")
+    selected_discount_type_id = (
+        items[discounted_item_index].discount_type_id
+        if discounted_item_index is not None else discount_type_id
+    )
     discount = None
     discount_amount = 0.0
     vat_exempt = False
-    if discount_type_id:
+    if selected_discount_type_id:
         discount_result = (
             supabase.table("discount_types")
             .select("*")
-            .eq("id", discount_type_id)
+            .eq("id", selected_discount_type_id)
             .maybe_single()
             .execute()
         )
@@ -647,7 +684,7 @@ def _create_transaction_row(
 
     subtotal = 0.0
     item_rows = []
-    for item in items:
+    for item_index, item in enumerate(items):
         size = sizes_by_id[item.product_size_id]
         unit_price = float(size["price"])
         subtotal += unit_price * item.quantity
@@ -659,6 +696,17 @@ def _create_transaction_row(
             "quantity": item.quantity,
             "unit_price": unit_price,
         }
+        if item_index == discounted_item_index and discount:
+            # Only one product unit is discounted; add-ons and other units
+            # retain their full price. Snapshot the label for later reprints.
+            discount_amount = _one_unit_discount(unit_price, discount["percentage"])
+            row.update({
+                "discount_type_id": selected_discount_type_id,
+                "discount_name": discount["name"],
+                "discount_percentage": discount["percentage"],
+                "discount_vat_exempt": discount["vat_exempt"],
+                "discount_amount": discount_amount,
+            })
         if held_ingredients_supported:
             row["held_ingredients"] = item.held_ingredients
         item_rows.append(row)
@@ -713,7 +761,7 @@ def _create_transaction_row(
         employee_id=employee_id, transaction_id=transaction_id,
     )
 
-    if discount:
+    if discount and discounted_item_index is None:
         discount_amount = subtotal * (discount["percentage"] / 100)
     discounted_subtotal = subtotal - discount_amount
     tax_amount = 0.0 if vat_exempt else discounted_subtotal * _get_vat_rate(supabase)
@@ -723,7 +771,7 @@ def _create_transaction_row(
         .update(
             {
                 "total_amount": discounted_subtotal,
-                "discount_type_id": discount_type_id,
+                "discount_type_id": selected_discount_type_id,
                 "discount_amount": discount_amount,
                 "tax_amount": tax_amount,
             }
@@ -1005,9 +1053,12 @@ def list_transactions(
 
     transaction_ids = [t["id"] for t in transactions]
     all_items = []
+    item_columns = "id, transaction_id, product_size_id, quantity, unit_price, held_ingredients"
+    if _item_discounts_supported_check(supabase):
+        item_columns += ", discount_type_id, discount_name, discount_percentage, discount_vat_exempt, discount_amount"
     for offset in range(0, len(transaction_ids), ID_BATCH_SIZE):
         item_query = (supabase.table("transaction_items")
-                      .select("id, transaction_id, product_size_id, quantity, unit_price, held_ingredients")
+                      .select(item_columns)
                       .in_("transaction_id", transaction_ids[offset:offset + ID_BATCH_SIZE]))
         all_items.extend(_page_rows(item_query.order("id")) if advance_order_type or kitchen_status else item_query.execute().data)
     fulfilled_ids = _bundle_fulfilled_item_ids(supabase, [i["id"] for i in all_items])

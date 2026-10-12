@@ -89,7 +89,7 @@ const HELP_GROUPS: HelpGroup[] = [
             those are skipped entirely, not deducted and reversed. You can also park a cart with <strong>Held
             Orders</strong> and resume it later, and star frequently-sold items as <strong>Favorites</strong> for
             quick access. Choosing <strong>Card</strong> as the payment method prompts for Debit or Credit before
-            it's accepted. A <strong>VAT/Non-VAT</strong> toggle next to the discount picker lets you book an order
+            it's accepted. Select a discount on a cart item to reduce one unit of that item. The <strong>VAT/Non-VAT</strong> toggle lets you book an order
             non-VAT even with no VAT-exempt discount applied — a VAT-exempt discount still zeroes tax either way.
           </p>
         ),
@@ -277,7 +277,7 @@ const HELP_GROUPS: HelpGroup[] = [
         answer: (
           <p>
             <strong>POS Management</strong> (manager/executive) — create discount types (name, percentage, whether
-            it's VAT-exempt). These are what show up in the discount picker on POS Terminal.
+            it's VAT-exempt). These appear on each cart item's discount control in POS Terminal.
           </p>
         ),
       },

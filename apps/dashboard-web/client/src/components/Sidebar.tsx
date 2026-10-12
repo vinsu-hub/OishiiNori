@@ -145,6 +145,7 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
   const beforeStockItems: NavItem[] = [
     { icon: ShoppingCart, label: 'POS Terminal', href: '/pos' },
     { icon: ListOrdered, label: 'Order Queue', href: '/order-queue' },
+    { icon: ClipboardList, label: 'Order History', href: '/order-history' },
     // Every role: the cashier approves QR table orders (2026-10-04 client
     // decision), so the badge here is how they notice one is waiting.
     { icon: QrCode, label: 'Table Orders', href: '/pending-orders', badge: pendingTableOrders },

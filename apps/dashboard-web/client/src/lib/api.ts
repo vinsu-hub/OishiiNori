@@ -334,6 +334,7 @@ export interface CreateTransactionItem {
   quantity: number;
   held_ingredients?: string[];
   addons?: CreateTransactionItemAddon[];
+  discount_type_id?: string | null;
 }
 
 export interface CreateTransactionRequest {
@@ -393,6 +394,11 @@ export interface ApiTransactionItem {
   product_size_id: string;
   quantity: number;
   unit_price: number;
+  discount_type_id?: string | null;
+  discount_name?: string | null;
+  discount_percentage?: number | null;
+  discount_vat_exempt?: boolean;
+  discount_amount?: number;
   held_ingredients: string[];
   bundle_fulfilled: boolean;
   bundle_deduction_status?: 'applied' | 'pending_recipe' | null;
@@ -470,6 +476,69 @@ export function fetchTransactions(params?: { date?: string; status?: Transaction
   if (params?.status) qs.set('status', params.status);
   const query = qs.toString();
   return request(`/transactions${query ? `?${query}` : ''}`);
+}
+
+export interface OrderHistoryLine {
+  name: string;
+  quantity: number;
+  unit_price: number;
+  held_ingredients: string[];
+  discount_amount: number;
+  discount_name: string | null;
+  discount_percentage: number | null;
+  addons: { name: string; quantity: number; unit_price: number }[];
+}
+
+export interface OrderHistoryEntry {
+  id: string;
+  transaction_id: string | null;
+  digital_order_id: string | null;
+  order_number: number | null;
+  placed_at: string;
+  period: 'morning' | 'afternoon' | 'evening';
+  labels: string[];
+  status: string;
+  approval_status: string | null;
+  kitchen_status: string | null;
+  payment_status: 'paid' | 'unpaid' | 'unrecorded';
+  payment_method: string | null;
+  paid_at: string | null;
+  scheduled_for: string | null;
+  closed_at: string | null;
+  voided_at: string | null;
+  delivered_at: string | null;
+  rider_payout: number | null;
+  rider_id: string | null;
+  cashier_name: string | null;
+  table_number: number | null;
+  guest_count: number | null;
+  customer_name: string | null;
+  customer_phone: string | null;
+  address: string | null;
+  landmark: string | null;
+  barangay: string | null;
+  customer_note: string | null;
+  payment_proof_submitted: boolean;
+  payment_proof_url: string | null;
+  owner_request_note: string | null;
+  related_transaction_id: string | null;
+  void_reason: string | null;
+  refund_status: string | null;
+  refund_reason: string | null;
+  cash_refund_paid: number;
+  lines: OrderHistoryLine[];
+  order_addons: { name: string; quantity: number; unit_price: number }[];
+  subtotal: number;
+  discount: { name: string; percentage: number | null; amount: number; scope: 'one_unit' | 'order'; item_name: string | null } | null;
+  delivery_fee: number;
+  tax_amount: number;
+  total_due: number;
+  recorded_paid: number;
+  outstanding: number;
+}
+
+export function fetchOrderHistory(date: string): Promise<OrderHistoryEntry[]> {
+  return request(`/order-history?date=${encodeURIComponent(date)}`);
 }
 
 export function fetchAdvanceOrders(orderType: 'takeout' | 'delivery', dateFrom: string, dateBefore: string): Promise<ApiTransaction[]> {

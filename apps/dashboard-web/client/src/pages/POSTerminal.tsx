@@ -94,6 +94,7 @@ interface CartLine {
   quantity: number;
   held_ingredients: string[];
   addons: CartLineAddon[];
+  discountTypeId?: string;
 }
 
 interface HeldCart {
@@ -125,7 +126,7 @@ interface PosDraft {
   orderSource: OrderSource;
   tableNumber: string;
   guestCount: number;
-  discountTypeId: string;
+  discountTypeId?: string; // Pre-item-discount drafts only.
   vatOverride: 'vat' | 'non_vat';
   paymentMethod: TransactionPaymentMethod | null;
   cardType: TransactionCardType | null;
@@ -308,7 +309,6 @@ export default function POSTerminal() {
   }
 
   const [cart, setCart] = useState<CartLine[]>([]);
-  const [discountTypeId, setDiscountTypeId] = useState<string>('none');
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -383,7 +383,9 @@ export default function POSTerminal() {
           setOrderSource(d.orderSource ?? 'pos');
           setTableNumber(d.tableNumber ?? '');
           setGuestCount(d.guestCount ?? 2);
-          setDiscountTypeId(d.discountTypeId ?? 'none');
+          if (d.discountTypeId && d.discountTypeId !== 'none') {
+            toast.info('Select the item for this discount before charging.');
+          }
           setVatOverride(d.vatOverride ?? 'non_vat');
           setPaymentMethod(d.paymentMethod ?? null);
           setCardType(d.cardType ?? null);
@@ -591,7 +593,7 @@ export default function POSTerminal() {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === 'F3') {
         e.preventDefault();
-        document.getElementById('discount-chip-row')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        document.getElementById('discount-item-control')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       } else if (e.key === 'F4') {
         e.preventDefault();
         handleHoldOrder();
@@ -617,7 +619,8 @@ export default function POSTerminal() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cart, sizePickerProduct, ownerRequestOpen, editOrderOpen]);
 
-  const selectedDiscount = discountTypes.find((d) => d.id === discountTypeId) || null;
+  const discountedLine = cart.find((line) => line.discountTypeId);
+  const selectedDiscount = discountTypes.find((d) => d.id === discountedLine?.discountTypeId) || null;
 
   // Dine In table selection -- surfaced as an explicit confirmation line so a
   // cashier can verify at a glance they assigned the order to the right table.
@@ -745,7 +748,8 @@ export default function POSTerminal() {
   // Preview only -- the backend recomputes discount_amount/tax_amount
   // server-side from the live discount_type row; these numbers are for
   // display before charging, never sent as-is to the API.
-  const previewDiscountAmount = selectedDiscount ? subtotal * (selectedDiscount.percentage / 100) : 0;
+  const previewDiscountAmount = selectedDiscount && discountedLine
+    ? Math.round(discountedLine.size.price * selectedDiscount.percentage) / 100 : 0;
   const previewTaxable = subtotal - previewDiscountAmount;
   const previewTax = selectedDiscount?.vat_exempt || vatOverride === 'non_vat' ? 0 : previewTaxable * vatRate;
   const previewTotal = previewTaxable + previewTax;
@@ -807,7 +811,6 @@ export default function POSTerminal() {
       orderSource,
       tableNumber,
       guestCount,
-      discountTypeId,
       vatOverride,
       paymentMethod,
       cardType,
@@ -831,7 +834,6 @@ export default function POSTerminal() {
     orderSource,
     tableNumber,
     guestCount,
-    discountTypeId,
     vatOverride,
     paymentMethod,
     cardType,
@@ -881,6 +883,13 @@ export default function POSTerminal() {
         .map((l) => (l.key === key ? { ...l, quantity: l.quantity + delta } : l))
         .filter((l) => l.quantity > 0)
     );
+  }
+
+  function setItemDiscount(lineKey: string, typeId: string | null) {
+    setCart((previous) => previous.map((line) => ({
+      ...line,
+      discountTypeId: line.key === lineKey ? typeId ?? undefined : undefined,
+    })));
   }
 
   function setLineAddonQuantity(lineKey: string, addon: ApiMenuAddon, quantity: number) {
@@ -979,7 +988,6 @@ export default function POSTerminal() {
 
   function clearOrder() {
     setCart([]);
-    setDiscountTypeId('none');
     setVatOverride('non_vat');
     setCashReceived('');
     clearOwnerRequest();
@@ -1048,8 +1056,8 @@ export default function POSTerminal() {
           quantity: l.quantity,
           held_ingredients: l.held_ingredients,
           addons: l.addons.map((a) => ({ addon_id: a.addon_id, quantity: a.quantity })),
+          discount_type_id: l.discountTypeId,
         })),
-        discount_type_id: discountTypeId === 'none' ? undefined : discountTypeId,
         is_owner_request: !!ownerRequestConfirmed,
         owner_request_employee_number: ownerRequestConfirmed?.employeeNumber,
         owner_request_pin: ownerRequestConfirmed?.pin,
@@ -1083,6 +1091,7 @@ export default function POSTerminal() {
             : undefined,
       }, { queueOffline: !advance });
       const deliveryFee = orderType === 'delivery' ? transaction.delivery?.delivery_fee ?? 0 : 0;
+      const appliedItemDiscount = transaction.items.find((item) => (item.discount_amount ?? 0) > 0);
       setReceipt({
         orderNumber: transaction.order_number,
         openedAt: transaction.opened_at,
@@ -1093,6 +1102,8 @@ export default function POSTerminal() {
           quantity: l.quantity,
           unitPrice: l.size.price,
           addons: l.addons.map((a) => ({ name: a.name, quantity: a.quantity, unitPrice: a.price })),
+          discountName: l.discountTypeId ? appliedItemDiscount?.discount_name ?? selectedDiscount?.name ?? null : null,
+          discountAmount: l.discountTypeId ? transaction.discount_amount : 0,
         })),
         discountAmount: transaction.discount_amount,
         taxAmount: transaction.tax_amount,
@@ -1108,8 +1119,9 @@ export default function POSTerminal() {
         cashierName: user.name ?? null,
         reference: transaction.id.slice(0, 8).toUpperCase(),
         subtotal,
-        discountLabel: selectedDiscount ? `${selectedDiscount.name} (${selectedDiscount.percentage}%)` : null,
-        vatExempt: selectedDiscount?.vat_exempt || vatOverride === 'non_vat',
+        discountLabel: discountedLine && appliedItemDiscount
+          ? `${appliedItemDiscount.discount_name ?? selectedDiscount?.name ?? 'Discount'} (${appliedItemDiscount.discount_percentage ?? selectedDiscount?.percentage ?? 0}%) · 1 × ${discountedLine.product.name}` : null,
+        vatExempt: appliedItemDiscount?.discount_vat_exempt || vatOverride === 'non_vat',
         cashTendered: !codSale && !payAtPickup && paymentMethod === 'cash' ? cashReceivedAmount : null,
         changeDue:
           !codSale && !payAtPickup && paymentMethod === 'cash'
@@ -1167,7 +1179,6 @@ export default function POSTerminal() {
         // a transient WiFi blip shouldn't force PIN re-entry.
         toast.warning(e.message);
         setCart([]);
-        setDiscountTypeId('none');
         setVatOverride('non_vat');
         setTableNumber('');
         setPaymentMethod(null);
@@ -1749,8 +1760,9 @@ export default function POSTerminal() {
           <div className="flex-1 min-h-0 overflow-y-auto">
           <div className="p-4 space-y-2">
             {cart.length === 0 && <p className="text-sm text-muted-foreground">No items yet.</p>}
-            {cart.map((line) => {
+            {cart.map((line, lineIndex) => {
               const lineAddonsTotal = line.addons.reduce((s, a) => s + a.price * a.quantity, 0);
+              const lineDiscount = discountTypes.find((type) => type.id === line.discountTypeId);
               return (
                 <div key={line.key} className="text-sm border-b pb-2 space-y-1">
                   <div className="flex items-center justify-between">
@@ -1826,35 +1838,39 @@ export default function POSTerminal() {
                       </PopoverContent>
                     </Popover>
                   )}
+                  {discountTypes.length > 0 && (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          id={lineIndex === 0 ? 'discount-item-control' : undefined}
+                          size="sm"
+                          variant={lineDiscount ? 'secondary' : 'ghost'}
+                          className="h-auto min-h-8 px-2 text-xs"
+                        >
+                          {lineDiscount
+                            ? `${lineDiscount.name}: 1 unit −${formatCurrency(Math.round(line.size.price * lineDiscount.percentage) / 100)}`
+                            : 'Discount 1 unit'}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-64 space-y-1">
+                        <p className="text-xs text-muted-foreground">Applies to one {line.product.name}; add-ons stay full price.</p>
+                        {discountTypes.map((type) => (
+                          <Button key={type.id} type="button" variant={lineDiscount?.id === type.id ? 'secondary' : 'ghost'}
+                            className="w-full justify-start" onClick={() => setItemDiscount(line.key, type.id)}>
+                            {type.name} ({type.percentage}%)
+                          </Button>
+                        ))}
+                        {lineDiscount && <Button type="button" variant="ghost" className="w-full justify-start"
+                          onClick={() => setItemDiscount(line.key, null)}>Remove discount</Button>}
+                      </PopoverContent>
+                    </Popover>
+                  )}
                 </div>
               );
             })}
           </div>
 
           <div className="p-4 border-t space-y-3">
-            <div>
-              <Label className="text-xs">Discount</Label>
-              <div id="discount-chip-row" className="flex flex-wrap gap-2 mt-1">
-                {discountTypes.map((d) => (
-                  <button
-                    key={d.id}
-                    type="button"
-                    onClick={() => setDiscountTypeId((prev) => (prev === d.id ? 'none' : d.id))}
-                    className={`px-4 py-2 rounded-full text-xs border transition-colors ${
-                      discountTypeId === d.id
-                        ? 'bg-primary text-primary-foreground border-transparent'
-                        : 'bg-card text-muted-foreground border-border'
-                    }`}
-                  >
-                    {d.name} ({d.percentage}%)
-                  </button>
-                ))}
-                {discountTypes.length === 0 && (
-                  <p className="text-xs text-muted-foreground">No discount types configured.</p>
-                )}
-              </div>
-            </div>
-
             <div>
               <Label className="text-xs">VAT</Label>
               <div className="grid grid-cols-2 gap-2 mt-1">
@@ -2000,7 +2016,7 @@ export default function POSTerminal() {
                 size="sm"
                 className="gap-1"
                 onClick={() =>
-                  document.getElementById('discount-chip-row')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+                  document.getElementById('discount-item-control')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
                 }
               >
                 <Percent className="w-3.5 h-3.5" /> Discount <kbd className="ml-auto text-[10px] opacity-60">F3</kbd>

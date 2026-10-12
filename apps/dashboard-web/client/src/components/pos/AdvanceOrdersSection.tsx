@@ -91,6 +91,8 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
         return {
           name, quantity: item.quantity, unitPrice: item.unit_price,
           addons: item.addons.map((addon) => ({ name: addon.addon_name ?? 'Add-on', quantity: addon.quantity, unitPrice: addon.unit_price })),
+          discountName: item.discount_name,
+          discountAmount: item.discount_amount,
         };
       });
       const deliveryFee = current.delivery?.delivery_fee ?? 0;
@@ -108,7 +110,10 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
         business, cashierName: null,
         reference: current.id.slice(0, 8).toUpperCase(),
         subtotal: current.total_amount + current.discount_amount,
-        discountLabel: null, vatExempt: current.force_vat_exempt,
+        discountLabel: (() => {
+          const discounted = current.items.find((item) => (item.discount_amount ?? 0) > 0);
+          return discounted ? `${discounted.discount_name ?? 'Discount'} (${discounted.discount_percentage ?? 0}%) · 1 × ${receiptNames.get(discounted.product_size_id) ?? 'item'}` : null;
+        })(), vatExempt: current.force_vat_exempt || current.items.some((item) => item.discount_vat_exempt),
         cashTendered: null, changeDue: null,
         itemCount: current.items.reduce((sum, item) => sum + item.quantity, 0),
         delivery: current.delivery ? {

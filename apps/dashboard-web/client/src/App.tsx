@@ -23,6 +23,7 @@ import Login from './pages/Login';
 const Home = lazyWithReload(() => import('./pages/Home'), 'Home');
 const POSTerminal = lazyWithReload(() => import('./pages/POSTerminal'), 'POSTerminal');
 const OrderQueue = lazyWithReload(() => import('./pages/OrderQueue'), 'OrderQueue');
+const OrderHistory = lazyWithReload(() => import('./pages/OrderHistory'), 'OrderHistory');
 const PendingOrders = lazyWithReload(() => import('./pages/PendingOrders'), 'PendingOrders');
 const KitchenDisplay = lazyWithReload(() => import('./pages/KitchenDisplay'), 'KitchenDisplay');
 const Reservations = lazyWithReload(() => import('./pages/Reservations'), 'Reservations');
@@ -88,6 +89,7 @@ function Router() {
         <Route path={'/'} component={Home} />
         <Route path={'/pos'} component={POSTerminal} />
         <Route path={'/order-queue'} component={OrderQueue} />
+        <Route path={'/order-history'} component={OrderHistory} />
         <Route path={'/pending-orders'} component={PendingOrders} />
         <Route path={'/kitchen-display'} component={KitchenDisplay} />
         <Route path={'/reservations'} component={Reservations} />

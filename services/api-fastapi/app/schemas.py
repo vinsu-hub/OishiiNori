@@ -190,6 +190,7 @@ class TransactionItemCreate(BaseModel):
     quantity: float = Field(gt=0)
     held_ingredients: list[str] = Field(default_factory=list)
     addons: list[TransactionItemAddonCreate] = Field(default_factory=list)
+    discount_type_id: str | None = None
 
 
 class DeliveryDetailOut(BaseModel):
@@ -286,6 +287,11 @@ class TransactionItemResponse(BaseModel):
     product_size_id: str
     quantity: float
     unit_price: float
+    discount_type_id: str | None = None
+    discount_name: str | None = None
+    discount_percentage: float | None = None
+    discount_vat_exempt: bool = False
+    discount_amount: float = 0
     held_ingredients: list[str] = Field(default_factory=list)
     bundle_fulfilled: bool = False
     bundle_deduction_status: Literal["applied", "pending_recipe"] | None = None
