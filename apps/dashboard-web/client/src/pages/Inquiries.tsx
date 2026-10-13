@@ -133,8 +133,10 @@ export default function Inquiries() {
                         </div>
                         <div className="min-w-0 space-y-1">
                           <h2 className="break-words font-medium [overflow-wrap:anywhere]">{inquiry.name}</h2>
-                          <a className="block break-words text-sm text-primary underline [overflow-wrap:anywhere]"
-                            href={`mailto:${inquiry.email}`}>{inquiry.email}</a>
+                          {inquiry.email.includes('@') && (
+                            <a className="block break-words text-sm text-primary underline [overflow-wrap:anywhere]"
+                              href={`mailto:${inquiry.email}`}>{inquiry.email}</a>
+                          )}
                           {inquiry.phone && (
                             <a className="block break-words text-sm text-primary underline [overflow-wrap:anywhere]"
                               href={`tel:${inquiry.phone}`}>{inquiry.phone}</a>

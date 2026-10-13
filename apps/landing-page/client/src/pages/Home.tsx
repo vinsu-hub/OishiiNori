@@ -32,7 +32,7 @@ export default function Home({ initialData }: { initialData?: HomeInitialData } 
     fetchBusinessHours().then(data => { if (active) setHours(data); }).catch(() => {});
     return () => { active = false; };
   }, []);
-  const hoursLabel = hours ? `${formatTime12h(hours.open_time.slice(0, 5))} – ${formatTime12h(hours.close_time.slice(0, 5))}` : '11:00 AM – 10:00 PM';
+  const hoursLabel = hours ? `${formatTime12h(hours.open_time.slice(0, 5))} – ${formatTime12h(hours.close_time.slice(0, 5))}` : '11:00 AM – 9:00 PM';
   const price = (name: string) => {
     const match = products.find(p => p.name.toLowerCase().includes(name.toLowerCase()));
     const sizes = match?.sizes ?? [];

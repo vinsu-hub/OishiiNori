@@ -24,7 +24,7 @@ InquiryStatus = Literal["new", "handled"]
 class CreateInquiryRequest(BaseModel):
     kind: InquiryKind
     name: str = Field(min_length=1, max_length=120)
-    email: str = Field(min_length=3, max_length=200, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    email: str | None = Field(default=None, min_length=3, max_length=200, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
     phone: str | None = Field(default=None, max_length=40)
     message: str = Field(min_length=1, max_length=2000)
     event_date: date | None = None
@@ -63,10 +63,16 @@ def submit_inquiry(body: CreateInquiryRequest, request: Request):
     enforce_rate_limit(supabase, f"inquiry-submit:{client_ip(request)}", window_seconds=600, limit=5)
     if body.website:
         return InquirySubmitResult()
+    if body.kind == "contact" and not (body.phone or "").strip():
+        raise HTTPException(status_code=400, detail="Phone number is required for contact inquiries")
+    if body.kind == "catering" and not body.email:
+        raise HTTPException(status_code=400, detail="Email is required for catering inquiries")
     payload = {
         "kind": body.kind,
         "name": body.name.strip(),
-        "email": body.email.strip(),
+        # The existing inquiries table requires email. For phone-only contact
+        # messages, store the phone there as well until the column is nullable.
+        "email": body.email.strip() if body.email else body.phone.strip(),
         "phone": (body.phone or "").strip() or None,
         "message": body.message.strip(),
         "event_date": body.event_date.isoformat() if body.event_date else None,

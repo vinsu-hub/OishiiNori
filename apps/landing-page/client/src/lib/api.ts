@@ -150,7 +150,7 @@ export async function uploadReviewPhoto(reviewId: string, file: File): Promise<R
 export interface SubmitInquiryPayload {
   kind: 'contact' | 'catering';
   name: string;
-  email: string;
+  email?: string;
   phone?: string;
   message: string;
   event_date?: string; // YYYY-MM-DD

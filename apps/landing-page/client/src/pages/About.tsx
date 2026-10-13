@@ -15,7 +15,7 @@ export default function About({ initialData }: { initialData?: { hours: Business
     fetchBusinessHours().then(data => { if (active) setHours(data); }).catch(() => {});
     return () => { active = false; };
   }, []);
-  const hoursLabel = hours ? `${formatTime12h(hours.open_time.slice(0, 5))} – ${formatTime12h(hours.close_time.slice(0, 5))}` : '11:00 AM – 10:00 PM';
+  const hoursLabel = hours ? `${formatTime12h(hours.open_time.slice(0, 5))} – ${formatTime12h(hours.close_time.slice(0, 5))}` : '11:00 AM – 9:00 PM';
   return <div className="on-site"><SiteNav /><main tabIndex={-1} id="main-content" ref={revealRef}>
     <section className="on-catering-hero on-container on-about-hero"><p className="on-label">OISHII NORI / OUR STORY</p><h1>MADE FOR<br /><span>GOOD CRAVINGS.</span></h1><p lang="ja" className="on-intro-japanese">おいしいのり</p><p>We’re a Filipino-owned kitchen serving authentic Japanese food with a distinctive Filipino twist. Made fresh, full of real flavor, and made for everyday cravings — good food, fair prices, and a warm welcome at the table.</p><div className="on-actions"><a className="on-button" href="/menu">Order now <span className="on-arrow" aria-hidden="true">↗</span></a><a className="on-button on-outline" href="/menu?reserve=1">Reserve <span className="on-arrow" aria-hidden="true">↗</span></a></div></section>
     <section className="on-serve-strip"><div className="on-container"><p className="on-eyebrow">WHAT WE SERVE</p><div>{['Sushi', 'Ramen', 'Katsu', 'Sushi Boats'].map(name => <span key={name}>{name}</span>)}</div><a href="/our-menu">Explore our menu <span className="on-arrow" aria-hidden="true">↗</span></a></div></section>
