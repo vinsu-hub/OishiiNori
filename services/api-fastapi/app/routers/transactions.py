@@ -696,6 +696,11 @@ def _create_transaction_row(
             "quantity": item.quantity,
             "unit_price": unit_price,
         }
+        if discounted_item_index is not None:
+            # Bulk PostgREST inserts turn fields omitted from only some
+            # rows into NULL. Both columns are NOT NULL in migration 0070.
+            row["discount_amount"] = 0.0
+            row["discount_vat_exempt"] = False
         if item_index == discounted_item_index and discount:
             # Only one product unit is discounted; add-ons and other units
             # retain their full price. Snapshot the label for later reprints.

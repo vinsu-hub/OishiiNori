@@ -116,7 +116,30 @@ class ItemDiscountTests(unittest.TestCase):
         self.assertEqual(sale.tax_amount, 0)  # VAT-exempt type still exempts the whole order.
         self.assertEqual(db.item_rows[0]["discount_amount"], 20)
         self.assertEqual(db.item_rows[0]["discount_name"], "Senior")
-        self.assertNotIn("discount_amount", db.item_rows[1])
+        self.assertEqual(db.item_rows[1]["discount_amount"], 0)
+        self.assertFalse(db.item_rows[1]["discount_vat_exempt"])
+
+        # With no add-ons these rows use one bulk PostgREST insert. A row
+        # without discount_amount is sent as NULL alongside the discounted
+        # row, violating the production NOT NULL column before cash checkout.
+        bulk_db = DB()
+        bulk_db.item_rows = []
+        with patch("app.routers.transactions._item_discounts_supported_check", return_value=True), \
+             patch("app.routers.transactions._transaction_item_addons_supported_check", return_value=True), \
+             patch("app.routers.transactions._held_ingredients_supported_check", return_value=False), \
+             patch("app.routers.transactions._transaction_order_context_supported_check", return_value=False), \
+             patch("app.routers.transactions._transaction_order_source_supported_check", return_value=False), \
+             patch("app.routers.transactions._transaction_card_vat_supported_check", return_value=False), \
+             patch("app.routers.transactions._kitchen_status_supported_check", return_value=False), \
+             patch("app.routers.transactions._attach_item_addons"), \
+             patch("app.routers.transactions.adjust_stock_items_for_transaction"), \
+             patch("app.routers.transactions._get_vat_rate", return_value=0.12):
+            _create_transaction_row(bulk_db, "cashier", [
+                TransactionItemCreate(product_size_id="sushi", quantity=1, discount_type_id="senior"),
+                TransactionItemCreate(product_size_id="drink", quantity=1),
+            ], payment_method="cash")
+        self.assertEqual([row["discount_amount"] for row in bulk_db.item_rows], [20, 0])
+        self.assertEqual([row["discount_vat_exempt"] for row in bulk_db.item_rows], [True, False])
 
 
 if __name__ == "__main__":
