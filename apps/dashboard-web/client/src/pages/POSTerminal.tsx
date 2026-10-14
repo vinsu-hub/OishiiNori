@@ -1034,7 +1034,7 @@ export default function POSTerminal() {
         delivery: { customer_name: deliveryCustomerName.trim(), customer_phone: deliveryCustomerPhone.trim(), address: deliveryAddress.trim(), landmark: deliveryLandmark.trim() || null, barangay: deliveryBarangay },
       });
       clearOrder();
-      toast.success('Delivery saved in POS Deliveries. It has not been sent to the kitchen.');
+      toast.success('Delivery saved in Hanged Orders. It has not been sent to the kitchen.');
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not save hanged delivery');
     } finally { setHangingOrder(false); }

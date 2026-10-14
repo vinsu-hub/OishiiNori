@@ -499,6 +499,8 @@ export interface ApiPosHangedOrder {
   transaction_id: string | null;
   created_at: string;
   updated_at: string;
+  /** The sale created when the order was sent to the kitchen. */
+  transaction?: ApiTransaction | null;
 }
 
 export function fetchPosHangedOrders(): Promise<ApiPosHangedOrder[]> {
@@ -515,6 +517,14 @@ export function updatePosHangedOrder(id: string, payload: CreateTransactionReque
 
 export function sendPosHangedOrderToKitchen(id: string): Promise<ApiTransaction> {
   return request(`/pos/hanged-orders/${id}/send-to-kitchen`, { method: 'POST' });
+}
+
+/** Record payment, mark delivered, and close a sent hanged order. */
+export function completePosHangedOrder(id: string, paymentMethod: TransactionPaymentMethod, cardType?: TransactionCardType | null): Promise<ApiPosHangedOrder> {
+  return request(`/pos/hanged-orders/${id}/complete`, {
+    method: 'POST',
+    body: JSON.stringify({ payment_method: paymentMethod, card_type: cardType ?? null }),
+  });
 }
 
 function _createTransactionRequest(body: CreateTransactionRequest): Promise<ApiTransaction> {

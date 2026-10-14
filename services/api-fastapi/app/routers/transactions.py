@@ -1,3 +1,4 @@
+import uuid
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
@@ -37,11 +38,44 @@ router = APIRouter(tags=["transactions"])
 def list_pos_hanged_orders(user: CurrentUser = Depends(get_current_user)):
     if user.role == "kitchen":
         raise HTTPException(status_code=403, detail="Kitchen accounts cannot manage cashier orders")
-    result = get_supabase().table("pos_hanged_orders").select("*").in_("status", ["draft", "processing"]).order("created_at", desc=True).execute()
+    supabase = get_supabase()
+    result = supabase.table("pos_hanged_orders").select("*").in_("status", ["draft", "processing"]).order("created_at", desc=True).execute()
     rows = result.data or []
+    # Sent orders stay on the tab until they are completed and paid, then
+    # remain listed for the rest of the PH day as a reference.
+    since = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+    submitted = (supabase.table("pos_hanged_orders").select("*").eq("status", "submitted")
+                 .gte("updated_at", since).order("created_at", desc=True).execute().data or [])
     if user.role not in ("manager", "executive"):
         rows = [row for row in rows if row["employee_id"] == user.id]
+        submitted = [row for row in submitted if row["employee_id"] == user.id]
+    for row in rows:
+        row["transaction"] = None
+    rows.extend(_attach_hanged_transactions(supabase, submitted))
     return rows
+
+
+def _attach_hanged_transactions(supabase, rows: list[dict]) -> list[dict]:
+    """Attaches each submitted hanged order's sale as row['transaction'],
+    keeping unfinished ones plus those completed today."""
+    transaction_ids = [row["transaction_id"] for row in rows if row.get("transaction_id")]
+    if not transaction_ids:
+        return []
+    transactions = supabase.table("transactions").select("*").in_("id", transaction_ids).execute().data or []
+    _attach_deliveries(supabase, transactions)
+    by_id = {t["id"]: t for t in transactions}
+    today_start = datetime.fromisoformat(ph_day_bounds_utc(today_ph())[0])
+    kept = []
+    for row in rows:
+        transaction = by_id.get(row.get("transaction_id"))
+        if not transaction or transaction["status"] == "voided":
+            continue
+        unfinished = transaction["status"] == "open" or transaction.get("payment_status") == "unpaid"
+        closed_today = bool(transaction.get("closed_at")) and datetime.fromisoformat(transaction["closed_at"].replace("Z", "+00:00")) >= today_start
+        if unfinished or closed_today:
+            row["transaction"] = transaction
+            kept.append(row)
+    return kept
 
 
 @router.post("/pos/hanged-orders")
@@ -99,7 +133,9 @@ def submit_pos_hanged_order(order_id: str, user: CurrentUser = Depends(get_curre
     payload.order_source = "pos"
     payload.payment_method = "cash"
     payload.pay_on_delivery = True
-    payload.idempotency_key = f"hanged-order:{order_id}"
+    # Stable per draft (the idempotency column is a uuid), so a retried send
+    # returns the first sale instead of creating a second one.
+    payload.idempotency_key = str(uuid.uuid5(uuid.NAMESPACE_URL, f"hanged-order:{order_id}"))
     try:
         transaction = create_transaction(payload, user)
         supabase.table("pos_hanged_orders").update({"status": "submitted", "transaction_id": transaction.id, "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", order_id).execute()
@@ -107,6 +143,40 @@ def submit_pos_hanged_order(order_id: str, user: CurrentUser = Depends(get_curre
     except Exception:
         supabase.table("pos_hanged_orders").update({"status": "draft", "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", order_id).eq("status", "processing").execute()
         raise
+
+
+@router.post("/pos/hanged-orders/{order_id}/complete")
+def complete_pos_hanged_order(order_id: str, body: SettlePaymentRequest, user: CurrentUser = Depends(get_current_user)):
+    """Punches a sent hanged order as done: records the payment, marks the
+    delivery delivered, and closes the sale. Steps already done are skipped."""
+    if user.role in ("kitchen", "rider", "stocker"):
+        raise HTTPException(status_code=403, detail="Only front-of-house staff can receive payments")
+    supabase = get_supabase()
+    found = supabase.table("pos_hanged_orders").select("*").eq("id", order_id).maybe_single().execute()
+    if not found or not found.data:
+        raise HTTPException(status_code=404, detail="Hanged order not found")
+    row = found.data
+    if row["status"] != "submitted" or not row.get("transaction_id"):
+        raise HTTPException(status_code=409, detail="Send this order to the kitchen before completing it")
+    transaction_id = row["transaction_id"]
+    transaction = _fetch_transaction_with_items(supabase, transaction_id)
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if transaction["status"] == "voided":
+        raise HTTPException(status_code=400, detail="This order was voided")
+    if transaction.get("payment_status") == "unpaid":
+        settle_payment(transaction_id, body, user)
+    if _deliveries_transaction_id_supported_check(supabase):
+        supabase.table("deliveries").update({"delivered_at": datetime.now(timezone.utc).isoformat()}).eq(
+            "transaction_id", transaction_id).is_("delivered_at", "null").execute()
+    if transaction["status"] == "open":
+        close_transaction(transaction_id, user)
+    kept = _attach_hanged_transactions(supabase, [row])
+    if kept:
+        return kept[0]
+    row["transaction"] = None
+    return row
+
 
 KITCHEN_STATUS_ORDER = ["queued", "preparing", "ready", "completed"]
 
