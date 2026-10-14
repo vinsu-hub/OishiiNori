@@ -366,6 +366,11 @@ class RescheduleAdvanceOrderRequest(BaseModel):
     expected_revision: int = Field(ge=0)
 
 
+class UpdateAdvanceItemsRequest(BaseModel):
+    items: list[TransactionItemCreate] = Field(min_length=1)
+    expected_revision: int = Field(ge=0)
+
+
 class SwitchTableRequest(BaseModel):
     new_table_number: int = Field(gt=0)
 

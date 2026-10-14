@@ -25,6 +25,7 @@ from app.schemas import (
     RiderPayoutUpdate,
     PosHangedOrderCreate,
     RescheduleAdvanceOrderRequest,
+    UpdateAdvanceItemsRequest,
     SettlePaymentRequest,
     SwitchTableRequest,
     TransactionResponse,
@@ -673,44 +674,13 @@ def fetch_transaction_delivery_ticket(supabase, transaction_id: str) -> dict | N
     }
 
 
-def _create_transaction_row(
-    supabase,
-    employee_id: str,
-    items: list,
-    discount_type_id: str | None = None,
-    is_owner_request: bool = False,
-    owner_request_by: str | None = None,
-    owner_request_note: str | None = None,
-    order_type: str | None = None,
-    table_number: int | None = None,
-    guest_count: int | None = None,
-    payment_method: str | None = None,
-    card_type: str | None = None,
-    force_vat_exempt: bool = False,
-    related_transaction_id: str | None = None,
-    delivery: DeliveryCaptureIn | None = None,
-    delivery_fee_override: float | None = None,
-    pay_on_delivery: bool = False,
-    order_source: str = "pos",
-    scheduled_for: datetime | None = None,
-    pickup_customer_name: str | None = None,
-    pickup_customer_phone: str | None = None,
-) -> TransactionResponse:
-    """Insert a transaction + items, deduct non-bundle recipe ingredients,
-    and compute discount/tax. Shared by POS sale creation (create_transaction
-    below) and digital-menu order approval (digital_menu.py's approve
-    endpoint) -- the only difference between those two callers is how
-    employee_id/items are sourced (a logged-in cashier vs. an approved
-    customer order), not how a sale gets recorded.
-
-    Bundle line items (product.is_bundle=true) are NOT deducted here -- per
-    spec, a bundle's actual ingredient consumption is only known once the
-    kitchen logs which real rolls went into it, via the bundle-fulfillment
-    endpoint below. This matches recipe_items having zero rows for a
-    bundle's product_size, so the generic per-size deduction would no-op
-    anyway; the skip is made explicit for clarity and to avoid a wasted
-    query per bundle item.
-    """
+def _prepare_items(supabase, items: list, discount_type_id: str | None, force_vat_exempt: bool):
+    """Validates a sale's lines before anything is written: sizes and
+    add-ons exist (add-on prices come from menu_addons, never the client),
+    at most one discount, and the discount type is active. Returns
+    (sizes_by_id, addons_by_id, discounted_item_index, discount,
+    selected_discount_type_id, vat_exempt). Shared by sale creation and the
+    advance-order item edit."""
     if not items:
         raise HTTPException(status_code=400, detail="Transaction must have at least one item")
 
@@ -746,28 +716,6 @@ def _create_transaction_row(
         if inactive_addons:
             raise HTTPException(status_code=400, detail=f"Add-ons no longer available: {inactive_addons}")
 
-    # Walk-in delivery (0051): validated and the fee looked up *before* the
-    # transaction row is inserted below -- same reasoning as the discount
-    # lookup just below, everything that can 400 happens before any write,
-    # so an invalid barangay never leaves an orphaned open transaction with
-    # no items behind. The fee is looked up server-side, exactly like
-    # digital_menu.py's submit_digital_order -- never trusted from the client.
-    delivery_fee: float | None = None
-    if order_type == "delivery" and delivery and _deliveries_transaction_id_supported_check(supabase):
-        if delivery_fee_override is not None:
-            delivery_fee = round(delivery_fee_override, 2)
-        else:
-            fee_result = (
-                supabase.table("delivery_fees")
-                .select("fee")
-                .eq("barangay", delivery.barangay)
-                .maybe_single()
-                .execute()
-            )
-            if not fee_result or not fee_result.data:
-                raise HTTPException(status_code=400, detail=f"No delivery fee configured for {delivery.barangay}")
-            delivery_fee = float(fee_result.data["fee"])
-
     discounted_item_index = _single_discount_item_index(items, discount_type_id)
     if discounted_item_index is not None and not _item_discounts_supported_check(supabase):
         raise HTTPException(status_code=501, detail="Item discounts need database migration 0070")
@@ -795,67 +743,19 @@ def _create_transaction_row(
     elif force_vat_exempt:
         vat_exempt = True
 
-    now_iso = datetime.now(timezone.utc).isoformat()
-    insert_payload = {
-        "employee_id": employee_id,
-        "status": "open",
-        "opened_at": now_iso,
-        "total_amount": 0,
-        "is_owner_request": is_owner_request,
-        "owner_request_by": owner_request_by,
-        "owner_request_note": owner_request_note,
-    }
-    if _kitchen_status_supported_check(supabase):
-        insert_payload["kitchen_status"] = "queued"
-        insert_payload["kitchen_status_updated_at"] = now_iso
-    if _transaction_order_context_supported_check(supabase):
-        insert_payload["order_type"] = order_type
-        insert_payload["table_number"] = table_number
-        insert_payload["guest_count"] = guest_count
-        insert_payload["payment_method"] = payment_method
-    if _transaction_order_source_supported_check(supabase):
-        insert_payload["order_source"] = order_source
-    if _transaction_card_vat_supported_check(supabase):
-        insert_payload["card_type"] = card_type
-        insert_payload["force_vat_exempt"] = force_vat_exempt
-    if related_transaction_id:
-        insert_payload["related_transaction_id"] = related_transaction_id
-    if pay_on_delivery:
-        if not _payment_status_supported_check(supabase):
-            raise HTTPException(status_code=501, detail="Deferred payment needs database migration 0062")
-        insert_payload["payment_status"] = "unpaid"
-    if scheduled_for is not None:
-        if not _advance_supported_check(supabase):
-            raise HTTPException(status_code=501, detail="Advance orders need database migration 0068")
-        insert_payload.update({
-            "scheduled_for": scheduled_for.isoformat(),
-            "pickup_customer_name": pickup_customer_name,
-            "pickup_customer_phone": pickup_customer_phone,
-        })
+    return sizes_by_id, addons_by_id, discounted_item_index, discount, selected_discount_type_id, vat_exempt
 
-    transaction_insert = supabase.table("transactions").insert(insert_payload).execute()
-    transaction = transaction_insert.data[0]
-    transaction_id = transaction["id"]
 
-    # Stage the validated delivery capture in the *same* `deliveries` table
-    # used by QR-originated deliveries (transaction_id instead of
-    # digital_order_id) so it shows up in the existing rider dispatch queue
-    # (deliveries.py) unchanged -- never a second, parallel table.
-    delivery_out: dict | None = None
-    if delivery_fee is not None and delivery:
-        delivery_row = {
-            "transaction_id": transaction_id,
-            "customer_name": delivery.customer_name,
-            "customer_phone": delivery.customer_phone,
-            "address": delivery.address,
-            "landmark": delivery.landmark,
-            "barangay": delivery.barangay,
-            "delivery_fee": delivery_fee,
-        }
-        inserted_delivery = supabase.table("deliveries").insert(delivery_row).execute().data[0]
-        inserted_delivery["rider_name"] = None
-        delivery_out = inserted_delivery
-
+def _write_items_and_totals(
+    supabase, transaction_id: str, employee_id: str, items: list, sizes_by_id: dict, addons_by_id: dict,
+    discounted_item_index: int | None, discount: dict | None, selected_discount_type_id: str | None,
+    vat_exempt: bool, order_type: str | None, guest_count: int | None,
+) -> tuple[dict, list[dict]]:
+    """Inserts a sale's item (+ add-on) rows, deducts their stock, and
+    writes the discount/tax/total onto the transaction. Returns
+    (transaction_row, inserted_items). Shared by sale creation and the
+    advance-order item edit."""
+    discount_amount = 0.0
     held_ingredients_supported = _held_ingredients_supported_check(supabase)
 
     addons_supported = _transaction_item_addons_supported_check(supabase)
@@ -962,7 +862,139 @@ def _create_transaction_row(
         .eq("id", transaction_id)
         .execute()
     )
-    transaction = updated.data[0]
+    return updated.data[0], inserted_items
+
+
+def _create_transaction_row(
+    supabase,
+    employee_id: str,
+    items: list,
+    discount_type_id: str | None = None,
+    is_owner_request: bool = False,
+    owner_request_by: str | None = None,
+    owner_request_note: str | None = None,
+    order_type: str | None = None,
+    table_number: int | None = None,
+    guest_count: int | None = None,
+    payment_method: str | None = None,
+    card_type: str | None = None,
+    force_vat_exempt: bool = False,
+    related_transaction_id: str | None = None,
+    delivery: DeliveryCaptureIn | None = None,
+    delivery_fee_override: float | None = None,
+    pay_on_delivery: bool = False,
+    order_source: str = "pos",
+    scheduled_for: datetime | None = None,
+    pickup_customer_name: str | None = None,
+    pickup_customer_phone: str | None = None,
+) -> TransactionResponse:
+    """Insert a transaction + items, deduct non-bundle recipe ingredients,
+    and compute discount/tax. Shared by POS sale creation (create_transaction
+    below) and digital-menu order approval (digital_menu.py's approve
+    endpoint) -- the only difference between those two callers is how
+    employee_id/items are sourced (a logged-in cashier vs. an approved
+    customer order), not how a sale gets recorded.
+
+    Bundle line items (product.is_bundle=true) are NOT deducted here -- per
+    spec, a bundle's actual ingredient consumption is only known once the
+    kitchen logs which real rolls went into it, via the bundle-fulfillment
+    endpoint below. This matches recipe_items having zero rows for a
+    bundle's product_size, so the generic per-size deduction would no-op
+    anyway; the skip is made explicit for clarity and to avoid a wasted
+    query per bundle item.
+    """
+    sizes_by_id, addons_by_id, discounted_item_index, discount, selected_discount_type_id, vat_exempt = (
+        _prepare_items(supabase, items, discount_type_id, force_vat_exempt)
+    )
+
+    # Walk-in delivery (0051): validated and the fee looked up *before* the
+    # transaction row is inserted below -- same reasoning as the item and
+    # discount checks just above, everything that can 400 happens before any write,
+    # so an invalid barangay never leaves an orphaned open transaction with
+    # no items behind. The fee is looked up server-side, exactly like
+    # digital_menu.py's submit_digital_order -- never trusted from the client.
+    delivery_fee: float | None = None
+    if order_type == "delivery" and delivery and _deliveries_transaction_id_supported_check(supabase):
+        if delivery_fee_override is not None:
+            delivery_fee = round(delivery_fee_override, 2)
+        else:
+            fee_result = (
+                supabase.table("delivery_fees")
+                .select("fee")
+                .eq("barangay", delivery.barangay)
+                .maybe_single()
+                .execute()
+            )
+            if not fee_result or not fee_result.data:
+                raise HTTPException(status_code=400, detail=f"No delivery fee configured for {delivery.barangay}")
+            delivery_fee = float(fee_result.data["fee"])
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    insert_payload = {
+        "employee_id": employee_id,
+        "status": "open",
+        "opened_at": now_iso,
+        "total_amount": 0,
+        "is_owner_request": is_owner_request,
+        "owner_request_by": owner_request_by,
+        "owner_request_note": owner_request_note,
+    }
+    if _kitchen_status_supported_check(supabase):
+        insert_payload["kitchen_status"] = "queued"
+        insert_payload["kitchen_status_updated_at"] = now_iso
+    if _transaction_order_context_supported_check(supabase):
+        insert_payload["order_type"] = order_type
+        insert_payload["table_number"] = table_number
+        insert_payload["guest_count"] = guest_count
+        insert_payload["payment_method"] = payment_method
+    if _transaction_order_source_supported_check(supabase):
+        insert_payload["order_source"] = order_source
+    if _transaction_card_vat_supported_check(supabase):
+        insert_payload["card_type"] = card_type
+        insert_payload["force_vat_exempt"] = force_vat_exempt
+    if related_transaction_id:
+        insert_payload["related_transaction_id"] = related_transaction_id
+    if pay_on_delivery:
+        if not _payment_status_supported_check(supabase):
+            raise HTTPException(status_code=501, detail="Deferred payment needs database migration 0062")
+        insert_payload["payment_status"] = "unpaid"
+    if scheduled_for is not None:
+        if not _advance_supported_check(supabase):
+            raise HTTPException(status_code=501, detail="Advance orders need database migration 0068")
+        insert_payload.update({
+            "scheduled_for": scheduled_for.isoformat(),
+            "pickup_customer_name": pickup_customer_name,
+            "pickup_customer_phone": pickup_customer_phone,
+        })
+
+    transaction_insert = supabase.table("transactions").insert(insert_payload).execute()
+    transaction = transaction_insert.data[0]
+    transaction_id = transaction["id"]
+
+    # Stage the validated delivery capture in the *same* `deliveries` table
+    # used by QR-originated deliveries (transaction_id instead of
+    # digital_order_id) so it shows up in the existing rider dispatch queue
+    # (deliveries.py) unchanged -- never a second, parallel table.
+    delivery_out: dict | None = None
+    if delivery_fee is not None and delivery:
+        delivery_row = {
+            "transaction_id": transaction_id,
+            "customer_name": delivery.customer_name,
+            "customer_phone": delivery.customer_phone,
+            "address": delivery.address,
+            "landmark": delivery.landmark,
+            "barangay": delivery.barangay,
+            "delivery_fee": delivery_fee,
+        }
+        inserted_delivery = supabase.table("deliveries").insert(delivery_row).execute().data[0]
+        inserted_delivery["rider_name"] = None
+        delivery_out = inserted_delivery
+
+    transaction, inserted_items = _write_items_and_totals(
+        supabase, transaction_id, employee_id, items, sizes_by_id, addons_by_id,
+        discounted_item_index, discount, selected_discount_type_id, vat_exempt,
+        order_type, guest_count,
+    )
     transaction.setdefault("kitchen_status", "queued")
     transaction.setdefault("order_number", None)
     transaction.setdefault("order_type", None)
@@ -1353,6 +1385,68 @@ def reschedule_advance_order(
     return get_transaction(transaction_id, user)
 
 
+@router.put("/transactions/{transaction_id}/advance-items", response_model=TransactionResponse)
+def update_advance_items(
+    transaction_id: str,
+    body: UpdateAdvanceItemsRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Advance Orders' "Edit order": replaces an advance order's items in
+    place (same order number). Old items' stock is given back, the new items
+    are deducted, and the totals are recomputed. Payment status and method
+    are left as they are -- the cashier collects or gives back the
+    difference. Same window as rescheduling (queued, more than
+    ADVANCE_LEAD away); the revision bump makes the Kitchen Display print an
+    updated ticket."""
+    if user.role in ("kitchen", "rider", "stocker"):
+        raise HTTPException(status_code=403, detail="Only front-of-house staff can edit orders")
+    supabase = get_supabase()
+    if not _advance_supported_check(supabase):
+        raise HTTPException(status_code=501, detail="Advance orders need database migration 0068")
+    transaction = _fetch_transaction_with_items(supabase, transaction_id)
+    if not transaction or not transaction.get("scheduled_for"):
+        raise HTTPException(status_code=404, detail="Advance order not found")
+    if user.role == "employee" and transaction["employee_id"] != user.id:
+        raise HTTPException(status_code=403, detail="Cashiers may only edit their own orders")
+    current_due = datetime.fromisoformat(transaction["scheduled_for"].replace("Z", "+00:00"))
+    if transaction["status"] != "open" or transaction.get("kitchen_status") != "queued" or current_due <= datetime.now(timezone.utc) + ADVANCE_LEAD:
+        raise HTTPException(status_code=409, detail="This order has entered its kitchen preparation window")
+    revision = transaction.get("advance_schedule_revision", 0)
+    if revision != body.expected_revision:
+        raise HTTPException(status_code=409, detail="Order changed; refresh and try again")
+
+    # A line may only keep a discount the order already had -- the edit
+    # dialog can't grant new ones.
+    allowed_discounts = {i["discount_type_id"] for i in transaction["items"] if i.get("discount_type_id")}
+    if any(i.discount_type_id and i.discount_type_id not in allowed_discounts for i in body.items):
+        raise HTTPException(status_code=400, detail="Discounts can't be added while editing an advance order")
+    order_discount = None if allowed_discounts else transaction.get("discount_type_id")
+    force_vat_exempt = bool(transaction.get("force_vat_exempt"))
+    sizes_by_id, addons_by_id, discounted_item_index, discount, selected_discount_type_id, vat_exempt = (
+        _prepare_items(supabase, body.items, order_discount, force_vat_exempt)
+    )
+
+    claimed = (supabase.table("transactions")
+               .update({"advance_schedule_revision": revision + 1,
+                        "advance_schedule_updated_at": datetime.now(timezone.utc).isoformat(),
+                        "advance_schedule_updated_by": user.id})
+               .eq("id", transaction_id).eq("advance_schedule_revision", revision)
+               .eq("kitchen_status", "queued").eq("status", "open").execute())
+    if not claimed.data:
+        raise HTTPException(status_code=409, detail="Order changed; refresh and try again")
+
+    _restore_items_stock(supabase, transaction, user.id)
+    old_ids = [i["id"] for i in transaction["items"]]
+    if old_ids:
+        supabase.table("transaction_items").delete().in_("id", old_ids).execute()
+    _write_items_and_totals(
+        supabase, transaction_id, user.id, body.items, sizes_by_id, addons_by_id,
+        discounted_item_index, discount, selected_discount_type_id, vat_exempt,
+        transaction.get("order_type"), transaction.get("guest_count"),
+    )
+    return get_transaction(transaction_id, user)
+
+
 @router.post("/transactions/{transaction_id}/close", response_model=TransactionResponse)
 def close_transaction(transaction_id: str, user: CurrentUser = Depends(get_current_user)):
     """Settle an order and free its table -- the Floor Plan's "Diner done".
@@ -1552,29 +1646,10 @@ def switch_table(transaction_id: str, body: SwitchTableRequest, user: CurrentUse
     return TransactionResponse(**updated_row, items=transaction["items"])
 
 
-def void_transaction_core(supabase, transaction: dict, actor_id: str, reason: str) -> tuple[dict, list[dict]]:
-    """Shared restore-and-mark-voided logic, used by both the direct void
-    endpoint (queued-only, see its own gate below) and refund approval
-    (transactions.py's own queued-only gate is specifically a limit on the
-    cashier's *self-service* void -- an admin/executive who already
-    approved a refund request is authorized to void regardless of the
-    order's current kitchen_status, e.g. if it advanced to preparing while
-    the request sat pending review).
-
-    For a bundle line item that was already kitchen-fulfilled (has
-    bundle_fulfillments rows), restores each fulfilled roll's own BOM
-    (not a blind full-recipe restore, since bundles have no recipe of their
-    own) and clears those fulfillment rows. A bundle item never fulfilled
-    has nothing to restore.
-
-    Add-ons (0026) need no restore step here -- like menu_addons generally,
-    they carry no recipe_items/stock impact, so there's nothing to give
-    back. transaction_item_addons rows are left in place (cascade-deleted
-    only if the item itself is ever deleted, which void never does).
-
-    Returns (updated_row, response_items) -- the caller wraps these into
-    whatever response shape it needs.
-    """
+def _restore_items_stock(supabase, transaction: dict, actor_id: str) -> None:
+    """Gives back the stock a sale's items (transaction["items"]) took,
+    including kitchen-fulfilled bundle rolls, plus its once-per-order stock
+    items. Used by void and by the advance-order item edit."""
     transaction_id = transaction["id"]
     size_ids = [row["product_size_id"] for row in transaction["items"]]
     sizes_result = (
@@ -1630,6 +1705,33 @@ def void_transaction_core(supabase, transaction: dict, actor_id: str, reason: st
         supabase, transaction.get("order_type"), transaction.get("guest_count"), sign=1,
         employee_id=actor_id, transaction_id=transaction_id,
     )
+
+
+def void_transaction_core(supabase, transaction: dict, actor_id: str, reason: str) -> tuple[dict, list[dict]]:
+    """Shared restore-and-mark-voided logic, used by both the direct void
+    endpoint (queued-only, see its own gate below) and refund approval
+    (transactions.py's own queued-only gate is specifically a limit on the
+    cashier's *self-service* void -- an admin/executive who already
+    approved a refund request is authorized to void regardless of the
+    order's current kitchen_status, e.g. if it advanced to preparing while
+    the request sat pending review).
+
+    For a bundle line item that was already kitchen-fulfilled (has
+    bundle_fulfillments rows), restores each fulfilled roll's own BOM
+    (not a blind full-recipe restore, since bundles have no recipe of their
+    own) and clears those fulfillment rows. A bundle item never fulfilled
+    has nothing to restore.
+
+    Add-ons (0026) need no restore step here -- like menu_addons generally,
+    they carry no recipe_items/stock impact, so there's nothing to give
+    back. transaction_item_addons rows are left in place (cascade-deleted
+    only if the item itself is ever deleted, which void never does).
+
+    Returns (updated_row, response_items) -- the caller wraps these into
+    whatever response shape it needs.
+    """
+    transaction_id = transaction["id"]
+    _restore_items_stock(supabase, transaction, actor_id)
 
     updated = (
         supabase.table("transactions")

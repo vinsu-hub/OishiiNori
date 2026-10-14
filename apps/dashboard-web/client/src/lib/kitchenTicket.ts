@@ -58,7 +58,7 @@ export function buildTicketHeader(order: TicketOrder, width = PAPER_WIDTH_CHARS)
   const lines = [center(`ORDER #${order.order_number ?? order.id.slice(0, 8)}`, width)];
   lines.push(center(orderType ? ORDER_TYPE_LABEL[orderType] ?? 'CHECK ORDER TYPE' : 'CHECK ORDER TYPE', width));
   if (order.scheduled_for) {
-    lines.push(center(order.advance_schedule_revision ? 'ADVANCE - TIME UPDATED' : 'ADVANCE ORDER', width));
+    lines.push(center(order.advance_schedule_revision ? 'ADVANCE - UPDATED' : 'ADVANCE ORDER', width));
     lines.push(center(orderType === 'delivery' ? 'RIDER READY' : 'PICKUP READY', width));
     lines.push(...wrapLine('', asciiSafe(phReadyTime(order.scheduled_for)), width).map((line) => center(line, width)));
     if (order.pickup_customer_name) lines.push(...wrapLine('', asciiSafe(order.pickup_customer_name), width).map((line) => center(line, width)));
@@ -192,7 +192,7 @@ function ticketRuns(order: TicketOrder, index: TicketProductIndex): Run[] {
     align: 'center',
   });
   if (order.scheduled_for) {
-    runs.push({ text: order.advance_schedule_revision ? 'ADVANCE - TIME UPDATED' : 'ADVANCE ORDER', size: 32, weight: '900', align: 'center' });
+    runs.push({ text: order.advance_schedule_revision ? 'ADVANCE - UPDATED' : 'ADVANCE ORDER', size: 32, weight: '900', align: 'center' });
     runs.push({ text: orderType === 'delivery' ? 'RIDER READY' : 'PICKUP READY', size: 28, weight: '900', align: 'center' });
     runs.push({ text: phReadyTime(order.scheduled_for), size: 28, weight: '900', align: 'center' });
     if (order.pickup_customer_name) runs.push({ text: order.pickup_customer_name, size: 27, weight: '700', align: 'center' });

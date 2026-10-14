@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Printer } from 'lucide-react';
+import { Pencil, Printer, Trash2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { ApiProduct, ApiTransaction, TransactionCardType, TransactionPaymentMethod, fetchAdvanceOrders, fetchBusinessSettings, fetchProducts, fetchTransaction, rescheduleAdvanceOrder, settleTransactionPayment } from '@/lib/api';
+import { ApiProduct, ApiTransaction, TransactionCardType, TransactionPaymentMethod, fetchAdvanceOrders, fetchBusinessSettings, fetchProducts, fetchTransaction, rescheduleAdvanceOrder, settleTransactionPayment, updateAdvanceOrderItems } from '@/lib/api';
 import { printReceipt, receiptBusinessFromSettings, type ReceiptBusiness, type ReceiptData } from '@/components/pos/Receipt';
 import { printReceiptAllowed } from '@/lib/printerPrefs';
 import { advanceWindow, formatAdvanceTime, phInputTime, phLocalToIso } from '@/lib/advanceOrders';
@@ -13,6 +13,38 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+
+// One line in the Edit order dialog. Kept lines carry their add-ons, held
+// ingredients and discount; a replaced or newly added line starts plain.
+interface EditLine {
+  key: string;
+  product_size_id: string;
+  quantity: number;
+  held_ingredients: string[];
+  addons: { addon_id: string; quantity: number; unit_price: number }[];
+  discount_type_id: string | null;
+  discount_amount: number;
+}
+
+const PAYMENT_NAME: Record<string, string> = { cash: 'cash', gcash: 'GCash', card: 'card', bdo: 'BDO', maya: 'Maya', grab: 'Grab' };
+
+function linesFromOrder(order: ApiTransaction): EditLine[] {
+  return order.items.map((item) => ({
+    key: item.id, product_size_id: item.product_size_id, quantity: item.quantity,
+    held_ingredients: item.held_ingredients ?? [],
+    addons: item.addons.map((addon) => ({ addon_id: addon.addon_id, quantity: addon.quantity, unit_price: addon.unit_price })),
+    discount_type_id: item.discount_type_id ?? null, discount_amount: item.discount_amount ?? 0,
+  }));
+}
+
+// Plain-language difference after an edit: what the cashier must do now.
+function differenceText(order: ApiTransaction, previousTotal: number, newTotal: number): string {
+  const diff = Math.round((newTotal - previousTotal) * 100) / 100;
+  if (order.payment_status === 'unpaid') return `New amount due: ${formatCurrency(newTotal)}`;
+  if (diff > 0) return `Collect ${formatCurrency(diff)} more by ${PAYMENT_NAME[order.payment_method ?? ''] ?? order.payment_method ?? 'the same method'}`;
+  if (diff < 0) return `Give back ${formatCurrency(-diff)} to the customer`;
+  return 'No change in the amount paid';
+}
 
 export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'delivery' }) {
   const { user } = useAuth();
@@ -29,6 +61,10 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
   const [settling, setSettling] = useState(false);
   const [printingId, setPrintingId] = useState<string | null>(null);
   const [receiptBusiness, setReceiptBusiness] = useState<ReceiptBusiness | null>(null);
+  const [itemsEdit, setItemsEdit] = useState<ApiTransaction | null>(null);
+  const [editLines, setEditLines] = useState<EditLine[]>([]);
+  const [savingItems, setSavingItems] = useState(false);
+  const [reprintPrompt, setReprintPrompt] = useState<{ order: ApiTransaction; previousTotal: number } | null>(null);
 
   useEffect(() => { fetchProducts(false).then(setProducts).catch(() => {}); }, []);
   useEffect(() => { fetchBusinessSettings().then((settings) => setReceiptBusiness(receiptBusinessFromSettings(settings))).catch(() => {}); }, []);
@@ -46,6 +82,15 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
     for (const product of products) for (const size of product.sizes) map.set(size.id, `${product.name} (${size.size_label})`);
     return map;
   }, [products]);
+
+  const sizeById = useMemo(() => {
+    const map = new Map<string, { productName: string; label: string; price: number }>();
+    for (const product of products) for (const size of product.sizes) map.set(size.id, { productName: product.name, label: size.size_label, price: size.price });
+    return map;
+  }, [products]);
+  const sizeOptions = useMemo(() => products.filter((product) => product.active).flatMap((product) => product.sizes
+    .filter((size) => size.availability !== 'unavailable')
+    .map((size) => ({ id: size.id, text: `${product.name} (${size.size_label}) — ${formatCurrency(size.price)}` }))), [products]);
 
   const now = Date.now();
   const upcoming = orders.filter((row) => row.kitchen_status === 'queued' && Date.parse(row.scheduled_for!) > now + 20 * 60_000);
@@ -71,6 +116,53 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
       toast.error(e instanceof Error ? e.message : 'Could not change the time');
       load();
     } finally { setSaving(false); }
+  }
+
+  function openItemsEdit(order: ApiTransaction) {
+    setItemsEdit(order);
+    setEditLines(linesFromOrder(order));
+  }
+
+  // Estimate only: the server recomputes discounts and totals on save, and
+  // the reprint prompt shows the exact difference.
+  const editEstimate = useMemo(() => {
+    if (!itemsEdit) return 0;
+    const fee = itemsEdit.delivery?.delivery_fee ?? 0;
+    const itemDiscounts = itemsEdit.items.some((item) => (item.discount_amount ?? 0) > 0);
+    const gross = editLines.reduce((sum, line) => sum + (sizeById.get(line.product_size_id)?.price ?? 0) * line.quantity
+      + line.addons.reduce((a, addon) => a + addon.unit_price * addon.quantity, 0), 0);
+    const lineDiscounts = editLines.reduce((sum, line) => sum + (line.discount_type_id ? line.discount_amount : 0), 0);
+    const orderRate = !itemDiscounts && itemsEdit.discount_amount > 0
+      ? itemsEdit.discount_amount / (itemsEdit.total_amount + itemsEdit.discount_amount) : 0;
+    return gross - lineDiscounts - gross * orderRate + fee;
+  }, [itemsEdit, editLines, sizeById]);
+
+  const editChanged = !!itemsEdit && JSON.stringify(linesFromOrder(itemsEdit).map(({ key: _k, ...rest }) => rest))
+    !== JSON.stringify(editLines.map(({ key: _k, ...rest }) => rest));
+
+  function updateLine(key: string, patch: Partial<EditLine>) {
+    setEditLines((lines) => lines.map((line) => line.key === key ? { ...line, ...patch } : line));
+  }
+
+  async function saveItems() {
+    if (!itemsEdit || !editLines.length) return;
+    if (editLines.some((line) => !Number.isFinite(line.quantity) || line.quantity < 1)) { toast.error('Each item needs a quantity of at least 1'); return; }
+    setSavingItems(true);
+    const previousTotal = itemsEdit.total_amount + (itemsEdit.delivery?.delivery_fee ?? 0);
+    try {
+      const changed = await updateAdvanceOrderItems(itemsEdit.id, editLines.map((line) => ({
+        product_size_id: line.product_size_id, quantity: line.quantity, held_ingredients: line.held_ingredients,
+        addons: line.addons.map(({ addon_id, quantity }) => ({ addon_id, quantity })), discount_type_id: line.discount_type_id,
+      })), itemsEdit.advance_schedule_revision);
+      setOrders((previous) => previous.map((row) => row.id === changed.id ? changed : row));
+      setItemsEdit(null);
+      toast.success(`Order #${changed.order_number ?? changed.id.slice(0, 8)} updated; the kitchen will get an updated ticket.`);
+      setReprintPrompt({ order: changed, previousTotal });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Could not update the order';
+      toast.error(/changed|preparation window/i.test(message) ? 'This order changed or the kitchen has started it — refresh and try again' : message);
+      load();
+    } finally { setSavingItems(false); }
   }
 
   async function reprintOrder(order: ApiTransaction) {
@@ -157,6 +249,7 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
         <div className="flex flex-wrap gap-2">
           {printReceiptAllowed(user?.role) && <Button size="sm" variant="outline" disabled={printingId === order.id} onClick={() => void reprintOrder(order)}><Printer className="mr-1 h-4 w-4" />{printingId === order.id ? 'Preparing slip…' : 'Reprint order slip'}</Button>}
           {canReceivePayment && order.payment_status === 'unpaid' && <Button size="sm" onClick={() => { setSettleTarget(order); setSettleMethod('cash'); setSettleCardType(null); }}>Payment received</Button>}
+          {canEdit && <Button size="sm" variant="outline" onClick={() => openItemsEdit(order)}><Pencil className="mr-1 h-4 w-4" />Edit order</Button>}
           {canEdit && <Button size="sm" variant="outline" onClick={() => { setEdit(order); setNewTime(phInputTime(new Date(order.scheduled_for!))); }}>Change ready time</Button>}
         </div>
       </CardContent></Card>;
@@ -174,6 +267,50 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
       <DialogContent><DialogHeader><DialogTitle>Change advance ready time</DialogTitle><DialogDescription>The kitchen will receive an updated ticket. Changes are available only before preparation begins.</DialogDescription></DialogHeader>
         <div className="space-y-2"><Label htmlFor="advance-edit-time">New date and time (Philippine time)</Label><Input id="advance-edit-time" type="datetime-local" value={newTime} onChange={(e) => setNewTime(e.target.value)} /></div>
         <DialogFooter><Button variant="outline" onClick={() => setEdit(null)} disabled={saving}>Cancel</Button><Button onClick={saveTime} disabled={saving}>{saving ? 'Saving…' : 'Save time'}</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+    <Dialog open={!!itemsEdit} onOpenChange={(open) => !open && !savingItems && setItemsEdit(null)}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+        <DialogHeader><DialogTitle>Edit order #{itemsEdit?.order_number}</DialogTitle><DialogDescription>Add, remove or replace items. The kitchen gets an updated ticket. Changes are available only before preparation begins.</DialogDescription></DialogHeader>
+        <div className="space-y-2">
+          {editLines.map((line) => <div key={line.key} className="flex flex-wrap items-center gap-2 rounded-md border p-2">
+            <select aria-label="Item" className="h-10 min-w-0 flex-1 rounded-md border bg-background px-2 text-sm" value={line.product_size_id}
+              onChange={(e) => updateLine(line.key, { product_size_id: e.target.value, addons: [], held_ingredients: [], discount_type_id: null, discount_amount: 0 })}>
+              {!sizeOptions.some((option) => option.id === line.product_size_id) && <option value={line.product_size_id}>{names.get(line.product_size_id) ?? 'Item'}</option>}
+              {sizeOptions.map((option) => <option key={option.id} value={option.id}>{option.text}</option>)}
+            </select>
+            <Input aria-label="Quantity" className="w-20" type="number" min="1" step="1" value={line.quantity}
+              onChange={(e) => updateLine(line.key, { quantity: Math.max(1, Math.floor(Number(e.target.value) || 1)) })} />
+            <Button type="button" variant="outline" size="icon" aria-label="Remove item" onClick={() => setEditLines((lines) => lines.filter((l) => l.key !== line.key))}><Trash2 className="h-4 w-4" /></Button>
+            {(line.addons.length > 0 || line.held_ingredients.length > 0 || line.discount_type_id) && <p className="w-full text-xs text-muted-foreground">
+              {[line.addons.length ? `${line.addons.length} add-on${line.addons.length > 1 ? 's' : ''} kept` : '', line.held_ingredients.length ? `No ${line.held_ingredients.join(', ')}` : '', line.discount_type_id ? 'Discount kept' : ''].filter(Boolean).join(' · ')}
+            </p>}
+          </div>)}
+          {editLines.length === 0 && <p className="text-sm text-destructive">An order needs at least one item.</p>}
+          <select aria-label="Add item" className="h-10 w-full rounded-md border bg-background px-3 text-sm" value=""
+            onChange={(e) => { const id = e.target.value; if (id) setEditLines((lines) => [...lines, { key: `new-${Date.now()}`, product_size_id: id, quantity: 1, held_ingredients: [], addons: [], discount_type_id: null, discount_amount: 0 }]); }}>
+            <option value="" disabled>+ Add item</option>
+            {sizeOptions.map((option) => <option key={option.id} value={option.id}>{option.text}</option>)}
+          </select>
+        </div>
+        {itemsEdit && <div className="space-y-1 rounded-md bg-muted px-4 py-3 text-sm">
+          <p className="flex justify-between"><span>Current total</span><span>{formatCurrency(itemsEdit.total_amount + (itemsEdit.delivery?.delivery_fee ?? 0))}</span></p>
+          <p className="flex justify-between font-semibold"><span>New total (estimate)</span><span>{formatCurrency(editEstimate)}</span></p>
+          {editChanged && <p className="font-semibold">{differenceText(itemsEdit, itemsEdit.total_amount + (itemsEdit.delivery?.delivery_fee ?? 0), editEstimate)}</p>}
+        </div>}
+        <DialogFooter><Button variant="outline" onClick={() => setItemsEdit(null)} disabled={savingItems}>Cancel</Button><Button onClick={() => void saveItems()} disabled={savingItems || !editChanged || !editLines.length}>{savingItems ? 'Saving…' : 'Save changes'}</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
+    <Dialog open={!!reprintPrompt} onOpenChange={(open) => !open && setReprintPrompt(null)}>
+      <DialogContent><DialogHeader><DialogTitle>Reprint receipt?</DialogTitle><DialogDescription>Order #{reprintPrompt?.order.order_number} was changed. Print the new receipt for the customer.</DialogDescription></DialogHeader>
+        {reprintPrompt && <div className="space-y-1 rounded-md bg-muted px-4 py-3 text-center">
+          <p className="text-2xl font-bold">{formatCurrency(reprintPrompt.order.total_amount + (reprintPrompt.order.delivery?.delivery_fee ?? 0))}</p>
+          <p className="text-sm font-semibold">{differenceText(reprintPrompt.order, reprintPrompt.previousTotal, reprintPrompt.order.total_amount + (reprintPrompt.order.delivery?.delivery_fee ?? 0))}</p>
+        </div>}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setReprintPrompt(null)}>Not now</Button>
+          {printReceiptAllowed(user?.role) && <Button disabled={!!printingId} onClick={() => { const target = reprintPrompt!.order; setReprintPrompt(null); void reprintOrder(target); }}><Printer className="mr-1 h-4 w-4" />Print new receipt</Button>}
+        </DialogFooter>
       </DialogContent>
     </Dialog>
     <Dialog open={!!settleTarget} onOpenChange={(open) => !open && !settling && setSettleTarget(null)}>

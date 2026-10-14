@@ -641,6 +641,12 @@ export function rescheduleAdvanceOrder(id: string, scheduledFor: string, expecte
   });
 }
 
+export function updateAdvanceOrderItems(id: string, items: CreateTransactionItem[], expectedRevision: number): Promise<ApiTransaction> {
+  return request(`/transactions/${id}/advance-items`, {
+    method: 'PUT', body: JSON.stringify({ items, expected_revision: expectedRevision }),
+  });
+}
+
 export function fetchTransaction(id: string): Promise<ApiTransaction> {
   return request(`/transactions/${id}`);
 }
