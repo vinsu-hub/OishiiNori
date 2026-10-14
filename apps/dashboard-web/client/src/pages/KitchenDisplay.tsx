@@ -621,6 +621,7 @@ export default function KitchenDisplay() {
                           opened {formatTimestamp12h(order.opened_at)} &middot;{' '}
                           <span
                             className={
+                              !isPlannedQueued(order) &&
                               DELAYED_THRESHOLD_SECONDS[order.kitchen_status] != null &&
                               elapsedSeconds(kitchenElapsedSince(order), now) >
                                 DELAYED_THRESHOLD_SECONDS[order.kitchen_status]!
