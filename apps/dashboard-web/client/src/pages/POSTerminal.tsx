@@ -1579,7 +1579,6 @@ export default function POSTerminal() {
         <div className="w-96 border-l flex flex-col overflow-hidden">
           <div className="shrink-0 p-4 border-b space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <h3 className="font-corp-display font-semibold">Current Order</h3>
             <div className="flex items-center gap-2">
               <Popover>
                 <PopoverTrigger asChild>
