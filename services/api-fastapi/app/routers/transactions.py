@@ -36,10 +36,15 @@ from app.schemas import (
 router = APIRouter(tags=["transactions"])
 
 
+FRONT_OF_HOUSE_ROLES = ("employee", "manager", "executive")
+
+
 @router.get("/pos/hanged-orders")
 def list_pos_hanged_orders(user: CurrentUser = Depends(get_current_user)):
-    if user.role == "kitchen":
-        raise HTTPException(status_code=403, detail="Kitchen accounts cannot manage cashier orders")
+    # Shared across the front counter: any cashier can pick up another
+    # cashier's hanged order (shift handover, the rider coming back later).
+    if user.role not in FRONT_OF_HOUSE_ROLES:
+        raise HTTPException(status_code=403, detail="Only front-of-house staff can manage hanged orders")
     supabase = get_supabase()
     result = supabase.table("pos_hanged_orders").select("*").in_("status", ["draft", "processing"]).order("created_at", desc=True).execute()
     rows = result.data or []
@@ -48,9 +53,6 @@ def list_pos_hanged_orders(user: CurrentUser = Depends(get_current_user)):
     since = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
     submitted = (supabase.table("pos_hanged_orders").select("*").eq("status", "submitted")
                  .gte("updated_at", since).order("created_at", desc=True).execute().data or [])
-    if user.role not in ("manager", "executive"):
-        rows = [row for row in rows if row["employee_id"] == user.id]
-        submitted = [row for row in submitted if row["employee_id"] == user.id]
     for row in rows:
         row["transaction"] = None
     rows.extend(_attach_hanged_transactions(supabase, submitted))
@@ -95,13 +97,12 @@ def create_pos_hanged_order(body: PosHangedOrderCreate, user: CurrentUser = Depe
 
 @router.patch("/pos/hanged-orders/{order_id}")
 def update_pos_hanged_order(order_id: str, body: PosHangedOrderCreate, user: CurrentUser = Depends(get_current_user)):
+    if user.role not in FRONT_OF_HOUSE_ROLES:
+        raise HTTPException(status_code=403, detail="Only front-of-house staff can manage hanged orders")
     payload = body.payload
-    if (payload.employee_id != user.id and user.role not in ("manager", "executive")) or payload.order_type != "delivery" or not payload.items or not payload.delivery:
+    if payload.order_type != "delivery" or not payload.items or not payload.delivery:
         raise HTTPException(status_code=400, detail="A valid delivery order is required")
-    query = get_supabase().table("pos_hanged_orders").update({"payload": payload.model_dump(mode="json"), "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", order_id).eq("status", "draft")
-    if user.role not in ("manager", "executive"):
-        query = query.eq("employee_id", user.id)
-    result = query.execute()
+    result = get_supabase().table("pos_hanged_orders").update({"payload": payload.model_dump(mode="json"), "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", order_id).eq("status", "draft").execute()
     if not result.data:
         raise HTTPException(status_code=409, detail="Draft not found or already sent to the kitchen")
     return result.data[0]
@@ -109,15 +110,13 @@ def update_pos_hanged_order(order_id: str, body: PosHangedOrderCreate, user: Cur
 
 @router.post("/pos/hanged-orders/{order_id}/send-to-kitchen")
 def submit_pos_hanged_order(order_id: str, user: CurrentUser = Depends(get_current_user)):
-    if user.role == "kitchen":
-        raise HTTPException(status_code=403, detail="Kitchen accounts cannot charge sales")
+    if user.role not in FRONT_OF_HOUSE_ROLES:
+        raise HTTPException(status_code=403, detail="Only front-of-house staff can charge sales")
     supabase = get_supabase()
     found = supabase.table("pos_hanged_orders").select("*").eq("id", order_id).maybe_single().execute()
     if not found or not found.data:
         raise HTTPException(status_code=404, detail="Hanged order not found")
     row = found.data
-    if row["employee_id"] != user.id and user.role not in ("manager", "executive"):
-        raise HTTPException(status_code=403, detail="Cannot submit another cashier's hanged order")
     if row["status"] == "submitted" and row.get("transaction_id"):
         return get_transaction(row["transaction_id"], user)
     claimed = supabase.table("pos_hanged_orders").update({"status": "processing", "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", order_id).eq("status", "draft").execute()
@@ -1367,8 +1366,6 @@ def reschedule_advance_order(
     transaction = _fetch_transaction_with_items(supabase, transaction_id)
     if not transaction or not transaction.get("scheduled_for"):
         raise HTTPException(status_code=404, detail="Advance order not found")
-    if user.role == "employee" and transaction["employee_id"] != user.id:
-        raise HTTPException(status_code=403, detail="Cashiers may only reschedule their own orders")
     current_due = datetime.fromisoformat(transaction["scheduled_for"].replace("Z", "+00:00"))
     if transaction["status"] != "open" or transaction.get("kitchen_status") != "queued" or current_due <= datetime.now(timezone.utc) + ADVANCE_LEAD:
         raise HTTPException(status_code=409, detail="This order has entered its kitchen preparation window")
@@ -1426,8 +1423,6 @@ def update_advance_items(
     transaction = _fetch_transaction_with_items(supabase, transaction_id)
     if not transaction or not transaction.get("scheduled_for"):
         raise HTTPException(status_code=404, detail="Advance order not found")
-    if user.role == "employee" and transaction["employee_id"] != user.id:
-        raise HTTPException(status_code=403, detail="Cashiers may only edit their own orders")
     if transaction["status"] == "voided":
         raise HTTPException(status_code=400, detail="This order was voided")
     revision = transaction.get("advance_schedule_revision", 0)

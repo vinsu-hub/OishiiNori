@@ -240,9 +240,9 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
   const group = (label: string, rows: ApiTransaction[]) => rows.length > 0 && <section className="space-y-2">
     <h3 className="font-corp-display font-semibold">{label} ({rows.length})</h3>
     <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">{rows.map((order) => {
-      const canEditItems = order.status !== 'voided' && (user?.role !== 'employee' || user.id === order.employee_id);
+      const canEditItems = order.status !== 'voided' && !!canReceivePayment;
       const canEdit = order.kitchen_status === 'queued' && Date.parse(order.scheduled_for!) > Date.now() + 20 * 60_000
-        && (user?.role !== 'employee' || user.id === order.employee_id);
+        && !!canReceivePayment;
       return <Card key={order.id}><CardContent className="space-y-2 py-4">
         <div className="flex justify-between gap-2"><span className="font-bold">Order #{order.order_number ?? order.id.slice(0, 8)}</span><span className="font-semibold">{formatCurrency(order.total_amount + (order.delivery?.delivery_fee ?? 0))}</span></div>
         <p className="text-sm font-semibold">{orderType === 'delivery' ? 'Ready for rider' : 'Pickup ready'}: {formatAdvanceTime(order.scheduled_for!)}</p>
