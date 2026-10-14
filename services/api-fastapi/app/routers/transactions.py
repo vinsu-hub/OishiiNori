@@ -1172,8 +1172,12 @@ def list_transactions(
     advance_order_type: Literal["takeout", "delivery"] | None = Query(None),
     advance_from: datetime | None = Query(None),
     advance_before: datetime | None = Query(None),
+    active_since: date | None = Query(None),
     user: CurrentUser = Depends(get_current_user),
 ):
+    """`active_since` limits the list to orders still needing attention
+    (kitchen not completed, or payment unpaid) plus everything opened on or
+    after that PH date, so live boards don't load the whole order history."""
     supabase = get_supabase()
     # Release approved advance orders that are now within their kitchen lead
     # window, so they show up in this very response. Imported lazily because
@@ -1203,6 +1207,14 @@ def list_transactions(
         query = query.gte("opened_at", start).lte("opened_at", end)
     if status_filter:
         query = query.eq("status", status_filter)
+    if active_since:
+        since_start, _ = ph_day_bounds_utc(active_since)
+        active = [f"opened_at.gte.{since_start}"]
+        if _kitchen_status_supported_check(supabase):
+            active.append("kitchen_status.neq.completed")
+        if _payment_status_supported_check(supabase):
+            active.append("payment_status.eq.unpaid")
+        query = query.or_(",".join(active))
     if kitchen_status and _kitchen_status_supported_check(supabase):
         query = query.eq("kitchen_status", kitchen_status)
     if advance_order_type:
@@ -1216,7 +1228,7 @@ def list_transactions(
         transactions = _page_rows(query)
     else:
         query = query.order("opened_at", desc=True).order("id")
-        transactions = _page_rows(query) if kitchen_status else query.execute().data
+        transactions = _page_rows(query) if kitchen_status or active_since else query.execute().data
     if not transactions:
         return []
 
@@ -1266,7 +1278,7 @@ def list_advance_orders(
     return list_transactions(
         on_date=None, status_filter=None, kitchen_status=None,
         advance_order_type=order_type, advance_from=date_from,
-        advance_before=date_before, user=user,
+        advance_before=date_before, active_since=None, user=user,
     )
 
 

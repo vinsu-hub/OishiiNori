@@ -74,6 +74,7 @@ import {
 import { getTabletRole } from '@/lib/printerPrefs';
 import { phLocalToIso, phInputTime } from '@/lib/advanceOrders';
 import { formatCurrency, formatTime12h, formatTimestamp12h } from '@/lib/utils';
+import { todayIsoPH } from '@/lib/constants';
 import {
   ReceiptDialog,
   receiptBusinessFromSettings,
@@ -224,7 +225,7 @@ export default function POSTerminal() {
   const [unpaidDeliveries, setUnpaidDeliveries] = useState<{ count: number; total: number }>({ count: 0, total: 0 });
   useEffect(() => {
     if (!endDayOpen) return;
-    fetchTransactions()
+    fetchTransactions({ activeSince: todayIsoPH() })
       .then((all) => {
         const open = all.filter((t) => t.payment_status === 'unpaid' && t.status !== 'voided');
         setUnpaidDeliveries({

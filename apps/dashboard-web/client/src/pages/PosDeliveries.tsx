@@ -67,7 +67,7 @@ export default function PosDeliveries() {
   }, []);
 
   const load = useCallback(() => {
-    fetchTransactions()
+    fetchTransactions({ activeSince: todayIsoPH() })
       .then((all) => setTransactions(all.filter((t) => t.order_type === 'delivery' && t.status !== 'voided')))
       .catch((e) => toast.error(e instanceof Error ? e.message : 'Failed to load deliveries'))
       .finally(() => setLoading(false));

@@ -552,10 +552,13 @@ export async function createTransaction(body: CreateTransactionRequest, options?
   }
 }
 
-export function fetchTransactions(params?: { date?: string; status?: TransactionStatus }): Promise<ApiTransaction[]> {
+/** `activeSince` (YYYY-MM-DD, PH) returns only orders still in the kitchen
+ * or unpaid, plus everything opened on or after that date. */
+export function fetchTransactions(params?: { date?: string; status?: TransactionStatus; activeSince?: string }): Promise<ApiTransaction[]> {
   const qs = new URLSearchParams();
   if (params?.date) qs.set('date', params.date);
   if (params?.status) qs.set('status', params.status);
+  if (params?.activeSince) qs.set('active_since', params.activeSince);
   const query = qs.toString();
   return request(`/transactions${query ? `?${query}` : ''}`);
 }
