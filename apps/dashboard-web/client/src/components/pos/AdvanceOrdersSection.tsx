@@ -24,6 +24,8 @@ interface EditLine {
   addons: { addon_id: string; quantity: number; unit_price: number }[];
   discount_type_id: string | null;
   discount_amount: number;
+  // A bundle whose rolls the kitchen already logged stays as it is.
+  locked: boolean;
 }
 
 const PAYMENT_NAME: Record<string, string> = { cash: 'cash', gcash: 'GCash', card: 'card', bdo: 'BDO', maya: 'Maya', grab: 'Grab' };
@@ -34,6 +36,7 @@ function linesFromOrder(order: ApiTransaction): EditLine[] {
     held_ingredients: item.held_ingredients ?? [],
     addons: item.addons.map((addon) => ({ addon_id: addon.addon_id, quantity: addon.quantity, unit_price: addon.unit_price })),
     discount_type_id: item.discount_type_id ?? null, discount_amount: item.discount_amount ?? 0,
+    locked: item.bundle_fulfilled,
   }));
 }
 
@@ -237,6 +240,7 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
   const group = (label: string, rows: ApiTransaction[]) => rows.length > 0 && <section className="space-y-2">
     <h3 className="font-corp-display font-semibold">{label} ({rows.length})</h3>
     <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">{rows.map((order) => {
+      const canEditItems = order.status !== 'voided' && (user?.role !== 'employee' || user.id === order.employee_id);
       const canEdit = order.kitchen_status === 'queued' && Date.parse(order.scheduled_for!) > Date.now() + 20 * 60_000
         && (user?.role !== 'employee' || user.id === order.employee_id);
       return <Card key={order.id}><CardContent className="space-y-2 py-4">
@@ -249,7 +253,7 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
         <div className="flex flex-wrap gap-2">
           {printReceiptAllowed(user?.role) && <Button size="sm" variant="outline" disabled={printingId === order.id} onClick={() => void reprintOrder(order)}><Printer className="mr-1 h-4 w-4" />{printingId === order.id ? 'Preparing slip…' : 'Reprint order slip'}</Button>}
           {canReceivePayment && order.payment_status === 'unpaid' && <Button size="sm" onClick={() => { setSettleTarget(order); setSettleMethod('cash'); setSettleCardType(null); }}>Payment received</Button>}
-          {canEdit && <Button size="sm" variant="outline" onClick={() => openItemsEdit(order)}><Pencil className="mr-1 h-4 w-4" />Edit order</Button>}
+          {canEditItems && <Button size="sm" variant="outline" onClick={() => openItemsEdit(order)}><Pencil className="mr-1 h-4 w-4" />Edit order</Button>}
           {canEdit && <Button size="sm" variant="outline" onClick={() => { setEdit(order); setNewTime(phInputTime(new Date(order.scheduled_for!))); }}>Change ready time</Button>}
         </div>
       </CardContent></Card>;
@@ -271,9 +275,13 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
     </Dialog>
     <Dialog open={!!itemsEdit} onOpenChange={(open) => !open && !savingItems && setItemsEdit(null)}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader><DialogTitle>Edit order #{itemsEdit?.order_number}</DialogTitle><DialogDescription>Add, remove or replace items. The kitchen gets an updated ticket. Changes are available only before preparation begins.</DialogDescription></DialogHeader>
+        <DialogHeader><DialogTitle>Edit order #{itemsEdit?.order_number}</DialogTitle><DialogDescription>Add, remove or replace items. The kitchen gets an updated ticket.</DialogDescription></DialogHeader>
+        {itemsEdit && itemsEdit.kitchen_status !== 'queued' && <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900">The kitchen has already {itemsEdit.kitchen_status === 'completed' ? 'completed' : itemsEdit.kitchen_status === 'ready' ? 'readied' : 'started'} this order. Saving sends it back to the kitchen queue with the updated items.</p>}
         <div className="space-y-2">
-          {editLines.map((line) => <div key={line.key} className="flex flex-wrap items-center gap-2 rounded-md border p-2">
+          {editLines.map((line) => line.locked ? <div key={line.key} className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/50 p-2 text-sm">
+            <span className="flex-1">{line.quantity}× {names.get(line.product_size_id) ?? 'Bundle'}</span>
+            <span className="text-xs text-muted-foreground">Bundle already made — can't be changed</span>
+          </div> : <div key={line.key} className="flex flex-wrap items-center gap-2 rounded-md border p-2">
             <select aria-label="Item" className="h-10 min-w-0 flex-1 rounded-md border bg-background px-2 text-sm" value={line.product_size_id}
               onChange={(e) => updateLine(line.key, { product_size_id: e.target.value, addons: [], held_ingredients: [], discount_type_id: null, discount_amount: 0 })}>
               {!sizeOptions.some((option) => option.id === line.product_size_id) && <option value={line.product_size_id}>{names.get(line.product_size_id) ?? 'Item'}</option>}
@@ -288,7 +296,7 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
           </div>)}
           {editLines.length === 0 && <p className="text-sm text-destructive">An order needs at least one item.</p>}
           <select aria-label="Add item" className="h-10 w-full rounded-md border bg-background px-3 text-sm" value=""
-            onChange={(e) => { const id = e.target.value; if (id) setEditLines((lines) => [...lines, { key: `new-${Date.now()}`, product_size_id: id, quantity: 1, held_ingredients: [], addons: [], discount_type_id: null, discount_amount: 0 }]); }}>
+            onChange={(e) => { const id = e.target.value; if (id) setEditLines((lines) => [...lines, { key: `new-${Date.now()}`, product_size_id: id, quantity: 1, held_ingredients: [], addons: [], discount_type_id: null, discount_amount: 0, locked: false }]); }}>
             <option value="" disabled>+ Add item</option>
             {sizeOptions.map((option) => <option key={option.id} value={option.id}>{option.text}</option>)}
           </select>

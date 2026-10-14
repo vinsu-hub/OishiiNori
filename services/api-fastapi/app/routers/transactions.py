@@ -25,6 +25,7 @@ from app.schemas import (
     RiderPayoutUpdate,
     PosHangedOrderCreate,
     RescheduleAdvanceOrderRequest,
+    TransactionItemCreate,
     UpdateAdvanceItemsRequest,
     SettlePaymentRequest,
     SwitchTableRequest,
@@ -749,18 +750,19 @@ def _prepare_items(supabase, items: list, discount_type_id: str | None, force_va
 def _write_items_and_totals(
     supabase, transaction_id: str, employee_id: str, items: list, sizes_by_id: dict, addons_by_id: dict,
     discounted_item_index: int | None, discount: dict | None, selected_discount_type_id: str | None,
-    vat_exempt: bool, order_type: str | None, guest_count: int | None,
+    vat_exempt: bool, order_type: str | None, guest_count: int | None, kept_subtotal: float = 0.0,
 ) -> tuple[dict, list[dict]]:
     """Inserts a sale's item (+ add-on) rows, deducts their stock, and
     writes the discount/tax/total onto the transaction. Returns
     (transaction_row, inserted_items). Shared by sale creation and the
-    advance-order item edit."""
+    advance-order item edit; the edit passes kept_subtotal for lines it
+    leaves in place (made bundles), so totals cover the whole order."""
     discount_amount = 0.0
     held_ingredients_supported = _held_ingredients_supported_check(supabase)
 
     addons_supported = _transaction_item_addons_supported_check(supabase)
 
-    subtotal = 0.0
+    subtotal = kept_subtotal
     item_rows = []
     for item_index, item in enumerate(items):
         size = sizes_by_id[item.product_size_id]
@@ -815,8 +817,10 @@ def _write_items_and_totals(
             ]
             if addon_rows:
                 supabase.table("transaction_item_addons").insert(addon_rows).execute()
-    else:
+    elif item_rows:
         inserted_items = supabase.table("transaction_items").insert(item_rows).execute().data
+    else:
+        inserted_items = []
     _attach_item_addons(supabase, inserted_items)
 
     for item in items:
@@ -1385,6 +1389,20 @@ def reschedule_advance_order(
     return get_transaction(transaction_id, user)
 
 
+def _locked_bundle_item_ids(supabase, item_ids: list[str]) -> set[str]:
+    """Bundle lines the kitchen has started logging rolls for. Their
+    fulfillment rows hold the item in place (FK on delete restrict), so an
+    edit must keep them as they are."""
+    if not item_ids or not _bundle_fulfillments_supported_check(supabase):
+        return set()
+    locked = {r["transaction_item_id"] for r in supabase.table("bundle_fulfillments")
+              .select("transaction_item_id").in_("transaction_item_id", item_ids).execute().data or []}
+    if atomic_bundles_available(supabase):
+        locked |= {r["transaction_item_id"] for r in supabase.table("bundle_fulfillment_batches")
+                   .select("transaction_item_id").in_("transaction_item_id", item_ids).execute().data or []}
+    return locked
+
+
 @router.put("/transactions/{transaction_id}/advance-items", response_model=TransactionResponse)
 def update_advance_items(
     transaction_id: str,
@@ -1392,12 +1410,14 @@ def update_advance_items(
     user: CurrentUser = Depends(get_current_user),
 ):
     """Advance Orders' "Edit order": replaces an advance order's items in
-    place (same order number). Old items' stock is given back, the new items
-    are deducted, and the totals are recomputed. Payment status and method
-    are left as they are -- the cashier collects or gives back the
-    difference. Same window as rescheduling (queued, more than
-    ADVANCE_LEAD away); the revision bump makes the Kitchen Display print an
-    updated ticket."""
+    place (same order number), at any kitchen stage. Old items' stock is
+    given back, the new items are deducted, and the totals are recomputed.
+    The kitchen ticket goes back to queued, and the revision bump makes the
+    Kitchen Display print an updated ticket. Payment status and method are
+    left as they are -- the cashier collects or gives back the difference.
+
+    Bundle lines whose rolls were already logged stay exactly as they are
+    (the request must repeat them unchanged)."""
     if user.role in ("kitchen", "rider", "stocker"):
         raise HTTPException(status_code=403, detail="Only front-of-house staff can edit orders")
     supabase = get_supabase()
@@ -1408,41 +1428,74 @@ def update_advance_items(
         raise HTTPException(status_code=404, detail="Advance order not found")
     if user.role == "employee" and transaction["employee_id"] != user.id:
         raise HTTPException(status_code=403, detail="Cashiers may only edit their own orders")
-    current_due = datetime.fromisoformat(transaction["scheduled_for"].replace("Z", "+00:00"))
-    if transaction["status"] != "open" or transaction.get("kitchen_status") != "queued" or current_due <= datetime.now(timezone.utc) + ADVANCE_LEAD:
-        raise HTTPException(status_code=409, detail="This order has entered its kitchen preparation window")
+    if transaction["status"] == "voided":
+        raise HTTPException(status_code=400, detail="This order was voided")
     revision = transaction.get("advance_schedule_revision", 0)
     if revision != body.expected_revision:
         raise HTTPException(status_code=409, detail="Order changed; refresh and try again")
 
+    # Made bundle lines stay: match each to an unchanged line in the request.
+    locked_ids = _locked_bundle_item_ids(supabase, [i["id"] for i in transaction["items"]])
+    kept = [i for i in transaction["items"] if i["id"] in locked_ids]
+    remaining = list(body.items)
+    for row in kept:
+        match = next((line for line in remaining if line.product_size_id == row["product_size_id"]
+                      and float(line.quantity) == float(row["quantity"])), None)
+        if match is None:
+            raise HTTPException(status_code=400, detail="A bundle the kitchen already made can't be removed or changed -- void the order instead")
+        remaining.remove(match)
+        if (row.get("discount_amount") or 0) > 0:
+            raise HTTPException(status_code=400, detail="This order's discounted bundle can't be edited -- void the order instead")
+    kept_subtotal = sum(float(r["unit_price"]) * float(r["quantity"])
+                        + sum(float(a["unit_price"]) * float(a["quantity"]) for a in r.get("addons") or [])
+                        for r in kept)
+
     # A line may only keep a discount the order already had -- the edit
     # dialog can't grant new ones.
     allowed_discounts = {i["discount_type_id"] for i in transaction["items"] if i.get("discount_type_id")}
-    if any(i.discount_type_id and i.discount_type_id not in allowed_discounts for i in body.items):
+    if any(i.discount_type_id and i.discount_type_id not in allowed_discounts for i in remaining):
         raise HTTPException(status_code=400, detail="Discounts can't be added while editing an advance order")
     order_discount = None if allowed_discounts else transaction.get("discount_type_id")
     force_vat_exempt = bool(transaction.get("force_vat_exempt"))
-    sizes_by_id, addons_by_id, discounted_item_index, discount, selected_discount_type_id, vat_exempt = (
-        _prepare_items(supabase, body.items, order_discount, force_vat_exempt)
-    )
+    if remaining:
+        sizes_by_id, addons_by_id, discounted_item_index, discount, selected_discount_type_id, vat_exempt = (
+            _prepare_items(supabase, remaining, order_discount, force_vat_exempt)
+        )
+    else:
+        sizes_by_id, addons_by_id, discounted_item_index, discount, selected_discount_type_id, vat_exempt = (
+            {}, {}, None, None, None, force_vat_exempt
+        )
+        if order_discount:
+            _, _, _, discount, selected_discount_type_id, vat_exempt = _prepare_items(
+                supabase, [TransactionItemCreate(product_size_id=kept[0]["product_size_id"], quantity=1)],
+                order_discount, force_vat_exempt)
 
+    now_iso = datetime.now(timezone.utc).isoformat()
     claimed = (supabase.table("transactions")
                .update({"advance_schedule_revision": revision + 1,
-                        "advance_schedule_updated_at": datetime.now(timezone.utc).isoformat(),
-                        "advance_schedule_updated_by": user.id})
+                        "advance_schedule_updated_at": now_iso,
+                        "advance_schedule_updated_by": user.id,
+                        "kitchen_status": "queued",
+                        "kitchen_status_updated_at": now_iso})
                .eq("id", transaction_id).eq("advance_schedule_revision", revision)
-               .eq("kitchen_status", "queued").eq("status", "open").execute())
+               .neq("status", "voided").execute())
     if not claimed.data:
         raise HTTPException(status_code=409, detail="Order changed; refresh and try again")
 
-    _restore_items_stock(supabase, transaction, user.id)
-    old_ids = [i["id"] for i in transaction["items"]]
-    if old_ids:
-        supabase.table("transaction_items").delete().in_("id", old_ids).execute()
+    replaced = [i for i in transaction["items"] if i["id"] not in locked_ids]
+    # An unmade bundle took no stock, and restoring it would seal it with a
+    # batch row that blocks the delete -- give back only the regular lines.
+    size_ids = list({i["product_size_id"] for i in replaced})
+    bundle_sizes = {r["id"] for r in (supabase.table("product_sizes").select("id, products(is_bundle)")
+                                      .in_("id", size_ids).execute().data if size_ids else [])
+                    if (r.get("products") or {}).get("is_bundle")}
+    _restore_items_stock(supabase, {**transaction, "items": [i for i in replaced if i["product_size_id"] not in bundle_sizes]}, user.id)
+    if replaced:
+        supabase.table("transaction_items").delete().in_("id", [i["id"] for i in replaced]).execute()
     _write_items_and_totals(
-        supabase, transaction_id, user.id, body.items, sizes_by_id, addons_by_id,
+        supabase, transaction_id, user.id, remaining, sizes_by_id, addons_by_id,
         discounted_item_index, discount, selected_discount_type_id, vat_exempt,
-        transaction.get("order_type"), transaction.get("guest_count"),
+        transaction.get("order_type"), transaction.get("guest_count"), kept_subtotal=kept_subtotal,
     )
     return get_transaction(transaction_id, user)
 
