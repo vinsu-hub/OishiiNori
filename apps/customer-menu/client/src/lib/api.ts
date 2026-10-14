@@ -38,6 +38,7 @@ export interface ApiProductSize {
   sort_order: number;
   availability: 'available' | 'low_stock' | 'unavailable';
   total_pieces: number | null;
+  deposit_amount: number;
 }
 
 export interface ApiProduct {
@@ -49,6 +50,7 @@ export interface ApiProduct {
   is_bundle: boolean;
   active: boolean;
   needs_station_review: boolean;
+  takeout_bowl_eligible: boolean;
   image_path: string | null;
   sizes: ApiProductSize[];
 }
@@ -179,6 +181,8 @@ export interface DigitalOrderStatus {
   order_channel: OrderChannel;
   status: 'pending' | 'approved' | 'rejected';
   subtotal: number;
+  packaging_fee: number;
+  boat_deposit: number;
   rejected_reason: string | null;
   payment_proof_url?: string | null;
   items: DigitalOrderStatusItem[];

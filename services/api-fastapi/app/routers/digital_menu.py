@@ -37,6 +37,7 @@ from app.routers.recipes import _get_recipe_data
 from app.routers.reservations import ADVANCE_ORDER_LEAD_MINUTES
 from app.routers.transactions import _create_transaction_row, _get_vat_rate
 from app.schemas import (
+    BoatDepositReturnRequest,
     CreateDigitalOrderRequest,
     DeliveryFeeOut,
     DigitalOrderResponse,
@@ -59,6 +60,10 @@ def _fetch_digital_order(supabase, order_id: str) -> dict | None:
     order = result.data
     items_result = supabase.table("digital_order_items").select("*").eq("digital_order_id", order_id).execute()
     order["items"] = items_result.data
+    order["boat_deposits"] = (
+        supabase.table("sushi_boat_deposits").select("*").eq("digital_order_id", order_id).execute().data
+        if float(order.get("boat_deposit") or 0) > 0 else []
+    )
 
     addons_result = (
         supabase.table("digital_order_addons")
@@ -257,7 +262,7 @@ def submit_digital_order(body: CreateDigitalOrderRequest, request: Request):
             raise HTTPException(status_code=400, detail=f"Unknown payment method: {body.payment_method}")
 
     size_ids = [item.product_size_id for item in body.items]
-    sizes_result = supabase.table("product_sizes").select("id, price").in_("id", size_ids).execute()
+    sizes_result = supabase.table("product_sizes").select("id, price, deposit_amount, products(name, category, department, takeout_bowl_eligible)").in_("id", size_ids).execute()
     sizes_by_id = {s["id"]: s for s in sizes_result.data}
     missing = [sid for sid in size_ids if sid not in sizes_by_id]
     if missing:
@@ -280,9 +285,23 @@ def submit_digital_order(body: CreateDigitalOrderRequest, request: Request):
     # Prices are always recomputed from the live catalog -- a client-sent
     # price is never trusted, same posture as create_transaction.
     subtotal = 0.0
+    packaging_fee = 0.0
+    boat_deposit = 0.0
     for item in body.items:
-        unit_price = float(sizes_by_id[item.product_size_id]["price"])
+        size = sizes_by_id[item.product_size_id]
+        unit_price = float(size["price"])
         subtotal += unit_price * item.quantity
+        product = size.get("products") or {}
+        if body.order_channel != "dine_in_qr":
+            if product.get("takeout_bowl_eligible"):
+                if not float(item.quantity).is_integer():
+                    raise HTTPException(status_code=400, detail="Food quantities must be whole numbers for takeout packaging")
+                packaging_fee += 10 * item.quantity
+            deposit_per_unit = float(size.get("deposit_amount") or 0)
+            if deposit_per_unit:
+                if not float(item.quantity).is_integer():
+                    raise HTTPException(status_code=400, detail="Sushi Boat quantities must be whole numbers")
+                boat_deposit += deposit_per_unit * item.quantity
     for addon in body.addons:
         unit_price = float(addons_by_id[addon.addon_id]["price"])
         subtotal += unit_price * addon.quantity
@@ -294,6 +313,8 @@ def submit_digital_order(body: CreateDigitalOrderRequest, request: Request):
         "payment_method": body.payment_method,
         "customer_note": body.customer_note,
         "subtotal": subtotal,
+        "packaging_fee": packaging_fee,
+        "boat_deposit": boat_deposit,
     }
     if scheduled_for is not None:
         # Only sent when set, so ordinary orders keep working even before
@@ -325,7 +346,21 @@ def submit_digital_order(body: CreateDigitalOrderRequest, request: Request):
         }
         for item in body.items
     ]
-    supabase.table("digital_order_items").insert(item_rows).execute()
+    inserted_items = supabase.table("digital_order_items").insert(item_rows).execute().data
+    deposit_rows = []
+    for item, saved_item in zip(body.items, inserted_items):
+        deposit_per_unit = float(sizes_by_id[item.product_size_id].get("deposit_amount") or 0)
+        if deposit_per_unit and body.order_channel != "dine_in_qr":
+            for unit_number in range(1, int(item.quantity) + 1):
+                deposit_rows.append({
+                    "digital_order_id": order["id"],
+                    "digital_order_item_id": saved_item["id"],
+                    "product_size_id": item.product_size_id,
+                    "unit_number": unit_number,
+                    "amount": deposit_per_unit,
+                })
+    if deposit_rows:
+        supabase.table("sushi_boat_deposits").insert(deposit_rows).execute()
 
     if body.addons:
         addon_rows = [
@@ -441,6 +476,113 @@ def list_digital_orders(
     return orders
 
 
+def _require_deposit_staff(user: CurrentUser) -> None:
+    if user.role not in {"employee", "manager", "executive"}:
+        raise HTTPException(status_code=403, detail="Staff access is required")
+
+
+@router.get("/sushi-boat-deposits")
+def list_sushi_boat_deposits(user: CurrentUser = Depends(get_current_user)):
+    """Staff ledger for online pickup/delivery Sushi Boat deposits."""
+    _require_deposit_staff(user)
+    supabase = get_supabase()
+    rows = supabase.table("sushi_boat_deposits").select("*").order("created_at", desc=True).limit(500).execute().data
+    if not rows:
+        return []
+    order_ids = list({row["digital_order_id"] for row in rows})
+    item_ids = list({row["digital_order_item_id"] for row in rows})
+    size_ids = list({row["product_size_id"] for row in rows})
+    staff_ids = list({row[key] for row in rows for key in ("collected_by", "handed_by", "returned_by") if row.get(key)})
+    orders = {row["id"]: row for row in supabase.table("digital_orders").select("id,order_number,order_channel,status,payment_method,scheduled_for,created_at").in_("id", order_ids).execute().data}
+    deliveries = {row["digital_order_id"]: row for row in supabase.table("deliveries").select("digital_order_id,customer_name,customer_phone,address,barangay").in_("digital_order_id", order_ids).execute().data}
+    items = {row["id"]: row for row in supabase.table("digital_order_items").select("id,quantity").in_("id", item_ids).execute().data}
+    sizes = supabase.table("product_sizes").select("id,size_label,products(name)").in_("id", size_ids).execute().data
+    sizes_by_id = {row["id"]: row for row in sizes}
+    staff = {row["id"]: row.get("full_name") for row in supabase.table("profiles").select("id,full_name").in_("id", staff_ids).execute().data} if staff_ids else {}
+    for row in rows:
+        row["order"] = orders.get(row["digital_order_id"], {})
+        row["delivery"] = deliveries.get(row["digital_order_id"])
+        row["item_quantity"] = items.get(row["digital_order_item_id"], {}).get("quantity", 1)
+        size = sizes_by_id.get(row["product_size_id"], {})
+        product = size.get("products") or {}
+        row["product_name"] = product.get("name", "Sushi Boat")
+        row["size_label"] = size.get("size_label")
+        row["collected_by_name"] = staff.get(row.get("collected_by"))
+        row["handed_by_name"] = staff.get(row.get("handed_by"))
+        row["returned_by_name"] = staff.get(row.get("returned_by"))
+    return rows
+
+
+@router.post("/sushi-boat-deposits/{deposit_id}/collect")
+def collect_sushi_boat_deposit(deposit_id: str, user: CurrentUser = Depends(get_current_user)):
+    _require_deposit_staff(user)
+    supabase = get_supabase()
+    row_result = supabase.table("sushi_boat_deposits").select("*").eq("id", deposit_id).maybe_single().execute()
+    row = row_result.data if row_result else None
+    if not row:
+        raise HTTPException(status_code=404, detail="Deposit not found")
+    if row.get("collected_at"):
+        raise HTTPException(status_code=409, detail="Deposit is already recorded as collected")
+    order = supabase.table("digital_orders").select("status").eq("id", row["digital_order_id"]).maybe_single().execute().data
+    if not order or order.get("status") != "approved":
+        raise HTTPException(status_code=409, detail="Approve the online order before recording its deposit")
+    changed = supabase.table("sushi_boat_deposits").update({
+        "collected_at": datetime.now(timezone.utc).isoformat(), "collected_by": user.id,
+    }).eq("id", deposit_id).is_("collected_at", "null").execute()
+    if not changed.data:
+        raise HTTPException(status_code=409, detail="Deposit was updated by another staff member")
+    return changed.data[0]
+
+
+@router.post("/sushi-boat-deposits/{deposit_id}/handoff")
+def handoff_sushi_boat_deposit(deposit_id: str, user: CurrentUser = Depends(get_current_user)):
+    _require_deposit_staff(user)
+    supabase = get_supabase()
+    row = supabase.table("sushi_boat_deposits").select("*").eq("id", deposit_id).maybe_single().execute().data
+    if not row:
+        raise HTTPException(status_code=404, detail="Deposit not found")
+    if not row.get("collected_at"):
+        raise HTTPException(status_code=409, detail="Record deposit collection before handoff")
+    if row.get("handoff_at"):
+        raise HTTPException(status_code=409, detail="Boat handoff is already recorded")
+    handed_at = datetime.now(timezone.utc)
+    changed = supabase.table("sushi_boat_deposits").update({
+        "handoff_at": handed_at.isoformat(), "handed_by": user.id,
+        "return_due_at": (handed_at + timedelta(hours=24)).isoformat(),
+    }).eq("id", deposit_id).is_("handoff_at", "null").execute()
+    if not changed.data:
+        raise HTTPException(status_code=409, detail="Boat handoff was recorded by another staff member")
+    return changed.data[0]
+
+
+@router.post("/sushi-boat-deposits/{deposit_id}/return")
+def return_sushi_boat_deposit(deposit_id: str, body: BoatDepositReturnRequest, user: CurrentUser = Depends(get_current_user)):
+    _require_deposit_staff(user)
+    supabase = get_supabase()
+    row = supabase.table("sushi_boat_deposits").select("*").eq("id", deposit_id).maybe_single().execute().data
+    if not row:
+        raise HTTPException(status_code=404, detail="Deposit not found")
+    if not row.get("handoff_at"):
+        raise HTTPException(status_code=409, detail="Record the boat handoff before its return")
+    if row.get("returned_at"):
+        raise HTTPException(status_code=409, detail="Boat return is already recorded")
+    deduction = round(float(body.deduction_amount), 2)
+    amount = round(float(row["amount"]), 2)
+    if deduction > amount:
+        raise HTTPException(status_code=400, detail="Deductions cannot exceed the deposit")
+    payload = {
+        "returned_at": datetime.now(timezone.utc).isoformat(), "returned_by": user.id,
+        "deduction_amount": deduction, "refund_amount": round(amount - deduction, 2),
+        "refund_method": body.refund_method.strip(),
+        "refund_reference": body.refund_reference.strip() if body.refund_reference else None,
+        "notes": body.notes.strip() if body.notes else None,
+    }
+    changed = supabase.table("sushi_boat_deposits").update(payload).eq("id", deposit_id).is_("returned_at", "null").execute()
+    if not changed.data:
+        raise HTTPException(status_code=409, detail="Boat return was recorded by another staff member")
+    return changed.data[0]
+
+
 def _fire_digital_order(supabase, order: dict, actor_id: str):
     """Turn a (fully fetched) digital order into a real transaction -- the
     kitchen ticket, stock deduction and print all key off this. Shared by
@@ -481,7 +623,13 @@ def _fire_digital_order(supabase, order: dict, actor_id: str):
     # row (linked via transaction_id) remains the record of exactly what was
     # ordered and, for delivery, what the fee was.
     delivery_fee = float(order["delivery"]["delivery_fee"]) if order.get("delivery") and order["delivery"].get("delivery_fee") else 0.0
-    addons_subtotal = sum(float(a["unit_price"]) * a["quantity"] for a in order["addons"]) + delivery_fee
+    # Packaging is a customer charge for pickup/delivery, while the boat
+    # deposit is refundable and remains outside sales revenue.
+    addons_subtotal = (
+        sum(float(a["unit_price"]) * a["quantity"] for a in order["addons"])
+        + delivery_fee
+        + float(order.get("packaging_fee") or 0)
+    )
     if addons_subtotal:
         supabase.table("transactions").update(
             {
@@ -525,6 +673,13 @@ def approve_digital_order(order_id: str, user: CurrentUser = Depends(get_current
 
     updated = supabase.table("digital_orders").update(update).eq("id", order_id).execute()
     result = updated.data[0]
+    # Approving a non-cash order means staff verified its payment proof. The
+    # boat deposit is included in that transfer and can be marked collected
+    # here; cash-on-pickup/delivery deposits remain for the ledger tab.
+    if float(order.get("boat_deposit") or 0) > 0 and order.get("payment_method") != "cash":
+        supabase.table("sushi_boat_deposits").update({
+            "collected_at": update["approved_at"], "collected_by": user.id,
+        }).eq("digital_order_id", order_id).is_("collected_at", "null").execute()
     result["items"] = order["items"]
     result["addons"] = order["addons"]
     result["delivery"] = order.get("delivery")

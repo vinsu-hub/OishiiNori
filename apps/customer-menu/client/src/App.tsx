@@ -193,6 +193,7 @@ export default function App() {
   const [onlinePaymentMethods, setOnlinePaymentMethods] = useState<ApiOnlinePaymentMethod[]>([]);
   const [selectedOnlineMethod, setSelectedOnlineMethod] = useState<ApiOnlinePaymentMethod | null>(null);
   const [checkoutStage, setCheckoutStage] = useState<'form' | 'qr' | 'upload'>('form');
+  const [boatGuidelinesAcknowledged, setBoatGuidelinesAcknowledged] = useState(false);
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [proofPreviewUrl, setProofPreviewUrl] = useState<string | null>(null);
 
@@ -324,6 +325,7 @@ export default function App() {
       if (existing) return prev.map((l) => (l.key === size.id ? { ...l, quantity: l.quantity + 1 } : l));
       return [...prev, { key: size.id, product, size, quantity: 1, held: [] }];
     });
+    setBoatGuidelinesAcknowledged(false);
     ensureRecipeLoaded(size.id);
     toast(`Added ${product.name}`, 'success');
   }
@@ -340,6 +342,7 @@ export default function App() {
 
   function updateQuantity(key: string, delta: number) {
     setCart((prev) => prev.map((l) => (l.key === key ? { ...l, quantity: l.quantity + delta } : l)).filter((l) => l.quantity > 0));
+    setBoatGuidelinesAcknowledged(false);
   }
 
   function updateAddon(addon: ApiAddon, delta: number) {
@@ -379,6 +382,10 @@ export default function App() {
   const addonTotal = addons.reduce((sum, l) => sum + l.addon.price * l.quantity, 0);
   const cartSubtotal = cart.reduce((sum, l) => sum + l.size.price * l.quantity, 0);
   const cartTotal = cartSubtotal + addonTotal;
+  const pickupDelivery = effectiveChannel === 'pickup' || effectiveChannel === 'delivery';
+  const packagingFee = pickupDelivery ? cart.reduce((sum, line) => sum + (line.product.takeout_bowl_eligible ? 10 * line.quantity : 0), 0) : 0;
+  const boatDeposit = pickupDelivery ? cart.reduce((sum, line) => sum + (line.size.deposit_amount || 0) * line.quantity, 0) : 0;
+  const totalDue = cartTotal + packagingFee + boatDeposit + (effectiveChannel === 'delivery' ? selectedFee ?? 0 : 0);
   const cartCount = cart.reduce((sum, l) => sum + l.quantity, 0) + addons.reduce((sum, l) => sum + l.quantity, 0);
 
   function validateDeliveryPickupForm(): boolean {
@@ -440,6 +447,10 @@ export default function App() {
     }
     if (!effectiveChannel || !paymentMethod || cart.length === 0) return;
     if (effectiveChannel === 'dine_in_qr' && !tableNumber) return;
+    if (boatDeposit > 0 && !boatGuidelinesAcknowledged) {
+      toast('Please confirm the Sushi Boat return policy before placing this order', 'error');
+      return;
+    }
     if (effectiveChannel !== 'dine_in_qr' && !validateDeliveryPickupForm()) return;
 
     if (effectiveChannel !== 'dine_in_qr' && selectedOnlineMethod) {
@@ -490,6 +501,10 @@ export default function App() {
       toast('Attach a screenshot of the transfer first', 'error');
       return;
     }
+    if (boatDeposit > 0 && !boatGuidelinesAcknowledged) {
+      toast('Please confirm the Sushi Boat return policy before placing this order', 'error');
+      return;
+    }
     setSubmitting(true);
     try {
       const result = await submitFinalOrder(selectedOnlineMethod.name);
@@ -531,6 +546,7 @@ export default function App() {
     setCheckoutStage('form');
     handleProofFileChange(null);
     setCustomerNote('');
+    setBoatGuidelinesAcknowledged(false);
   }
 
   function selectCategory(id: string) {
@@ -858,7 +874,7 @@ export default function App() {
             <ShoppingBag size={18} />
           </span>
           <span className="cart-label">{cartCount ? `${cartCount} item${cartCount > 1 ? 's' : ''} · view order` : 'View order'}</span>
-          <strong>{cartCount ? peso(cartTotal) : '0'}</strong>
+          <strong>{cartCount ? peso(totalDue) : '0'}</strong>
         </button>
       )}
 
@@ -1090,10 +1106,33 @@ export default function App() {
                   <span>Subtotal</span>
                   <strong>{peso(cartTotal)}</strong>
                 </div>
+                {packagingFee > 0 && <div className="cart-total"><span>Takeout bowls ({cart.reduce((sum, line) => sum + (line.product.takeout_bowl_eligible ? line.quantity : 0), 0)} × ₱10)</span><strong>{peso(packagingFee)}</strong></div>}
+                {boatDeposit > 0 && <div className="cart-total"><span>Refundable Sushi Boat deposit</span><strong>{peso(boatDeposit)}</strong></div>}
                 {effectiveChannel === 'delivery' && selectedFee != null && (
                   <div className="cart-total">
                     <span>Delivery fee</span>
                     <strong>{peso(selectedFee)}</strong>
+                  </div>
+                )}
+
+                {boatDeposit > 0 && (
+                  <div className="payment-panel" style={{ marginBottom: 14 }}>
+                    <p className="eyebrow">SUSHI BOAT RETURN POLICY</p>
+                    <p style={{ marginBottom: 8 }}>Your {peso(boatDeposit)} deposit is refundable after the boat is returned in good condition. The 24-hour return window starts at pickup or delivery handoff.</p>
+                    <details>
+                      <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Read the full boat guidelines</summary>
+                      <ul style={{ paddingLeft: 18, marginTop: 8, fontSize: 13 }}>
+                        <li>Small or medium: ₱1,000 deposit. Large: ₱2,500 deposit, per boat.</li>
+                        <li>Return within 24 hours after handoff. Late returns incur ₱150 for each succeeding day.</li>
+                        <li>Damage or missing parts may be deducted after inspection.</li>
+                        <li>Please return the boat clean and in good condition.</li>
+                        <li>You arrange transportation unless an Oishii Nori rider or staff member is available.</li>
+                      </ul>
+                    </details>
+                    <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', marginTop: 12, fontSize: 13 }}>
+                      <input type="checkbox" checked={boatGuidelinesAcknowledged} onChange={(e) => setBoatGuidelinesAcknowledged(e.target.checked)} />
+                      <span>I understand the refundable deposit and return conditions.</span>
+                    </label>
                   </div>
                 )}
 
@@ -1215,7 +1254,7 @@ export default function App() {
                       <strong>Account number:</strong> {selectedOnlineMethod.account_number}
                     </p>
                     <p style={{ marginBottom: 14, color: 'var(--muted, #767676)' }}>
-                      Send the exact order total, then continue to upload your proof of payment.
+                      Send exactly {peso(totalDue)}, including packaging, delivery, and any refundable Sushi Boat deposit, then continue to upload your proof of payment.
                     </p>
                     <button type="button" className="primary-button checkout-button" onClick={() => setCheckoutStage('upload')}>
                       I&apos;ve sent the payment -- proceed <ArrowRight size={16} />
@@ -1401,6 +1440,7 @@ function ItemModal({
 }) {
   const cheapest = [...product.sizes].sort((a, b) => a.price - b.price)[0];
   const ingredients = cheapest ? recipeFor(cheapest.id) : [];
+  const isSushiBoat = product.sizes.some((size) => size.deposit_amount > 0);
 
   return (
     <div className="modal-backdrop" role="presentation" onClick={onClose}>
@@ -1429,6 +1469,12 @@ function ItemModal({
             </div>
           )}
 
+          {isSushiBoat && <div className="placeholder-ingredients" style={{ marginTop: 16 }}>
+            <div><span>Refundable boat deposit</span></div>
+            <p>₱1,000 for small or medium, ₱2,500 for large. Return within 24 hours after pickup or delivery handoff for a refund. Late returns incur ₱150 per succeeding day; damage or missing parts may be deducted.</p>
+            <p>Please return the boat clean and in good condition. Customer arranges transport unless Oishii Nori delivery help is available.</p>
+          </div>}
+
           {product.sizes.length > 1 ? (
             <div className="recipe-ingredients" style={{ paddingTop: 16 }}>
               <p className="ingredient-label">Choose a size</p>
@@ -1441,7 +1487,7 @@ function ItemModal({
                   onClick={() => onAdd(size)}
                 >
                   <span>{size.size_label}</span>
-                  <span>{peso(size.price)}</span>
+                  <span>{peso(size.price)}{size.deposit_amount > 0 ? ` + ${peso(size.deposit_amount)} refundable deposit` : ''}</span>
                 </button>
               ))}
             </div>
@@ -1538,9 +1584,12 @@ function OrderStatusView({
             </div>
           )}
 
+          {order.packaging_fee > 0 && <div className="receipt-row"><span>Takeout bowls</span><strong>{peso(order.packaging_fee)}</strong></div>}
+          {order.boat_deposit > 0 && <div className="receipt-row"><span>Refundable Sushi Boat deposit</span><strong>{peso(order.boat_deposit)}</strong></div>}
+
           <div className="receipt-total">
             <span>Total</span>
-            <strong>{peso(order.subtotal + (order.delivery?.delivery_fee ?? 0))}</strong>
+            <strong>{peso(order.subtotal + order.packaging_fee + order.boat_deposit + (order.delivery?.delivery_fee ?? 0))}</strong>
           </div>
 
           {order.status === 'pending' && (

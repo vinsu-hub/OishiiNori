@@ -155,6 +155,7 @@ export interface ApiProductSize {
   sort_order: number;
   availability: ProductAvailability;
   total_pieces: number | null;
+  deposit_amount: number;
 }
 
 export interface ApiProduct {
@@ -166,6 +167,7 @@ export interface ApiProduct {
   is_bundle: boolean;
   active: boolean;
   needs_station_review: boolean;
+  takeout_bowl_eligible: boolean;
   image_path: string | null;
   sizes: ApiProductSize[];
 }
@@ -174,6 +176,50 @@ export function fetchProducts(activeOnly = true, department?: Department): Promi
   const params = new URLSearchParams({ active_only: String(activeOnly) });
   if (department) params.set('department', department);
   return request(`/products?${params.toString()}`);
+}
+
+export interface SushiBoatDeposit {
+  id: string;
+  digital_order_id: string;
+  digital_order_item_id: string;
+  product_size_id: string;
+  unit_number: number;
+  amount: number;
+  collected_at: string | null;
+  collected_by: string | null;
+  collected_by_name: string | null;
+  handoff_at: string | null;
+  handed_by: string | null;
+  handed_by_name: string | null;
+  return_due_at: string | null;
+  returned_at: string | null;
+  returned_by: string | null;
+  returned_by_name: string | null;
+  deduction_amount: number;
+  refund_amount: number;
+  refund_method: string | null;
+  refund_reference: string | null;
+  notes: string | null;
+  order: { order_number: number; order_channel: string; status: string; payment_method: string; scheduled_for: string | null; created_at: string };
+  delivery: { customer_name: string; customer_phone: string; address: string | null; barangay: string | null } | null;
+  product_name: string;
+  size_label: string;
+}
+
+export function fetchSushiBoatDeposits(): Promise<SushiBoatDeposit[]> {
+  return request('/sushi-boat-deposits');
+}
+
+export function collectSushiBoatDeposit(id: string): Promise<SushiBoatDeposit> {
+  return request(`/sushi-boat-deposits/${id}/collect`, { method: 'POST' });
+}
+
+export function handoffSushiBoatDeposit(id: string): Promise<SushiBoatDeposit> {
+  return request(`/sushi-boat-deposits/${id}/handoff`, { method: 'POST' });
+}
+
+export function returnSushiBoatDeposit(id: string, body: { deduction_amount: number; refund_method: string; refund_reference?: string; notes?: string }): Promise<SushiBoatDeposit> {
+  return request(`/sushi-boat-deposits/${id}/return`, { method: 'POST', body: JSON.stringify(body) });
 }
 
 export interface ApiRecipeItem {
@@ -443,6 +489,32 @@ export interface ApiTransaction {
   advance_schedule_updated_by: string | null;
   items: ApiTransactionItem[];
   delivery: ApiDeliveryDetail | null;
+}
+
+export interface ApiPosHangedOrder {
+  id: string;
+  employee_id: string;
+  payload: CreateTransactionRequest;
+  status: 'draft' | 'processing' | 'submitted';
+  transaction_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export function fetchPosHangedOrders(): Promise<ApiPosHangedOrder[]> {
+  return request('/pos/hanged-orders');
+}
+
+export function createPosHangedOrder(payload: CreateTransactionRequest): Promise<ApiPosHangedOrder> {
+  return request('/pos/hanged-orders', { method: 'POST', body: JSON.stringify({ payload }) });
+}
+
+export function updatePosHangedOrder(id: string, payload: CreateTransactionRequest): Promise<ApiPosHangedOrder> {
+  return request(`/pos/hanged-orders/${id}`, { method: 'PATCH', body: JSON.stringify({ payload }) });
+}
+
+export function sendPosHangedOrderToKitchen(id: string): Promise<ApiTransaction> {
+  return request(`/pos/hanged-orders/${id}/send-to-kitchen`, { method: 'POST' });
 }
 
 function _createTransactionRequest(body: CreateTransactionRequest): Promise<ApiTransaction> {

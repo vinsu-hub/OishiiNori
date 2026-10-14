@@ -56,6 +56,7 @@ import {
   TransactionCardType,
   closeBusinessDay,
   createTransaction,
+  createPosHangedOrder,
   fetchTransactions,
   QueuedOfflineError,
   fetchAddons,
@@ -311,6 +312,7 @@ export default function POSTerminal() {
   const [cart, setCart] = useState<CartLine[]>([]);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [hangingOrder, setHangingOrder] = useState(false);
 
   const [sizePickerProduct, setSizePickerProduct] = useState<ApiProduct | null>(null);
 
@@ -1004,6 +1006,40 @@ export default function POSTerminal() {
     toast.success('Order held');
   }
 
+  async function handleHangDeliveryOrder() {
+    if (orderType !== 'delivery' || cart.length === 0) return;
+    if (!deliveryCustomerName.trim() || !deliveryCustomerPhone.trim() || !deliveryAddress.trim() || !deliveryBarangay || selectedDeliveryFee == null) {
+      toast.error('Complete the delivery customer, address, barangay, and fee first');
+      return;
+    }
+    if (!user?.id) { toast.error('Sign in again before saving this delivery'); return; }
+    setHangingOrder(true);
+    try {
+      await createPosHangedOrder({
+        employee_id: user.id,
+        order_type: 'delivery',
+        order_source: 'pos',
+        payment_method: 'cash',
+        pay_on_delivery: true,
+        delivery_fee: selectedDeliveryFee,
+        force_vat_exempt: vatOverride === 'non_vat',
+        discount_type_id: undefined,
+        items: cart.map((line) => ({
+          product_size_id: line.size.id,
+          quantity: line.quantity,
+          held_ingredients: line.held_ingredients,
+          addons: line.addons.map((addon) => ({ addon_id: addon.addon_id, quantity: addon.quantity })),
+          discount_type_id: line.discountTypeId ?? null,
+        })),
+        delivery: { customer_name: deliveryCustomerName.trim(), customer_phone: deliveryCustomerPhone.trim(), address: deliveryAddress.trim(), landmark: deliveryLandmark.trim() || null, barangay: deliveryBarangay },
+      });
+      clearOrder();
+      toast.success('Delivery saved in POS Deliveries. It has not been sent to the kitchen.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not save hanged delivery');
+    } finally { setHangingOrder(false); }
+  }
+
   function resumeHeldCart(held: HeldCart) {
     // Don't silently discard an in-progress, not-yet-held cart -- auto-hold
     // it first (same as pressing F4) so nothing is lost, then swap in the
@@ -1579,6 +1615,7 @@ export default function POSTerminal() {
                   </div>
                 </PopoverContent>
               </Popover>
+              {orderType === 'delivery' && <Button size="sm" variant="outline" disabled={hangingOrder || submitting || cart.length === 0 || !!addonTo} onClick={() => void handleHangDeliveryOrder()}>{hangingOrder ? 'Saving…' : 'Hang Order'}</Button>}
               <Button size="sm" variant="outline" disabled={cart.length === 0} onClick={openEditOrder}>
                 Edit Order
               </Button>

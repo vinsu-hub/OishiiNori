@@ -160,6 +160,9 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
     // and record the cash when it comes back.
     { icon: Bike, label: 'Deliveries', href: '/pos-deliveries' },
     { icon: CalendarClock, label: 'Advance Orders', href: '/advance-orders' },
+    ...(user && ['employee', 'manager', 'executive'].includes(user.role)
+      ? [{ icon: Undo2, label: 'Sushi Boat Deposits', href: '/sushi-boat-deposits' }]
+      : []),
     { icon: Wallet, label: 'Expenses', href: '/expenses' },
     { icon: ClipboardList, label: 'Shift Reports', href: '/shift-reports' },
     ...(isManagerOrExecutive || hasGrant('business-day-report')

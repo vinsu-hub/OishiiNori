@@ -22,6 +22,7 @@ from app.schemas import (
     KitchenStatus,
     KitchenStatusUpdateRequest,
     RiderPayoutUpdate,
+    PosHangedOrderCreate,
     RescheduleAdvanceOrderRequest,
     SettlePaymentRequest,
     SwitchTableRequest,
@@ -30,6 +31,82 @@ from app.schemas import (
 )
 
 router = APIRouter(tags=["transactions"])
+
+
+@router.get("/pos/hanged-orders")
+def list_pos_hanged_orders(user: CurrentUser = Depends(get_current_user)):
+    if user.role == "kitchen":
+        raise HTTPException(status_code=403, detail="Kitchen accounts cannot manage cashier orders")
+    result = get_supabase().table("pos_hanged_orders").select("*").in_("status", ["draft", "submitted"]).order("created_at", desc=True).execute()
+    rows = result.data or []
+    if user.role not in ("manager", "executive"):
+        rows = [row for row in rows if row["employee_id"] == user.id]
+    return rows
+
+
+@router.post("/pos/hanged-orders")
+def create_pos_hanged_order(body: PosHangedOrderCreate, user: CurrentUser = Depends(get_current_user)):
+    if user.role == "kitchen":
+        raise HTTPException(status_code=403, detail="Kitchen accounts cannot manage cashier orders")
+    payload = body.payload
+    if payload.employee_id != user.id or payload.order_type != "delivery":
+        raise HTTPException(status_code=400, detail="Hanged orders must be delivery orders created by the signed-in cashier")
+    if not payload.items or not payload.delivery:
+        raise HTTPException(status_code=400, detail="Items and delivery details are required")
+    result = get_supabase().table("pos_hanged_orders").insert({"employee_id": user.id, "payload": payload.model_dump(mode="json"), "status": "draft"}).execute()
+    return result.data[0]
+
+
+@router.patch("/pos/hanged-orders/{order_id}")
+def update_pos_hanged_order(order_id: str, body: PosHangedOrderCreate, user: CurrentUser = Depends(get_current_user)):
+    payload = body.payload
+    if payload.employee_id != user.id or payload.order_type != "delivery" or not payload.items or not payload.delivery:
+        raise HTTPException(status_code=400, detail="A valid delivery order is required")
+    query = get_supabase().table("pos_hanged_orders").update({"payload": payload.model_dump(mode="json"), "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", order_id).eq("status", "draft")
+    if user.role not in ("manager", "executive"):
+        query = query.eq("employee_id", user.id)
+    result = query.execute()
+    if not result.data:
+        raise HTTPException(status_code=409, detail="Draft not found or already sent to the kitchen")
+    return result.data[0]
+
+
+@router.post("/pos/hanged-orders/{order_id}/send-to-kitchen")
+def submit_pos_hanged_order(order_id: str, user: CurrentUser = Depends(get_current_user)):
+    if user.role == "kitchen":
+        raise HTTPException(status_code=403, detail="Kitchen accounts cannot charge sales")
+    supabase = get_supabase()
+    found = supabase.table("pos_hanged_orders").select("*").eq("id", order_id).maybe_single().execute()
+    if not found or not found.data:
+        raise HTTPException(status_code=404, detail="Hanged order not found")
+    row = found.data
+    if row["employee_id"] != user.id and user.role not in ("manager", "executive"):
+        raise HTTPException(status_code=403, detail="Cannot submit another cashier's hanged order")
+    if row["status"] == "submitted" and row.get("transaction_id"):
+        return get_transaction(row["transaction_id"], user)
+    claimed = supabase.table("pos_hanged_orders").update({"status": "processing", "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", order_id).eq("status", "draft").execute()
+    if not claimed.data:
+        # Recover a worker/process interruption after two minutes. The stable
+        # idempotency key below ensures a retry cannot create a second sale.
+        stale_before = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
+        supabase.table("pos_hanged_orders").update({"status": "draft"}).eq("id", order_id).eq("status", "processing").lt("updated_at", stale_before).execute()
+        claimed = supabase.table("pos_hanged_orders").update({"status": "processing", "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", order_id).eq("status", "draft").execute()
+    if not claimed.data:
+        raise HTTPException(status_code=409, detail="This order is already being sent to the kitchen")
+    payload = CreateTransactionRequest(**row["payload"])
+    payload.employee_id = user.id
+    payload.order_type = "delivery"
+    payload.order_source = "pos"
+    payload.payment_method = "cash"
+    payload.pay_on_delivery = True
+    payload.idempotency_key = f"hanged-order:{order_id}"
+    try:
+        transaction = create_transaction(payload, user)
+        supabase.table("pos_hanged_orders").update({"status": "submitted", "transaction_id": transaction.id, "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", order_id).execute()
+        return transaction
+    except Exception:
+        supabase.table("pos_hanged_orders").update({"status": "draft", "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", order_id).eq("status", "processing").execute()
+        raise
 
 KITCHEN_STATUS_ORDER = ["queued", "preparing", "ready", "completed"]
 

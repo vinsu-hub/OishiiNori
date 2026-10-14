@@ -98,6 +98,7 @@ class ProductSizeOut(BaseModel):
     # -- lets the Kitchen Display checklist know its target total up front
     # instead of only discovering it via a 400 on mismatched submission.
     total_pieces: int | None = None
+    deposit_amount: float = 0
 
 
 class ProductOut(BaseModel):
@@ -109,6 +110,7 @@ class ProductOut(BaseModel):
     is_bundle: bool
     active: bool
     needs_station_review: bool
+    takeout_bowl_eligible: bool = False
     image_path: str | None = None
     sizes: list[ProductSizeOut] = Field(default_factory=list)
 
@@ -270,6 +272,20 @@ class CreateTransactionRequest(BaseModel):
     # offline queue, or a retried request whose response was lost) -- see
     # app/idempotency.py. Omitting it keeps today's exact behavior.
     idempotency_key: str | None = None
+
+
+class PosHangedOrderCreate(BaseModel):
+    payload: CreateTransactionRequest
+
+
+class PosHangedOrderOut(BaseModel):
+    id: str
+    employee_id: str
+    payload: dict
+    status: Literal["draft", "processing", "submitted"]
+    transaction_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class TransactionItemAddonResponse(BaseModel):
@@ -521,6 +537,8 @@ class DigitalOrderResponse(BaseModel):
     payment_proof_url: str | None = None
     customer_note: str | None = None
     subtotal: float
+    packaging_fee: float = 0
+    boat_deposit: float = 0
     approved_by: str | None = None
     approved_at: datetime | None = None
     rejected_reason: str | None = None
@@ -553,6 +571,8 @@ class DigitalOrderStatusResponse(BaseModel):
     order_channel: DigitalOrderChannel = "dine_in_qr"
     status: DigitalOrderStatus
     subtotal: float
+    packaging_fee: float = 0
+    boat_deposit: float = 0
     rejected_reason: str | None = None
     items: list[DigitalOrderItemResponse] = Field(default_factory=list)
     addons: list[DigitalOrderAddonResponse] = Field(default_factory=list)
@@ -562,6 +582,13 @@ class DigitalOrderStatusResponse(BaseModel):
 
 class RejectDigitalOrderRequest(BaseModel):
     reason: str | None = None
+
+
+class BoatDepositReturnRequest(BaseModel):
+    deduction_amount: float = Field(ge=0)
+    refund_method: str = Field(min_length=1, max_length=40)
+    refund_reference: str | None = Field(default=None, max_length=120)
+    notes: str | None = Field(default=None, max_length=1000)
 
 
 # ---------------------------------------------------------------------------

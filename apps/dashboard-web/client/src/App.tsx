@@ -61,6 +61,7 @@ const Expenses = lazyWithReload(() => import('./pages/Expenses'), 'Expenses');
 const ShiftReports = lazyWithReload(() => import('./pages/ShiftReports'), 'ShiftReports');
 const OnlineOrders = lazyWithReload(() => import('./pages/OnlineOrders'), 'OnlineOrders');
 const ScheduledOrders = lazyWithReload(() => import('./pages/ScheduledOrders'), 'ScheduledOrders');
+const SushiBoatDeposits = lazyWithReload(() => import('./pages/SushiBoatDeposits'), 'SushiBoatDeposits');
 const StockVS = lazyWithReload(() => import('./pages/StockVS'), 'StockVS');
 const Settings = lazyWithReload(() => import('./pages/Settings'), 'Settings');
 const NotFound = lazyWithReload(() => import('./pages/NotFound'), 'NotFound');
@@ -122,6 +123,7 @@ function Router() {
         <Route path={'/shift-reports'} component={ShiftReports} />
         <Route path={'/online-orders'} component={OnlineOrders} />
         <Route path={'/scheduled-orders'} component={ScheduledOrders} />
+        <Route path={'/sushi-boat-deposits'} component={SushiBoatDeposits} />
         <Route path={'/stock/vs'} component={StockVS} />
         <Route path={'/loss-log'} component={LossLog} />
         <Route path={'/utility-log'} component={UtilityLog} />
