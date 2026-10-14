@@ -2,6 +2,23 @@ import { useEffect, useState } from 'react';
 import { fetchOrderHistory, type OrderHistoryEntry } from '@/lib/api';
 import { formatCurrency, formatTimestamp12h } from '@/lib/utils';
 
+// The delivery fee goes to the dedicated rider, so it's kept out of Due and
+// Recorded paid. Paid in cash, the rider keeps it from the customer; paid any
+// other way (GCash, card, online wallet), the restaurant owes it to the rider
+// from the drawer -- a deductible.
+function foodDue(order: OrderHistoryEntry) {
+  return Math.max(0, order.total_due - order.delivery_fee);
+}
+
+function foodPaid(order: OrderHistoryEntry) {
+  return Math.max(0, order.recorded_paid - order.delivery_fee);
+}
+
+function feeTag(order: OrderHistoryEntry): 'pending' | 'rider' | 'deductible' {
+  if (order.payment_status !== 'paid') return 'pending';
+  return order.payment_method === 'cash' ? 'rider' : 'deductible';
+}
+
 /** Calendar-date order detail alongside the immutable shift cash snapshot. */
 export function DailyOrderAudit({ date }: { date: string }) {
   const [orders, setOrders] = useState<OrderHistoryEntry[] | null>(null);
@@ -25,10 +42,12 @@ export function DailyOrderAudit({ date }: { date: string }) {
     {orders && <>
       <p className="mb-3 text-xs text-muted-foreground">
         {orders.length} orders · {orders.filter((order) => order.payment_status === 'paid').length} paid ·{' '}
-        {formatCurrency(orders.reduce((sum, order) => sum + (order.discount?.amount ?? 0), 0))} discounts
+        {formatCurrency(orders.reduce((sum, order) => sum + (order.discount?.amount ?? 0), 0))} discounts ·{' '}
+        {formatCurrency(orders.reduce((sum, order) => sum + order.delivery_fee, 0))} delivery fees (deductible{' '}
+        {formatCurrency(orders.filter((order) => feeTag(order) === 'deductible').reduce((sum, order) => sum + order.delivery_fee, 0))})
       </p>
       <div className="overflow-x-auto rounded-md border">
-        <table className="w-full min-w-[780px] text-left text-xs">
+        <table className="w-full min-w-[880px] text-left text-xs">
           <thead className="bg-muted/60">
             <tr className="border-b">
               <th className="px-2 py-2">Order / placed</th>
@@ -37,6 +56,7 @@ export function DailyOrderAudit({ date }: { date: string }) {
               <th className="px-2 py-2">Status</th>
               <th className="px-2 py-2 text-right">Due</th>
               <th className="px-2 py-2 text-right">Discount</th>
+              <th className="px-2 py-2 text-right">Delivery payment</th>
               <th className="px-2 py-2 text-right">Recorded paid</th>
             </tr>
           </thead>
@@ -60,9 +80,17 @@ export function DailyOrderAudit({ date }: { date: string }) {
               <td className="px-2 py-2">{order.labels.join(' · ')}</td>
               <td className="px-2 py-2">{order.payment_method === 'grab' ? 'Grab settlement' : order.payment_method ?? 'Unrecorded'}</td>
               <td className="px-2 py-2">{order.status} · {order.payment_status}</td>
-              <td className="px-2 py-2 text-right tabular-nums">{formatCurrency(order.total_due)}</td>
+              <td className="px-2 py-2 text-right tabular-nums">{formatCurrency(foodDue(order))}</td>
               <td className="px-2 py-2 text-right tabular-nums">{formatCurrency(order.discount?.amount ?? 0)}</td>
-              <td className="px-2 py-2 text-right tabular-nums">{formatCurrency(order.recorded_paid)}</td>
+              <td className="px-2 py-2 text-right tabular-nums">
+                {order.delivery_fee > 0 ? <>
+                  {formatCurrency(order.delivery_fee)}
+                  <span className={`mt-0.5 block text-[10px] font-semibold ${feeTag(order) === 'deductible' ? 'text-amber-700' : 'text-muted-foreground'}`}>
+                    {feeTag(order) === 'deductible' ? 'Deductible · pay rider' : feeTag(order) === 'rider' ? 'Rider keeps' : 'Pending'}
+                  </span>
+                </> : '—'}
+              </td>
+              <td className="px-2 py-2 text-right tabular-nums">{formatCurrency(foodPaid(order))}</td>
             </tr>)}
           </tbody>
         </table>

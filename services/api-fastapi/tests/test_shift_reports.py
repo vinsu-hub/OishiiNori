@@ -77,14 +77,16 @@ class ShiftReportTests(unittest.TestCase):
                 ])
         shift = {"id": "shift", "shift_number": 42, "business_date": "2026-10-10",
                  "opened_at": start, "opened_by": "ana", "starting_cash": 500}
-        report = build_shift_report(db, shift, end, 1527)
+        report = build_shift_report(db, shift, end, 1507)
         self.assertEqual(report["sales"]["order_count"], 1007)
         self.assertEqual(report["payments"], {"BDO": 200.0, "Cash": 1072.0, "Credit": 400.0,
                                                "Debit": 300.0, "MAYA": 100.0})
         self.assertEqual(sum(report["payments"].values()), 2072)
         self.assertEqual(report["sales"]["gross"], 2082)
         self.assertEqual(report["sales"]["net"], 2062)
-        self.assertEqual(report["cash_drawer"]["expected_cash"], 1527)
+        # The cash delivery's ₱20 fee is kept by the rider, not the drawer.
+        self.assertEqual(report["cash_drawer"]["rider_fees_cash"], 20)
+        self.assertEqual(report["cash_drawer"]["expected_cash"], 1507)
         self.assertEqual(report["cash_drawer"]["difference"], 0)
         self.assertEqual(len(report["entries"]), 4)
 

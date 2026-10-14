@@ -109,6 +109,30 @@ def _payment_name(row: dict, digital_methods: dict[str, str]) -> str:
     return method or "unspecified"
 
 
+# The staff count these by size first (manual checking), so they lead
+# "Menu category sales" in this order, each across every flavor.
+SIZE_GROUPS = ("8pc Maki", "4pc Maki", "Platter", "4pc Takoyaki", "8pc Takoyaki")
+
+
+def size_group(category: str, size_label: str) -> str | None:
+    size = (size_label or "").strip().lower()
+    if category == "Oishii Maki Rolls" and size in ("8 pcs", "4 pcs"):
+        return f"{size[0]}pc Maki"
+    if category == "Oishii Platter (Bundle)":
+        return "Platter"
+    if category.startswith("Takoyaki (") and size in ("4 pcs", "8 pcs"):
+        return f"{size[0]}pc Takoyaki"
+    return None
+
+
+def order_categories(groups) -> list[dict]:
+    """Size groups first in SIZE_GROUPS order, then the rest by revenue."""
+    groups = list(groups)
+    lead = sorted((g for g in groups if g["category"] in SIZE_GROUPS), key=lambda g: SIZE_GROUPS.index(g["category"]))
+    rest = sorted((g for g in groups if g["category"] not in SIZE_GROUPS), key=lambda g: (-g["item_revenue"], g["category"]))
+    return lead + rest
+
+
 @router.get("/dashboard/sales-insights", response_model=SalesInsightsResponse)
 def get_sales_insights(
     period: Literal["day", "week", "month"] = Query("day"),
@@ -192,8 +216,9 @@ def get_sales_insights(
 
     categories: dict[str, dict] = {}
     for item in item_totals.values():
-        group = categories.setdefault(item["category"], {
-            "category": item["category"], "quantity_sold": 0.0, "item_revenue": 0.0, "items": []
+        name = size_group(item["category"], item["size_label"]) or item["category"]
+        group = categories.setdefault(name, {
+            "category": name, "quantity_sold": 0.0, "item_revenue": 0.0, "items": []
         })
         group["quantity_sold"] += item["quantity_sold"]
         group["item_revenue"] += item["item_revenue"]
@@ -239,6 +264,6 @@ def get_sales_insights(
         by_payment_source=[{"order_source": source, "payment_method": method, **totals}
                            for (source, method), totals in sorted(by_payment_source.items())],
         series=points,
-        categories=sorted(categories.values(), key=lambda group: (-group["item_revenue"], group["category"])),
+        categories=order_categories(categories.values()),
         peak_hour=peak_hour,
     )

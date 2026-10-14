@@ -105,10 +105,21 @@ def build_shift_report(db, shift: dict, closed_at: datetime, counted_cash: float
         for row in _page_rows(db.table("deliveries").select("id,transaction_id,delivery_fee")
                               .in_("transaction_id", batch).order("id")):
             delivery[row["transaction_id"]] = money(row["delivery_fee"])
+    # Online deliveries link their fee through the digital order.
+    by_digital = {row["id"]: tx_id for tx_id, row in digital.items()}
+    digital_ids = list(by_digital)
+    for offset in range(0, len(digital_ids), ID_BATCH_SIZE):
+        for row in _page_rows(db.table("deliveries").select("id,digital_order_id,delivery_fee")
+                              .in_("digital_order_id", digital_ids[offset:offset + ID_BATCH_SIZE]).order("id")):
+            delivery[by_digital[row["digital_order_id"]]] = money(row["delivery_fee"])
     payments: dict[str, Decimal] = {}
     gross = Decimal("0")
     discounts = Decimal("0")
     taxes = Decimal("0")
+    # Delivery fees belong to the dedicated rider: kept from the customer's
+    # cash, or handed over from the drawer when the customer paid online.
+    rider_fees_cash = Decimal("0")
+    rider_fees_deductible = Decimal("0")
     for sale in sales:
         linked = digital.get(sale["id"])
         method = (linked or {}).get("payment_method") or sale.get("payment_method") or "Unspecified"
@@ -122,6 +133,11 @@ def build_shift_report(db, shift: dict, closed_at: datetime, counted_cash: float
         # include it in transactions.total_amount.
         received = money(sale["total_amount"]) + (Decimal("0") if linked else delivery.get(sale["id"], Decimal("0")))
         payments[method] = payments.get(method, Decimal("0")) + received
+        fee = delivery.get(sale["id"], Decimal("0"))
+        if method == "Cash":
+            rider_fees_cash += fee
+        else:
+            rider_fees_deductible += fee
         gross += received + money(sale["discount_amount"])
         discounts += money(sale["discount_amount"])
         taxes += money(sale["tax_amount"])
@@ -135,7 +151,8 @@ def build_shift_report(db, shift: dict, closed_at: datetime, counted_cash: float
     refunds = sum((money(m["amount"]) for m in movements if m["kind"] == "cash_refund"), Decimal("0"))
     starting = money(shift["starting_cash"])
     cash_payments = payments.get("Cash", Decimal("0"))
-    expected = starting + cash_payments + paid_in - expense_total - transfers - refunds
+    expected = (starting + cash_payments + paid_in - expense_total - transfers - refunds
+                - rider_fees_cash - rider_fees_deductible)
     entries = [
         {"id": e["id"], "time": e["created_at"], "staff": (e.get("profiles") or {}).get("full_name"),
          "purpose": e["description"], "kind": "expense", "amount": -float(money(e["amount"]))}
@@ -155,10 +172,13 @@ def build_shift_report(db, shift: dict, closed_at: datetime, counted_cash: float
         "opened_by": shift["opened_by"], "payments": {k: float(v) for k, v in sorted(payments.items())},
         "sales": {"gross": float(gross), "discounts": float(discounts),
                   "cash_refunds": float(refunds), "net": float(gross - discounts - refunds),
-                  "taxes": float(taxes), "order_count": len(sales)},
+                  "taxes": float(taxes), "order_count": len(sales),
+                  "delivery_fees": float(rider_fees_cash + rider_fees_deductible)},
         "cash_drawer": {"starting_cash": float(starting), "cash_payments": float(cash_payments),
                         "cash_refunds": float(refunds), "paid_in": float(paid_in),
                         "operating_expenses": float(expense_total), "owner_transfers": float(transfers),
+                        "rider_fees_cash": float(rider_fees_cash),
+                        "rider_fees_deductible": float(rider_fees_deductible),
                         "paid_out": float(expense_total + transfers), "expected_cash": float(expected),
                         "actual_cash": float(money(counted_cash)),
                         "difference": float(money(counted_cash) - expected)},
