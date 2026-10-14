@@ -1498,11 +1498,15 @@ def switch_table(transaction_id: str, body: SwitchTableRequest, user: CurrentUse
             detail=f"Party of {guest_count} exceeds table {new_table['label']}'s capacity of {cap_max}",
         )
 
+    day_start, day_end = ph_day_bounds_utc(today_ph())
     other_open = (
         supabase.table("transactions")
         .select("id")
         .eq("table_number", body.new_table_number)
         .eq("status", "open")
+        .eq("order_type", "dine_in")
+        .gte("opened_at", day_start)
+        .lte("opened_at", day_end)
         .neq("id", transaction_id)
         .execute()
     )

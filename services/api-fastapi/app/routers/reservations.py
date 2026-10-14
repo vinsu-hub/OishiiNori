@@ -21,7 +21,7 @@ from postgrest.exceptions import APIError
 from app.auth import CurrentUser, get_current_user, require_role, verify_employee_pin
 from app.deps import get_supabase
 from app.idempotency import check_idempotency_key, record_idempotency_key
-from app.ph_time import PH_UTC_OFFSET
+from app.ph_time import PH_UTC_OFFSET, ph_day_bounds_utc, today_ph
 from app.rate_limit import client_ip, enforce_rate_limit
 from app.schemas import (
     _LAYOUT_FIELDS,
@@ -767,7 +767,9 @@ def pos_table_status(
 def pos_tables_overview(user: CurrentUser = Depends(get_current_user)):
     """Every active, POS-mapped table plus its live state, for the POS
     Terminal's Dine In table picker. `occupied` = has an open dine-in
-    transaction; `reserved` = a confirmed reservation is in its blocking
+    transaction opened today (PH, same rule as the Floor Plan and Release
+    table -- an earlier day's unreleased order must not lock the table
+    forever); `reserved` = a confirmed reservation is in its blocking
     window right now (same rule as GET /pos/tables/status, one call for the
     whole floor). The authoritative block/override check still happens per
     table at charge time -- this is a selection aid, not a gate."""
@@ -781,12 +783,15 @@ def pos_tables_overview(user: CurrentUser = Depends(get_current_user)):
         .execute()
         .data
     )
+    day_start, day_end = ph_day_bounds_utc(today_ph())
     open_txn_tables = {
         r["table_number"]
         for r in supabase.table("transactions")
         .select("table_number")
         .eq("status", "open")
         .eq("order_type", "dine_in")
+        .gte("opened_at", day_start)
+        .lte("opened_at", day_end)
         .execute()
         .data
         if r.get("table_number") is not None
