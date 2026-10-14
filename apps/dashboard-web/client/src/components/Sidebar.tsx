@@ -42,7 +42,7 @@ import {
   Star,
   Mail,
   UserPlus,
-  Printer, Bike } from 'lucide-react';
+  Printer, Bike, PauseCircle } from 'lucide-react';
 
 interface SidebarProps {
   collapsed: boolean;
@@ -159,6 +159,7 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
     // Pay-on-delivery (Facebook/phone) orders the POS rang up: track the rider
     // and record the cash when it comes back.
     { icon: Bike, label: 'Deliveries', href: '/pos-deliveries' },
+    { icon: PauseCircle, label: 'Hanged Orders', href: '/hanged-orders' },
     { icon: CalendarClock, label: 'Advance Orders', href: '/advance-orders' },
     ...(user && ['employee', 'manager', 'executive'].includes(user.role)
       ? [{ icon: Undo2, label: 'Sushi Boat Deposits', href: '/sushi-boat-deposits' }]

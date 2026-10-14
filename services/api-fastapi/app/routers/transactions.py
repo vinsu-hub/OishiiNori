@@ -37,7 +37,7 @@ router = APIRouter(tags=["transactions"])
 def list_pos_hanged_orders(user: CurrentUser = Depends(get_current_user)):
     if user.role == "kitchen":
         raise HTTPException(status_code=403, detail="Kitchen accounts cannot manage cashier orders")
-    result = get_supabase().table("pos_hanged_orders").select("*").in_("status", ["draft", "submitted"]).order("created_at", desc=True).execute()
+    result = get_supabase().table("pos_hanged_orders").select("*").in_("status", ["draft", "processing"]).order("created_at", desc=True).execute()
     rows = result.data or []
     if user.role not in ("manager", "executive"):
         rows = [row for row in rows if row["employee_id"] == user.id]
@@ -60,7 +60,7 @@ def create_pos_hanged_order(body: PosHangedOrderCreate, user: CurrentUser = Depe
 @router.patch("/pos/hanged-orders/{order_id}")
 def update_pos_hanged_order(order_id: str, body: PosHangedOrderCreate, user: CurrentUser = Depends(get_current_user)):
     payload = body.payload
-    if payload.employee_id != user.id or payload.order_type != "delivery" or not payload.items or not payload.delivery:
+    if (payload.employee_id != user.id and user.role not in ("manager", "executive")) or payload.order_type != "delivery" or not payload.items or not payload.delivery:
         raise HTTPException(status_code=400, detail="A valid delivery order is required")
     query = get_supabase().table("pos_hanged_orders").update({"payload": payload.model_dump(mode="json"), "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", order_id).eq("status", "draft")
     if user.role not in ("manager", "executive"):

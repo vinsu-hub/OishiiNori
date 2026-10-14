@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Banknote, Bike, CalendarClock, CheckCircle2, ChefHat, PackageCheck, Phone, Wallet, Printer, Pencil, Send } from 'lucide-react';
+import { Banknote, Bike, CalendarClock, CheckCircle2, ChefHat, PackageCheck, Phone, Wallet } from 'lucide-react';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -16,7 +16,6 @@ import {
 } from '@/components/ui/dialog';
 import {
   type ApiProduct,
-  type ApiPosHangedOrder,
   type ApiTransaction,
   type TransactionPaymentMethod,
   type TransactionCardType,
@@ -24,16 +23,11 @@ import {
   fetchTransactions,
   settleTransactionPayment,
   updateRiderPayout,
-  fetchPosHangedOrders,
-  updatePosHangedOrder,
-  sendPosHangedOrderToKitchen,
 } from '@/lib/api';
 import { POLL_INTERVAL_MS, toIsoDatePH, todayIsoPH } from '@/lib/constants';
 import { formatCurrency, formatTimestamp12h } from '@/lib/utils';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 import { AdvanceOrdersSection } from '@/components/pos/AdvanceOrdersSection';
-import { printReceipt, type ReceiptData } from '@/components/pos/Receipt';
-import { useAuth } from '@/contexts/AuthContext';
 
 /** Where a pay-on-delivery order is right now, from the cashier's view. */
 function stage(t: ApiTransaction): { label: string; tone: 'kitchen' | 'ready' | 'out' | 'delivered'; Icon: typeof ChefHat } {
@@ -58,12 +52,7 @@ function orderTotal(t: ApiTransaction): number {
 }
 
 export default function PosDeliveries() {
-  const { user } = useAuth();
   const [transactions, setTransactions] = useState<ApiTransaction[]>([]);
-  const [hangedOrders, setHangedOrders] = useState<ApiPosHangedOrder[]>([]);
-  const [editDraft, setEditDraft] = useState<ApiPosHangedOrder | null>(null);
-  const [savingDraft, setSavingDraft] = useState(false);
-  const [sendingDraft, setSendingDraft] = useState<string | null>(null);
   const [products, setProducts] = useState<ApiProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [settleTarget, setSettleTarget] = useState<ApiTransaction | null>(null);
@@ -82,7 +71,6 @@ export default function PosDeliveries() {
       .then((all) => setTransactions(all.filter((t) => t.order_type === 'delivery' && t.status !== 'voided')))
       .catch((e) => toast.error(e instanceof Error ? e.message : 'Failed to load deliveries'))
       .finally(() => setLoading(false));
-    fetchPosHangedOrders().then(setHangedOrders).catch((e) => toast.error(e instanceof Error ? e.message : 'Failed to load hanged orders'));
   }, []);
   useVisiblePolling(load, POLL_INTERVAL_MS);
 
@@ -105,41 +93,6 @@ export default function PosDeliveries() {
     [transactions]
   );
   const outstanding = unpaid.reduce((sum, t) => sum + orderTotal(t), 0);
-
-  async function saveDraft() {
-    if (!editDraft) return;
-    setSavingDraft(true);
-    try {
-      const saved = await updatePosHangedOrder(editDraft.id, editDraft.payload);
-      setHangedOrders((rows) => rows.map((r) => r.id === saved.id ? saved : r));
-      setEditDraft(null);
-      toast.success('Hanged order updated');
-    } catch (e) { toast.error(e instanceof Error ? e.message : 'Could not update draft'); }
-    finally { setSavingDraft(false); }
-  }
-
-  async function sendToKitchen(order: ApiPosHangedOrder) {
-    setSendingDraft(order.id);
-    try {
-      const transaction = await sendPosHangedOrderToKitchen(order.id);
-      setHangedOrders((rows) => rows.filter((row) => row.id !== order.id));
-      toast.success(`Order #${transaction.order_number ?? transaction.id.slice(0, 8)} sent to the kitchen as unpaid delivery`);
-      load();
-    } catch (e) { toast.error(e instanceof Error ? e.message : 'Could not send order to kitchen'); }
-    finally { setSendingDraft(null); }
-  }
-
-  function printDraft(order: ApiPosHangedOrder) {
-    const p = order.payload;
-    const lines = p.items.map((line) => {
-      const size = products.flatMap((product) => product.sizes.map((s) => ({ product, size: s }))).find(({ size }) => size.id === line.product_size_id);
-      return { name: size ? `${size.product.name} (${size.size.size_label})` : 'Menu item', quantity: line.quantity, unitPrice: size?.size.price ?? 0, addons: [], discountAmount: 0 };
-    });
-    const subtotal = lines.reduce((sum, line) => sum + line.quantity * line.unitPrice, 0);
-    const fee = p.delivery_fee ?? 0;
-    const receipt: ReceiptData = { orderNumber: null, openedAt: order.created_at, orderType: 'delivery', tableNumber: null, lines, discountAmount: 0, taxAmount: 0, deliveryFee: fee, totalAmount: subtotal + fee, paymentMethod: 'cash on delivery', delivery: p.delivery ? { customerName: p.delivery.customer_name, phone: p.delivery.customer_phone, address: p.delivery.address, barangay: p.delivery.barangay } : null, business: { name: 'Oishii Nori', address: null, phone: null, tin: null, footer: 'DRAFT — NOT YET SENT TO KITCHEN' }, cashierName: user?.name ?? null, reference: `Draft ${order.id.slice(0, 8)}`, subtotal, discountLabel: null, vatExempt: !!p.force_vat_exempt, cashTendered: null, changeDue: null, itemCount: p.items.reduce((n, item) => n + item.quantity, 0), payOnDelivery: true };
-    try { printReceipt(receipt, user?.role); } catch (e) { toast.error(e instanceof Error ? e.message : 'Could not print draft slip'); }
-  }
 
   async function confirmSettle() {
     if (!settleTarget) return;
@@ -182,14 +135,6 @@ export default function PosDeliveries() {
   return (
     <DashboardLayout title="Deliveries">
       <div className="p-6 space-y-6">
-        <section className="space-y-3">
-          <div><h2 className="text-lg font-semibold">Hanged orders</h2><p className="text-sm text-muted-foreground">Saved delivery drafts are not sales and do not reach the kitchen until you send them. The kitchen ticket enters the existing kitchen tablet and printer workflow.</p></div>
-          {hangedOrders.length === 0 ? <p className="rounded-lg border border-dashed p-5 text-center text-sm text-muted-foreground">No hanged delivery orders.</p> : <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">{hangedOrders.filter((o) => o.status === 'draft').map((order) => {
-            const p = order.payload;
-            const total = p.items.reduce((sum, line) => sum + line.quantity * (products.flatMap((product) => product.sizes).find((size) => size.id === line.product_size_id)?.price ?? 0), 0) + (p.delivery_fee ?? 0);
-            return <Card key={order.id}><CardContent className="space-y-3 py-4"><div className="flex justify-between gap-2"><div><p className="font-bold">{p.delivery?.customer_name || 'Delivery customer'}</p><p className="text-xs text-muted-foreground">{formatTimestamp12h(order.created_at)} · Draft #{order.id.slice(0, 8)}</p></div><p className="font-bold">{formatCurrency(total)}</p></div><p className="text-sm text-muted-foreground">{p.delivery?.customer_phone} · {[p.delivery?.address, p.delivery?.barangay].filter(Boolean).join(', ')}{p.delivery?.landmark ? ` (${p.delivery.landmark})` : ''}</p><ul className="text-sm">{p.items.map((line, i) => <li key={`${line.product_size_id}-${i}`}>{line.quantity}× {sizeName.get(line.product_size_id) ?? 'Menu item'}</li>)}</ul><div className="grid grid-cols-3 gap-2"><Button variant="outline" onClick={() => printDraft(order)}><Printer className="mr-1 h-4 w-4"/>Print order receipt</Button><Button variant="outline" onClick={() => setEditDraft(structuredClone(order))}><Pencil className="mr-1 h-4 w-4"/>Edit</Button><Button disabled={sendingDraft === order.id} onClick={() => void sendToKitchen(order)}><Send className="mr-1 h-4 w-4"/>{sendingDraft === order.id ? 'Sending…' : 'Send & print ticket'}</Button></div></CardContent></Card>;
-          })}</div>}
-        </section>
         <section className="space-y-3"><div><h2 className="text-lg font-semibold">Advance deliveries</h2><p className="text-sm text-muted-foreground">Requested times mean food ready for the rider. Payment collection and rider payout stay in the sections below.</p></div><AdvanceOrdersSection orderType="delivery" /></section>
         <div className="grid gap-3 sm:grid-cols-3">
           <Card>
@@ -356,16 +301,6 @@ export default function PosDeliveries() {
               {settling ? 'Saving…' : 'Confirm payment received'}
             </Button>
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      <Dialog open={!!editDraft} onOpenChange={(open) => !open && setEditDraft(null)}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader><DialogTitle>Edit hanged delivery order</DialogTitle><DialogDescription>Changes are saved to the draft. Sending it to the kitchen creates the unpaid sale.</DialogDescription></DialogHeader>
-          {editDraft && <div className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-2">{(['customer_name','customer_phone','address','landmark','barangay'] as const).map((field) => <label key={field} className="space-y-1 text-sm"><span className="capitalize">{field.replace('_',' ')}</span><Input value={editDraft.payload.delivery?.[field] ?? ''} onChange={(e) => setEditDraft({ ...editDraft, payload: { ...editDraft.payload, delivery: { ...editDraft.payload.delivery!, [field]: e.target.value } } })}/></label>)}<label className="space-y-1 text-sm">Delivery fee<Input type="number" min="0" step="0.01" value={editDraft.payload.delivery_fee ?? ''} onChange={(e) => setEditDraft({ ...editDraft, payload: { ...editDraft.payload, delivery_fee: Number(e.target.value) } })}/></label></div>
-            <div className="space-y-2"><p className="font-medium">Items</p>{editDraft.payload.items.map((line, index) => <div key={`${line.product_size_id}-${index}`} className="flex items-center gap-2"><span className="flex-1 text-sm">{sizeName.get(line.product_size_id) ?? 'Menu item'}</span><Input className="w-20" type="number" min="1" value={line.quantity} onChange={(e) => setEditDraft({ ...editDraft, payload: { ...editDraft.payload, items: editDraft.payload.items.map((item, i) => i === index ? { ...item, quantity: Math.max(1, Number(e.target.value)) } : item) } })}/><Button variant="outline" onClick={() => setEditDraft({ ...editDraft, payload: { ...editDraft.payload, items: editDraft.payload.items.filter((_, i) => i !== index) } })}>Remove</Button></div>)}<label className="block space-y-1 text-sm">Add item<select className="h-10 w-full rounded-md border bg-background px-3" value="" onChange={(e) => { const size = products.flatMap((product) => product.sizes).find((s) => s.id === e.target.value); if (size && editDraft) setEditDraft({ ...editDraft, payload: { ...editDraft.payload, items: [...editDraft.payload.items, { product_size_id: size.id, quantity: 1, addons: [], held_ingredients: [] }] } }); }}><option value="" disabled>Select a menu item</option>{products.flatMap((product) => product.sizes.map((size) => <option key={size.id} value={size.id}>{product.name} ({size.size_label}) — {formatCurrency(size.price)}</option>))}</select></label></div>
-          </div>}
-          <DialogFooter><Button variant="outline" onClick={() => setEditDraft(null)}>Cancel</Button><Button disabled={savingDraft || !editDraft?.payload.items.length} onClick={() => void saveDraft()}>{savingDraft ? 'Saving…' : 'Save draft'}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </DashboardLayout>
