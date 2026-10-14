@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Progress } from '@/components/ui/progress';
-import { CalendarDays, ChevronDown, ChevronUp, Printer, Volume2, VolumeX, Zap } from 'lucide-react';
+import { CalendarDays, CheckCircle2, ChevronDown, ChevronUp, Printer, Volume2, VolumeX, Zap } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { BundleFulfillmentChecklist } from '@/components/kitchen/BundleFulfillmentChecklist';
 import { LogExtraUsageDialog } from '@/components/kitchen/LogExtraUsageDialog';
 import { useAuth } from '@/contexts/AuthContext';
@@ -23,6 +24,7 @@ import {
   fetchProducts,
   fetchAdvanceOrders,
   fetchTransactions,
+  fulfillTransaction,
   postKitchenPrinterHeartbeat,
   updateKitchenStatus,
 } from '@/lib/api';
@@ -184,6 +186,8 @@ export default function KitchenDisplay() {
     null
   );
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  // Queued ticket the staff say was already served/handed over (confirm first).
+  const [alreadyCompleteTarget, setAlreadyCompleteTarget] = useState<ApiTransaction | null>(null);
   const [now, setNow] = useState(() => new Date());
   const [soundOn, setSoundOn] = useState(true);
   // Per-device: only the kitchen tablet paired with the ticket printer turns
@@ -565,6 +569,26 @@ export default function KitchenDisplay() {
     }
   }
 
+  // "Order already complete": a queued ticket that was served or handed over
+  // without going through the board. Skips straight to Completed; payment
+  // and the order's open/closed state are untouched.
+  async function handleAlreadyComplete(order: ApiTransaction) {
+    setAlreadyCompleteTarget(null);
+    setUpdatingId(order.id);
+    try {
+      await fulfillTransaction(order.id);
+      // Never let the hands-free printer pick it up afterwards.
+      autoPrintedRef.current.add(printedKey(order));
+      writeAutoPrinted(autoPrintedRef.current);
+      toast.success(`Order ${order.order_number != null ? `#${order.order_number}` : order.id.slice(0, 8)} marked complete`);
+      load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update order');
+    } finally {
+      setUpdatingId(null);
+    }
+  }
+
   function renderTicket(order: ApiTransaction, status: KitchenStatus) {
                   const resolved = resolveItems(order);
                   const bundleItems = resolved.filter((r) => r.product.is_bundle);
@@ -708,6 +732,19 @@ export default function KitchenDisplay() {
                                 : 'Waiting to print — tap “Print next order” above'
                               : 'Sent to the kitchen printer'}
                           </p>
+                        )}
+                        {order.kitchen_status === 'queued' && !isUpcoming(order, now) && (
+                          <Button
+                            className="w-full"
+                            size="sm"
+                            variant="outline"
+                            disabled={updatingId === order.id || hasUnfulfilledBundle}
+                            title={hasUnfulfilledBundle ? 'Log rolls used for every bundle item first' : undefined}
+                            onClick={() => setAlreadyCompleteTarget(order)}
+                          >
+                            <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
+                            {hasUnfulfilledBundle ? 'Fulfill bundle first' : 'Order already complete'}
+                          </Button>
                         )}
                         {next && order.kitchen_status !== 'queued' && (
                           <Button
@@ -982,6 +1019,22 @@ export default function KitchenDisplay() {
           employeeId={user.id}
         />
       )}
+      <Dialog open={!!alreadyCompleteTarget} onOpenChange={(open) => !open && setAlreadyCompleteTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Mark order {alreadyCompleteTarget?.order_number != null ? `#${alreadyCompleteTarget.order_number}` : alreadyCompleteTarget?.id.slice(0, 8)} complete?
+            </DialogTitle>
+            <DialogDescription>
+              Use this when the order was already served or handed over. It moves straight to Completed without printing a kitchen ticket.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAlreadyCompleteTarget(null)}>Cancel</Button>
+            <Button onClick={() => alreadyCompleteTarget && void handleAlreadyComplete(alreadyCompleteTarget)}>Mark complete</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }
