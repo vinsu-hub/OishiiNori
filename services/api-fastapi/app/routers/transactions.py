@@ -435,6 +435,30 @@ def _attach_deliveries(supabase, transactions: list[dict]) -> None:
             t["delivery"] = deliveries_by_tx[t["id"]]
 
 
+def _attach_planned_flags(supabase, transactions: list[dict]) -> None:
+    """Flags sales that came from a hanged order or a scheduled online order,
+    so the Kitchen Display keeps them out of the overdue queue."""
+    ids = [t["id"] for t in transactions]
+    hanged: set[str] = set()
+    scheduled: set[str] = set()
+    for offset in range(0, len(ids), ID_BATCH_SIZE):
+        chunk = ids[offset:offset + ID_BATCH_SIZE]
+        try:
+            hanged.update(r["transaction_id"] for r in supabase.table("pos_hanged_orders")
+                          .select("transaction_id").in_("transaction_id", chunk).execute().data)
+        except APIError:
+            pass
+        try:
+            scheduled.update(r["transaction_id"] for r in supabase.table("digital_orders")
+                             .select("transaction_id").in_("transaction_id", chunk)
+                             .not_.is_("scheduled_for", "null").execute().data)
+        except APIError:
+            pass
+    for t in transactions:
+        t["is_hanged"] = t["id"] in hanged
+        t["is_scheduled"] = t["id"] in scheduled
+
+
 def _attach_item_addons(supabase, items: list[dict]) -> None:
     """Batch-fetches transaction_item_addons (joined to menu_addons for the
     display name) for the given transaction_items and attaches them as
@@ -1252,6 +1276,7 @@ def list_transactions(
         items_by_transaction[item["transaction_id"]].append(item)
 
     _attach_deliveries(supabase, transactions)
+    _attach_planned_flags(supabase, transactions)
 
     out = []
     for t in transactions:
@@ -1357,6 +1382,30 @@ def close_transaction(transaction_id: str, user: CurrentUser = Depends(get_curre
     updated_row.setdefault("card_type", None)
     updated_row.setdefault("force_vat_exempt", False)
     return TransactionResponse(**updated_row, items=transaction["items"])
+
+
+@router.post("/tables/{pos_table_number}/release")
+def release_table(pos_table_number: int, user: CurrentUser = Depends(get_current_user)):
+    """Floor Plan's "Release table": closes every open dine-in order on the
+    table from today (add-ons and QR orders included), which also moves
+    their kitchen tickets to completed. Payment is not touched."""
+    if user.role in ("kitchen", "rider", "stocker"):
+        raise HTTPException(status_code=403, detail="Only front-of-house staff can release tables")
+    supabase = get_supabase()
+    start, end = ph_day_bounds_utc(today_ph())
+    rows = (supabase.table("transactions").select("id, order_number")
+            .eq("status", "open").eq("order_type", "dine_in").eq("table_number", pos_table_number)
+            .gte("opened_at", start).lte("opened_at", end).order("opened_at").execute().data or [])
+    released = []
+    for row in rows:
+        try:
+            close_transaction(row["id"], user)
+        except HTTPException as exc:
+            if exc.status_code != 409:  # 409: closed meanwhile by another terminal
+                raise
+            continue
+        released.append(row["order_number"])
+    return {"released": len(released), "order_numbers": released}
 
 
 @router.patch("/transactions/{transaction_id}/rider-payout")

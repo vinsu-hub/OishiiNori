@@ -23,7 +23,7 @@ import {
   TableShape,
   arriveReservation,
   cancelReservation,
-  closeTransaction,
+  releaseTable,
   describeError,
   fetchProducts,
   fetchReservations,
@@ -338,6 +338,15 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
   const txnById = useMemo(() => {
     const map = new Map<string, ApiTransaction>();
     for (const tx of transactions) map.set(tx.id, tx);
+    return map;
+  }, [transactions]);
+
+  const openCountByPosNumber = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const tx of transactions) {
+      if (tx.status !== 'open' || tx.order_type !== 'dine_in' || tx.table_number == null) continue;
+      map.set(tx.table_number, (map.get(tx.table_number) ?? 0) + 1);
+    }
     return map;
   }, [transactions]);
 
@@ -901,6 +910,11 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
                     opened {formatTimestamp12h(detailDerived.openTxn.opened_at)}
                     {detailDerived.openTxn.guest_count ? ` · ${detailDerived.openTxn.guest_count} guests` : ''}
                   </p>
+                  {(openCountByPosNumber.get(detailDerived.openTxn.table_number ?? -1) ?? 0) > 1 && (
+                    <p className="text-xs font-medium text-amber-800">
+                      {openCountByPosNumber.get(detailDerived.openTxn.table_number!)} open orders on this table — Release table closes all of them.
+                    </p>
+                  )}
                   <ul className="space-y-1 rounded-md border bg-muted/30 p-2">
                     {detailDerived.openTxn.items.map((item) => {
                       const resolved = sizeIndex.get(item.product_size_id);
@@ -938,8 +952,14 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
                       variant="secondary"
                       onClick={async () => {
                         try {
-                          await closeTransaction(detailDerived.openTxn!.id);
-                          toast.success('Table cleared');
+                          const tableNumber = detailDerived.openTxn!.table_number!;
+                          const result = await releaseTable(tableNumber);
+                          const numbers = result.order_numbers.filter((n) => n != null).map((n) => `#${n}`).join(', ');
+                          toast.success(
+                            result.released > 0
+                              ? `Table ${tableNumber} released — ${result.released === 1 ? 'order' : 'orders'} ${numbers} moved to Completed`
+                              : `Table ${tableNumber} had no open orders today`
+                          );
                           setDetailId(null);
                           load();
                         } catch (e) {
@@ -947,7 +967,7 @@ export function FloorPlanPanel({ selectedDay }: { selectedDay: string }) {
                         }
                       }}
                     >
-                      Diner done
+                      Release table
                     </Button>
                     <Button
                       size="sm"

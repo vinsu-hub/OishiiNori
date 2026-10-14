@@ -42,7 +42,7 @@ import {
   Star,
   Mail,
   UserPlus,
-  Printer, Bike, PauseCircle } from 'lucide-react';
+  Printer, Bike, PauseCircle, LayoutGrid } from 'lucide-react';
 
 interface SidebarProps {
   collapsed: boolean;
@@ -154,6 +154,8 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
     // Every role: the cashier approves QR table orders (2026-10-04 client
     // decision), so the badge here is how they notice one is waiting.
     { icon: QrCode, label: 'Table Orders', href: '/pending-orders', badge: pendingTableOrders },
+    // Shortcut for releasing seated tables; same panel as Reservations' Floor Plan tab.
+    { icon: LayoutGrid, label: 'Floor Plan', href: '/floor-plan' },
     { icon: ChefHat, label: 'Kitchen Display', href: '/kitchen-display' },
     { icon: Truck, label: 'Delivery Requests', href: '/delivery-requests', badge: pendingDeliveryCount },
     // Pay-on-delivery (Facebook/phone) orders the POS rang up: track the rider

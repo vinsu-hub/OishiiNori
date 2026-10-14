@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Progress } from '@/components/ui/progress';
-import { CalendarDays, Printer, Volume2, VolumeX, Zap } from 'lucide-react';
+import { CalendarDays, ChevronDown, ChevronUp, Printer, Volume2, VolumeX, Zap } from 'lucide-react';
 import { BundleFulfillmentChecklist } from '@/components/kitchen/BundleFulfillmentChecklist';
 import { LogExtraUsageDialog } from '@/components/kitchen/LogExtraUsageDialog';
 import { useAuth } from '@/contexts/AuthContext';
@@ -130,8 +130,20 @@ function printedKey(order: ApiTransaction): string {
   return order.advance_schedule_revision ? `${order.id}:${order.advance_schedule_revision}` : order.id;
 }
 
+/** Scheduled online, POS advance, or hanged delivery orders: expected to wait,
+ * so in Queued they sit in their own green group and never glow as late. */
+function isPlanned(order: ApiTransaction): boolean {
+  return !!order.scheduled_for || !!order.is_scheduled || !!order.is_hanged;
+}
+function isPlannedQueued(order: ApiTransaction): boolean {
+  return order.kitchen_status === 'queued' && isPlanned(order);
+}
+
+const PLANNED_OPEN_KEY = 'kds-planned-open';
+
 function ticketTier(order: ApiTransaction, now: Date): 'none' | 'warning' | 'overdue' {
   if (order.kitchen_status === 'completed') return 'none';
+  if (isPlannedQueued(order)) return 'none';
   if (isUpcoming(order, now)) return 'none';
   const elapsed = elapsedSeconds(kitchenElapsedSince(order), now);
   if (elapsed >= OVERDUE_THRESHOLD_SECONDS) return 'overdue';
@@ -362,9 +374,22 @@ export default function KitchenDisplay() {
     return map;
   }, [activeOrders]);
 
+  const queuedNow = useMemo(() => ordersByStatus.queued.filter((order) => !isPlanned(order)), [ordersByStatus]);
+  const queuedPlanned = useMemo(() => ordersByStatus.queued.filter((order) => isPlanned(order)), [ordersByStatus]);
+  const [plannedOpen, setPlannedOpen] = useState(() => {
+    try { return localStorage.getItem(PLANNED_OPEN_KEY) === '1'; } catch { return false; }
+  });
+  function togglePlanned() {
+    setPlannedOpen((open) => {
+      try { localStorage.setItem(PLANNED_OPEN_KEY, open ? '0' : '1'); } catch { /* private mode */ }
+      return !open;
+    });
+  }
+
   const delayedCount = useMemo(() => {
     let count = 0;
     for (const order of activeOrders) {
+      if (isPlannedQueued(order)) continue;
       const threshold = DELAYED_THRESHOLD_SECONDS[order.kitchen_status];
       if (threshold != null && elapsedSeconds(kitchenElapsedSince(order), now) > threshold) {
         count += 1;
@@ -391,7 +416,7 @@ export default function KitchenDisplay() {
   }, [visibleOrders]);
 
   const longestOrder = useMemo(() => {
-    const active = activeOrders.filter((o) => o.kitchen_status !== 'completed');
+    const active = activeOrders.filter((o) => o.kitchen_status !== 'completed' && !isPlannedQueued(o));
     if (active.length === 0) return null;
     return active.reduce((longest, o) =>
       elapsedSeconds(kitchenElapsedSince(o), now) > elapsedSeconds(kitchenElapsedSince(longest), now) ? o : longest
@@ -538,6 +563,171 @@ export default function KitchenDisplay() {
     } finally {
       setUpdatingId(null);
     }
+  }
+
+  function renderTicket(order: ApiTransaction, status: KitchenStatus) {
+                  const resolved = resolveItems(order);
+                  const bundleItems = resolved.filter((r) => r.product.is_bundle);
+                  const hasUnfulfilledBundle = bundleItems.some((r) => !fulfilledItemIds.has(r.item.id));
+                  const next = NEXT_STATUS[order.kitchen_status];
+                  const blockedByBundle = next === 'completed' && hasUnfulfilledBundle;
+                  const digitalOrder = digitalOrderLookup.get(order.id);
+                  const tier = ticketTier(order, now);
+
+                  return (
+                    <Card
+                      key={order.id}
+                      className={
+                        isPlannedQueued(order)
+                          ? 'border-2 border-green-400 bg-green-50/60'
+                          : tier === 'overdue'
+                            ? 'kds-ticket-overdue'
+                            : tier === 'warning'
+                              ? 'kds-ticket-warning'
+                              : undefined
+                      }
+                    >
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
+                          <span className="font-corp-display text-sm font-semibold" title={order.id}>
+                            {order.order_number != null ? `#${order.order_number}` : order.id.slice(0, 8)}
+                          </span>
+                          {order.table_number != null && (
+                            <Badge variant="outline">
+                              Table {order.table_number}
+                              {order.guest_count ? ` · ${order.guest_count} guests` : ''}
+                            </Badge>
+                          )}
+                          {order.order_source === 'grab' && <Badge className="bg-green-700 text-white">Grab</Badge>}
+                          {order.scheduled_for && <Badge variant="outline" className="border-green-500 text-green-800">Advance order</Badge>}
+                          {order.is_scheduled && !order.scheduled_for && <Badge variant="outline" className="border-green-500 text-green-800">Scheduled</Badge>}
+                          {order.is_hanged && <Badge variant="outline" className="border-green-500 text-green-800">Hanged order</Badge>}
+                          {order.is_owner_request && <Badge variant="secondary">Owner's Request</Badge>}
+                          {order.related_transaction_id && (
+                            <Badge variant="outline">
+                              Add-on to Order{' '}
+                              {transactionById.get(order.related_transaction_id)?.order_number != null
+                                ? `#${transactionById.get(order.related_transaction_id)!.order_number}`
+                                : `#${order.related_transaction_id.slice(0, 8)}`}
+                            </Badge>
+                          )}
+                          {tier === 'overdue' && <Badge variant="destructive">Overdue</Badge>}
+                          {tier === 'warning' && <Badge variant="gold">Warning</Badge>}
+                        </CardTitle>
+                        {order.scheduled_for && (
+                          <p className="text-sm font-semibold">Ready {formatAdvanceTime(order.scheduled_for)}</p>
+                        )}
+                        <p className="text-xs text-muted-foreground">
+                          opened {formatTimestamp12h(order.opened_at)} &middot;{' '}
+                          <span
+                            className={
+                              DELAYED_THRESHOLD_SECONDS[order.kitchen_status] != null &&
+                              elapsedSeconds(kitchenElapsedSince(order), now) >
+                                DELAYED_THRESHOLD_SECONDS[order.kitchen_status]!
+                                ? 'text-destructive font-medium'
+                                : undefined
+                            }
+                          >
+                            {elapsedLabel(elapsedSeconds(kitchenElapsedSince(order), now))} elapsed
+                          </span>
+                        </p>
+                        {status === 'preparing' && avgPrepSeconds != null && avgPrepSeconds > 0 && (
+                          <Progress
+                            value={Math.min(
+                              100,
+                              (elapsedSeconds(order.kitchen_status_updated_at || order.opened_at, now) / avgPrepSeconds) * 100
+                            )}
+                            className="h-1.5"
+                          />
+                        )}
+                        {digitalOrder && <DigitalOrderInfo order={digitalOrder} />}
+                      </CardHeader>
+                      <CardContent className="space-y-2 pb-3">
+                        <ul className="space-y-1 text-sm">
+                          {resolved.map(({ item, product, size }) => {
+                            const fulfilled = fulfilledItemIds.has(item.id);
+                            return (
+                              <li key={item.id} className="space-y-0.5">
+                              <div className="flex items-center justify-between gap-2">
+                                <span>
+                                  {item.quantity}x {product.name} ({size.size_label})
+                                </span>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  {!product.is_bundle && (
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-7 px-2 text-xs text-muted-foreground"
+                                      onClick={() => setExtraUsageTarget({ size, product })}
+                                    >
+                                      Log extra usage
+                                    </Button>
+                                  )}
+                                  {product.is_bundle &&
+                                    (fulfilled ? (
+                                      <Badge variant={item.bundle_deduction_status === 'pending_recipe' ? 'secondary' : 'default'}>
+                                        {item.bundle_deduction_status === 'pending_recipe' ? 'Rolls logged · stock pending' : 'Logged'}
+                                      </Badge>
+                                    ) : (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() =>
+                                          setChecklistTarget({ transactionId: order.id, item, product, size })
+                                        }
+                                      >
+                                        Log rolls used
+                                      </Button>
+                                    ))}
+                                </div>
+                              </div>
+                              {item.held_ingredients.length > 0 && (
+                                <p className="text-xs text-destructive">-- hold: {item.held_ingredients.join(', ')}</p>
+                              )}
+                              {item.addons.length > 0 && (
+                                <p className="text-xs text-muted-foreground">
+                                  +{' '}
+                                  {item.addons
+                                    .map((a) => `${a.addon_name ?? 'Add-on'}${a.quantity > 1 ? ` x${a.quantity}` : ''}`)
+                                    .join(', ')}
+                                </p>
+                              )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+
+                        {order.kitchen_status === 'queued' && (
+                          // No Accept: the kitchen tablet prints each new order and moves it
+                          // to Preparing by itself (auto-print, or the "Print next order" bar).
+                          <p className="rounded-md border border-dashed px-3 py-2 text-center text-xs font-medium text-muted-foreground">
+                            {tabletRole === 'kitchen'
+                              ? handsFree
+                                ? 'Printing ticket…'
+                                : 'Waiting to print — tap “Print next order” above'
+                              : 'Sent to the kitchen printer'}
+                          </p>
+                        )}
+                        {next && order.kitchen_status !== 'queued' && (
+                          <Button
+                            className="w-full"
+                            size="sm"
+                            disabled={updatingId === order.id || blockedByBundle}
+                            title={blockedByBundle ? 'Log rolls used for every bundle item first' : undefined}
+                            onClick={() => handleAdvance(order)}
+                          >
+                            {blockedByBundle ? 'Fulfill bundle first' : ACTION_LABEL[order.kitchen_status]}
+                          </Button>
+                        )}
+                        {printOn && (order.kitchen_status === 'preparing' || order.kitchen_status === 'ready') && (
+                          <Button className="w-full" size="sm" variant="outline" onClick={() => printTicket(order)}>
+                            <Printer className="w-4 h-4" aria-hidden="true" />
+                            Reprint ticket
+                          </Button>
+                        )}
+                      </CardContent>
+                    </Card>
+                  );
   }
 
   return (
@@ -734,173 +924,28 @@ export default function KitchenDisplay() {
             {KITCHEN_STATUSES.map((status) => (
               <div key={status} className="space-y-3">
                 <h3 className="font-corp-display font-semibold text-sm text-muted-foreground">
-                  {STATUS_LABEL[status]} ({ordersByStatus[status].length})
+                  {STATUS_LABEL[status]} ({status === 'queued' ? queuedNow.length : ordersByStatus[status].length})
                 </h3>
                 {ordersByStatus[status].length === 0 && (
                   <p className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
                     No {STATUS_LABEL[status].toLowerCase()} orders {dateFilter === 'today' ? 'today' : ''}.
                   </p>
                 )}
-                {ordersByStatus[status].map((order) => {
-                  const resolved = resolveItems(order);
-                  const bundleItems = resolved.filter((r) => r.product.is_bundle);
-                  const hasUnfulfilledBundle = bundleItems.some((r) => !fulfilledItemIds.has(r.item.id));
-                  const next = NEXT_STATUS[order.kitchen_status];
-                  const blockedByBundle = next === 'completed' && hasUnfulfilledBundle;
-                  const digitalOrder = digitalOrderLookup.get(order.id);
-                  const tier = ticketTier(order, now);
-
-                  return (
-                    <Card
-                      key={order.id}
-                      className={
-                        tier === 'overdue'
-                          ? 'kds-ticket-overdue'
-                          : tier === 'warning'
-                            ? 'kds-ticket-warning'
-                            : undefined
-                      }
+                {(status === 'queued' ? queuedNow : ordersByStatus[status]).map((order) => renderTicket(order, status))}
+                {status === 'queued' && queuedPlanned.length > 0 && (
+                  <section className="space-y-3 rounded-lg border border-green-300 bg-green-50 p-2" aria-label="Scheduled, advance and hanged orders">
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm font-semibold text-green-900"
+                      aria-expanded={plannedOpen}
+                      onClick={() => togglePlanned()}
                     >
-                      <CardHeader className="pb-2">
-                        <CardTitle className="text-sm flex items-center gap-2 flex-wrap">
-                          <span className="font-corp-display text-sm font-semibold" title={order.id}>
-                            {order.order_number != null ? `#${order.order_number}` : order.id.slice(0, 8)}
-                          </span>
-                          {order.table_number != null && (
-                            <Badge variant="outline">
-                              Table {order.table_number}
-                              {order.guest_count ? ` · ${order.guest_count} guests` : ''}
-                            </Badge>
-                          )}
-                          {order.order_source === 'grab' && <Badge className="bg-green-700 text-white">Grab</Badge>}
-                          {order.scheduled_for && <Badge variant="outline">Advance order</Badge>}
-                          {order.is_owner_request && <Badge variant="secondary">Owner's Request</Badge>}
-                          {order.related_transaction_id && (
-                            <Badge variant="outline">
-                              Add-on to Order{' '}
-                              {transactionById.get(order.related_transaction_id)?.order_number != null
-                                ? `#${transactionById.get(order.related_transaction_id)!.order_number}`
-                                : `#${order.related_transaction_id.slice(0, 8)}`}
-                            </Badge>
-                          )}
-                          {tier === 'overdue' && <Badge variant="destructive">Overdue</Badge>}
-                          {tier === 'warning' && <Badge variant="gold">Warning</Badge>}
-                        </CardTitle>
-                        {order.scheduled_for && (
-                          <p className="text-sm font-semibold">Ready {formatAdvanceTime(order.scheduled_for)}</p>
-                        )}
-                        <p className="text-xs text-muted-foreground">
-                          opened {formatTimestamp12h(order.opened_at)} &middot;{' '}
-                          <span
-                            className={
-                              DELAYED_THRESHOLD_SECONDS[order.kitchen_status] != null &&
-                              elapsedSeconds(kitchenElapsedSince(order), now) >
-                                DELAYED_THRESHOLD_SECONDS[order.kitchen_status]!
-                                ? 'text-destructive font-medium'
-                                : undefined
-                            }
-                          >
-                            {elapsedLabel(elapsedSeconds(kitchenElapsedSince(order), now))} elapsed
-                          </span>
-                        </p>
-                        {status === 'preparing' && avgPrepSeconds != null && avgPrepSeconds > 0 && (
-                          <Progress
-                            value={Math.min(
-                              100,
-                              (elapsedSeconds(order.kitchen_status_updated_at || order.opened_at, now) / avgPrepSeconds) * 100
-                            )}
-                            className="h-1.5"
-                          />
-                        )}
-                        {digitalOrder && <DigitalOrderInfo order={digitalOrder} />}
-                      </CardHeader>
-                      <CardContent className="space-y-2 pb-3">
-                        <ul className="space-y-1 text-sm">
-                          {resolved.map(({ item, product, size }) => {
-                            const fulfilled = fulfilledItemIds.has(item.id);
-                            return (
-                              <li key={item.id} className="space-y-0.5">
-                              <div className="flex items-center justify-between gap-2">
-                                <span>
-                                  {item.quantity}x {product.name} ({size.size_label})
-                                </span>
-                                <div className="flex items-center gap-1.5 shrink-0">
-                                  {!product.is_bundle && (
-                                    <Button
-                                      size="sm"
-                                      variant="ghost"
-                                      className="h-7 px-2 text-xs text-muted-foreground"
-                                      onClick={() => setExtraUsageTarget({ size, product })}
-                                    >
-                                      Log extra usage
-                                    </Button>
-                                  )}
-                                  {product.is_bundle &&
-                                    (fulfilled ? (
-                                      <Badge variant={item.bundle_deduction_status === 'pending_recipe' ? 'secondary' : 'default'}>
-                                        {item.bundle_deduction_status === 'pending_recipe' ? 'Rolls logged · stock pending' : 'Logged'}
-                                      </Badge>
-                                    ) : (
-                                      <Button
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() =>
-                                          setChecklistTarget({ transactionId: order.id, item, product, size })
-                                        }
-                                      >
-                                        Log rolls used
-                                      </Button>
-                                    ))}
-                                </div>
-                              </div>
-                              {item.held_ingredients.length > 0 && (
-                                <p className="text-xs text-destructive">-- hold: {item.held_ingredients.join(', ')}</p>
-                              )}
-                              {item.addons.length > 0 && (
-                                <p className="text-xs text-muted-foreground">
-                                  +{' '}
-                                  {item.addons
-                                    .map((a) => `${a.addon_name ?? 'Add-on'}${a.quantity > 1 ? ` x${a.quantity}` : ''}`)
-                                    .join(', ')}
-                                </p>
-                              )}
-                              </li>
-                            );
-                          })}
-                        </ul>
-
-                        {order.kitchen_status === 'queued' && (
-                          // No Accept: the kitchen tablet prints each new order and moves it
-                          // to Preparing by itself (auto-print, or the "Print next order" bar).
-                          <p className="rounded-md border border-dashed px-3 py-2 text-center text-xs font-medium text-muted-foreground">
-                            {tabletRole === 'kitchen'
-                              ? handsFree
-                                ? 'Printing ticket…'
-                                : 'Waiting to print — tap “Print next order” above'
-                              : 'Sent to the kitchen printer'}
-                          </p>
-                        )}
-                        {next && order.kitchen_status !== 'queued' && (
-                          <Button
-                            className="w-full"
-                            size="sm"
-                            disabled={updatingId === order.id || blockedByBundle}
-                            title={blockedByBundle ? 'Log rolls used for every bundle item first' : undefined}
-                            onClick={() => handleAdvance(order)}
-                          >
-                            {blockedByBundle ? 'Fulfill bundle first' : ACTION_LABEL[order.kitchen_status]}
-                          </Button>
-                        )}
-                        {printOn && (order.kitchen_status === 'preparing' || order.kitchen_status === 'ready') && (
-                          <Button className="w-full" size="sm" variant="outline" onClick={() => printTicket(order)}>
-                            <Printer className="w-4 h-4" aria-hidden="true" />
-                            Reprint ticket
-                          </Button>
-                        )}
-                      </CardContent>
-                    </Card>
-                  );
-                })}
+                      <span>Scheduled / advance / hanged ({queuedPlanned.length})</span>
+                      {plannedOpen ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}
+                    </button>
+                    {plannedOpen && queuedPlanned.map((order) => renderTicket(order, status))}
+                  </section>
+                )}
                 {ordersByStatus[status].length === 0 && (
                   <p className="text-xs text-muted-foreground">No orders.</p>
                 )}

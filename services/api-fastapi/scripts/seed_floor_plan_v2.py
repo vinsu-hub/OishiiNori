@@ -3,6 +3,8 @@ Re-seed the tables registry from the client's traced floor plan (Floor
 plan-html.zip -> Main.dc.html, 2026-10-04). Replaces seed_floor_plan.py's
 photo-based guess: 12 tables, numbered 1-12, all in one "Dining Room" zone
 that dashboard-web's DiningRoomBackdrop draws the walls/counter/entrance for.
+Superseded for Table 1 and extended to 17 tables by seed_floor_plan_v3.py
+(2026-10-14); re-running this would turn Table 1 back into the long table.
 
 Numbering (confirmed with the client):
   1      long table by the counter

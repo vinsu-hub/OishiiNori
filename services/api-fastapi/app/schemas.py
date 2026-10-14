@@ -340,6 +340,10 @@ class TransactionResponse(BaseModel):
     payment_method: TransactionPaymentMethod | None = None
     card_type: TransactionCardType | None = None
     force_vat_exempt: bool = False
+    # Kitchen Display "planned" lane: a sent hanged order, or a scheduled
+    # online order (its schedule lives on digital_orders, not here).
+    is_hanged: bool = False
+    is_scheduled: bool = False
     related_transaction_id: str | None = None
     payment_status: Literal["paid", "unpaid"] = "paid"
     scheduled_for: datetime | None = None

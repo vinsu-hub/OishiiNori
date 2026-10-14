@@ -463,6 +463,10 @@ export interface ApiTransaction {
   discount_amount: number;
   tax_amount: number;
   is_owner_request: boolean;
+  /** Sent from Hanged Orders (Kitchen Display's planned group). */
+  is_hanged?: boolean;
+  /** Came from a scheduled online order. */
+  is_scheduled?: boolean;
   owner_request_by: string | null;
   owner_request_note: string | null;
   voided_by: string | null;
@@ -643,6 +647,11 @@ export function fetchTransaction(id: string): Promise<ApiTransaction> {
 
 export function closeTransaction(id: string): Promise<ApiTransaction> {
   return request(`/transactions/${id}/close`, { method: 'POST' });
+}
+
+/** Close every open dine-in order on the table from today; their kitchen tickets move to Completed. */
+export function releaseTable(posTableNumber: number): Promise<{ released: number; order_numbers: (number | null)[] }> {
+  return request(`/tables/${posTableNumber}/release`, { method: 'POST' });
 }
 
 /** Record payment for a deferred pickup or delivery order. */

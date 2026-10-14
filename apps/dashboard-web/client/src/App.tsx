@@ -57,6 +57,7 @@ const DeliveryRequests = lazyWithReload(() => import('./pages/DeliveryRequests')
 
 const PosDeliveries = lazyWithReload(() => import('./pages/PosDeliveries'), 'PosDeliveries');
 const HangedOrders = lazyWithReload(() => import('./pages/HangedOrders'), 'HangedOrders');
+const FloorPlan = lazyWithReload(() => import('./pages/FloorPlan'), 'FloorPlan');
 const AdvanceOrders = lazyWithReload(() => import('./pages/AdvanceOrders'), 'AdvanceOrders');
 const Expenses = lazyWithReload(() => import('./pages/Expenses'), 'Expenses');
 const ShiftReports = lazyWithReload(() => import('./pages/ShiftReports'), 'ShiftReports');
@@ -120,6 +121,7 @@ function Router() {
         <Route path={'/delivery-requests'} component={DeliveryRequests} />
         <Route path={'/pos-deliveries'} component={PosDeliveries} />
         <Route path={'/hanged-orders'} component={HangedOrders} />
+        <Route path={'/floor-plan'} component={FloorPlan} />
         <Route path={'/advance-orders'} component={AdvanceOrders} />
         <Route path={'/expenses'} component={Expenses} />
         <Route path={'/shift-reports'} component={ShiftReports} />
