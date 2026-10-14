@@ -416,14 +416,17 @@ def _attach_deliveries(supabase, transactions: list[dict]) -> None:
     delivery_tx_ids = [t["id"] for t in transactions if t.get("order_type") == "delivery"]
     if not delivery_tx_ids or not _deliveries_transaction_id_supported_check(supabase):
         return
-    deliveries_result = (
-        supabase.table("deliveries")
-        .select("*, profiles(full_name)")
-        .in_("transaction_id", delivery_tx_ids)
-        .execute()
-    )
+    delivery_rows: list[dict] = []
+    for offset in range(0, len(delivery_tx_ids), ID_BATCH_SIZE):
+        delivery_rows.extend(
+            supabase.table("deliveries")
+            .select("*, profiles(full_name)")
+            .in_("transaction_id", delivery_tx_ids[offset:offset + ID_BATCH_SIZE])
+            .execute()
+            .data
+        )
     deliveries_by_tx: dict[str, dict] = {}
-    for row in deliveries_result.data:
+    for row in delivery_rows:
         rider = row.pop("profiles", None) or {}
         row["rider_name"] = rider.get("full_name")
         deliveries_by_tx[row["transaction_id"]] = row
@@ -442,14 +445,18 @@ def _attach_item_addons(supabase, items: list[dict]) -> None:
     if not items or not _transaction_item_addons_supported_check(supabase):
         return
     item_ids = [i["id"] for i in items]
-    addons_result = (
-        supabase.table("transaction_item_addons")
-        .select("*, menu_addons(name)")
-        .in_("transaction_item_id", item_ids)
-        .execute()
-    )
+    # Batched: one `in` filter over every item id overflows the request URL.
+    addon_rows: list[dict] = []
+    for offset in range(0, len(item_ids), ID_BATCH_SIZE):
+        addon_rows.extend(
+            supabase.table("transaction_item_addons")
+            .select("*, menu_addons(name)")
+            .in_("transaction_item_id", item_ids[offset:offset + ID_BATCH_SIZE])
+            .execute()
+            .data
+        )
     addons_by_item: dict[str, list] = defaultdict(list)
-    for row in addons_result.data:
+    for row in addon_rows:
         addon_info = row.pop("menu_addons", None) or {}
         row["addon_name"] = addon_info.get("name")
         addons_by_item[row["transaction_item_id"]].append(row)
