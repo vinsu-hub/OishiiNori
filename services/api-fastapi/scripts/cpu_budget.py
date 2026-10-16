@@ -47,10 +47,10 @@ def schedule(today: str, adv_from: str, adv_before: str, devices: dict) -> list[
     tv = devices["tv"]
     bridge = devices["bridge"]
     return [
-        ("Kitchen tablet", kitchen, 15, f"/transactions?active_since={today}"),
-        ("Kitchen tablet", kitchen, 15, "/digital-orders?status=approved"),
-        ("Kitchen tablet", kitchen, 15, f"/transactions/advance-orders?order_type=takeout&date_from={adv_from}&date_before={adv_before}"),
-        ("Kitchen tablet", kitchen, 15, f"/transactions/advance-orders?order_type=delivery&date_from={adv_from}&date_before={adv_before}"),
+        ("Kitchen tablet", kitchen, 10, f"/transactions?active_since={today}"),
+        ("Kitchen tablet", kitchen, 10, "/digital-orders?status=approved"),
+        ("Kitchen tablet", kitchen, 10, f"/transactions/advance-orders?order_type=takeout&date_from={adv_from}&date_before={adv_before}"),
+        ("Kitchen tablet", kitchen, 10, f"/transactions/advance-orders?order_type=delivery&date_from={adv_from}&date_before={adv_before}"),
         ("Cashier (new-order alarm)", cashier, 20, "/digital-orders?status=pending"),
         ("Cashier (order queue / boards)", cashier, 30, f"/transactions?active_since={today}"),
         ("Cashier (online orders)", cashier, 30, "/digital-orders"),

@@ -14,8 +14,8 @@ const PH_UTC_OFFSET_MS = 8 * 60 * 60 * 1000;
 // up the Hobby plan's 4 h/month of Active CPU -- mostly the kitchen tablet
 // polling the full order list every 5 s, all day. useVisiblePolling enforces
 // these for every live page, so a new page can't quietly reintroduce that.
-// Nothing polls faster than this:
-export const MIN_POLL_INTERVAL_MS = 15_000;
+// Nothing polls faster than this (the kitchen tablet uses exactly this):
+export const MIN_POLL_INTERVAL_MS = 10_000;
 // ...and outside the PH window below (opening hours are 11:00-21:00, with
 // room for prep and late orders) screens left open overnight check only
 // every 5 minutes. Switching back to a tab still refreshes immediately.
