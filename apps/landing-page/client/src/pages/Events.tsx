@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, Pause, Play, X } from 'lucide-react';
 import SiteNav from '@/components/SiteNav';
 import SiteFooter from '@/components/SiteFooter';
 import FoodPhoto from '@/components/FoodPhoto';
+import { usePageMeta } from '@/lib/seo';
 
 const DIR = '/events/sushi-kids';
 // [file number, thumb width, thumb height, alt]
@@ -64,7 +65,7 @@ export default function Events() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(true);
   const [open, setOpen] = useState<number | null>(null);
-  useEffect(() => { document.title = 'Events | Oishii Nori — Your Sushi Story'; }, []);
+  usePageMeta('/events');
   useEffect(() => {
     // Respect reduced motion: start paused, the visitor can press play.
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { videoRef.current?.pause(); setPlaying(false); }
@@ -81,7 +82,7 @@ export default function Events() {
     <section className="on-events-hero on-container">
       <div>
         <p className="on-label">OISHII NORI / EVENTS</p>
-        <h1>YOUR <span>SUSHI</span><br />STORY.</h1>
+        <h1>YOUR <span>SUSHI</span><br />STORY.<span className="on-h1-sub">Kids sushi making class in Santa Cruz, Laguna</span></h1>
         <p className="on-events-sub">Little hands, big rolls — our Sushi Making Class for Kids.</p>
         <p className="on-events-meta">SANTA CRUZ, LAGUNA · OCTOBER 2026</p>
         <div className="on-actions"><a className="on-button" href="#gallery">See the photos <span className="on-arrow" aria-hidden="true">↓</span></a><a className="on-button on-outline" href="/catering#catering-inquiry">Book a class <span className="on-arrow" aria-hidden="true">↗</span></a></div>

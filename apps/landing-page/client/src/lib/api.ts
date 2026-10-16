@@ -199,3 +199,17 @@ export async function uploadApplicantPhoto(applicantId: string, file: File): Pro
   }
   return response.json() as Promise<ApplicantSubmitResult>;
 }
+
+// ---------------------------------------------------------------------------
+// Delivery areas (same table the online order form prices delivery from)
+// ---------------------------------------------------------------------------
+
+export interface DeliveryFee {
+  barangay: string;
+  zone: string;
+  fee: number;
+}
+
+export function fetchDeliveryFees(): Promise<DeliveryFee[]> {
+  return request('/public/delivery-fees');
+}

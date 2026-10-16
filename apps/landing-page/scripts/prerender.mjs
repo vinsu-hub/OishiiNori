@@ -28,7 +28,17 @@ const SHOP_ADDRESS = {
 };
 const SHOP_GEO = { lat: 14.278476, lng: 121.4158777 };
 const SITE_URL = 'https://www.oishiinori.com';
+const MAPS_URL = 'https://maps.app.goo.gl/9oACBZo6tUdzyabK7';
+// Blocked on the owner: fill these in and they flow into the Restaurant schema.
+// Keep them identical to the Google Business Profile (same phone format, same links).
+const SHOP_PHONE = null; // e.g. '+63 9XX XXX XXXX'
+const SHOP_PROFILES = []; // Facebook, Instagram, TikTok, GrabFood, foodpanda URLs
 const HERO_IMAGE = `${SITE_URL}/products/oishii-baked-sushi.jpg`;
+
+const BREADCRUMB_NAMES = {
+  '/sushi': 'Sushi', '/ramen': 'Ramen', '/delivery': 'Delivery', '/our-menu': 'Menu',
+  '/catering': 'Catering', '/about': 'About', '/events': 'Events',
+};
 
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -46,7 +56,7 @@ function formatTime12h(hhmm) {
   return `${hour12}:${String(m).padStart(2, '0')} ${period}`;
 }
 
-function buildJsonLd(hours, route, products) {
+function buildJsonLd({ hours, route, products, deliveryFees, pageMeta, dishPages, dishProducts }) {
   const openingHours = hours
     ? [
         {
@@ -65,8 +75,18 @@ function buildJsonLd(hours, route, products) {
     name: 'Oishii Nori',
     image: HERO_IMAGE,
     url: SITE_URL,
-    servesCuisine: ['Japanese', 'Sushi', 'Ramen'],
+    alternateName: 'Oishii Nori Santa Cruz',
+    description: pageMeta['/'].description,
+    servesCuisine: ['Japanese', 'Sushi', 'Ramen', 'Takoyaki', 'Filipino-Japanese'],
     priceRange: '₱₱',
+    currenciesAccepted: 'PHP',
+    paymentAccepted: 'Cash, GCash',
+    hasMap: MAPS_URL,
+    areaServed: [
+      { '@type': 'City', name: 'Santa Cruz', containedInPlace: { '@type': 'AdministrativeArea', name: 'Laguna' } },
+    ],
+    ...(SHOP_PHONE ? { telephone: SHOP_PHONE } : {}),
+    ...(SHOP_PROFILES.length ? { sameAs: SHOP_PROFILES } : {}),
     address: {
       '@type': 'PostalAddress',
       ...SHOP_ADDRESS,
@@ -97,31 +117,36 @@ function buildJsonLd(hours, route, products) {
       },
       {
         '@type': 'Question',
-        name: 'Where are you located?',
-        acceptedAnswer: { '@type': 'Answer', text: 'Pedro Guevara Ave, Santa Cruz, Laguna 4009, Philippines.' },
+        name: 'Saan kayo sa Santa Cruz, Laguna?',
+        acceptedAnswer: { '@type': 'Answer', text: 'Pedro Guevara Ave., Santa Cruz, Laguna 4009, Philippines.' },
+      },
+      {
+        '@type': 'Question',
+        name: 'Do you deliver?',
+        acceptedAnswer: { '@type': 'Answer', text: 'Yes, across Santa Cruz, Laguna. The fee depends on your barangay; see oishiinori.com/delivery for every area. Coming from Pagsanjan, Pila or Lumban? Order online for pickup.' },
       },
       {
         '@type': 'Question',
         name: "What's on the menu?",
-        acceptedAnswer: { '@type': 'Answer', text: 'Sushi, ramen, tako/snacks, and cafe drinks, made fresh daily.' },
+        acceptedAnswer: { '@type': 'Answer', text: 'Sushi, baked sushi, maki, ramen, takoyaki, katsu, bento, and drip tea. Explore our full online menu.' },
       },
     ],
   };
 
-  const schemas = [restaurant];
-  if (route === '/') schemas.push(faq);
-  if (route === '/our-menu') {
-    const activeProducts = products.filter(product => product.active);
-    const categories = [...new Set(activeProducts.map(product => product.category))];
-    schemas.push({
+  const faqPage = pairs => ({
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: pairs.map(([name, text]) => ({ '@type': 'Question', name, acceptedAnswer: { '@type': 'Answer', text } })),
+  });
+  const menuSchema = (name, url, sections) => ({
       '@context': 'https://schema.org',
       '@type': 'Menu',
-      name: 'Oishii Nori Menu',
-      url: `${SITE_URL}/our-menu`,
-      hasMenuSection: categories.map(category => ({
+      name,
+      url,
+      hasMenuSection: sections.map(({ name: sectionName, items }) => ({
         '@type': 'MenuSection',
-        name: category,
-        hasMenuItem: activeProducts.filter(product => product.category === category).map(product => {
+        name: sectionName,
+        hasMenuItem: items.map(product => {
           const prices = product.sizes.map(size => size.price)
             .filter(price => typeof price === 'number' && Number.isFinite(price) && price >= 0);
           return {
@@ -134,7 +159,44 @@ function buildJsonLd(hours, route, products) {
         }),
       })),
     });
+
+  const schemas = [restaurant];
+  if (route === '/') schemas.push(faq);
+  if (route !== '/') schemas.push({
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Home', item: `${SITE_URL}/` },
+      { '@type': 'ListItem', position: 2, name: BREADCRUMB_NAMES[route], item: `${SITE_URL}${route}` },
+    ],
+  });
+  if (route === '/our-menu') {
+    const activeProducts = products.filter(product => product.active);
+    const categories = [...new Set(activeProducts.map(product => product.category))];
+    schemas.push(menuSchema('Oishii Nori Menu', `${SITE_URL}/our-menu`,
+      categories.map(category => ({ name: category, items: activeProducts.filter(product => product.category === category) }))));
   }
+  const dish = dishPages[route];
+  if (dish) {
+    const items = dishProducts(dish, products);
+    schemas.push(menuSchema(`Oishii Nori ${dish.label.split(' / ')[1].toLowerCase()} menu`, `${SITE_URL}${route}`,
+      dish.sections.map(section => ({ name: section.heading, items: items.filter(product => section.categories.includes(product.category)) }))
+        .filter(section => section.items.length)));
+    schemas.push(faqPage(dish.faq(products)));
+  }
+  if (route === '/delivery' && deliveryFees.length) schemas.push({
+    '@context': 'https://schema.org',
+    '@type': 'Service',
+    name: 'Oishii Nori Delivery',
+    serviceType: 'Food delivery',
+    description: pageMeta['/delivery'].description,
+    url: `${SITE_URL}/delivery`,
+    provider: { '@id': `${SITE_URL}/#restaurant` },
+    areaServed: deliveryFees.map(row => ({ '@type': 'Place', name: `${row.barangay}, Santa Cruz, Laguna` })),
+    offers: deliveryFees.map(row => ({
+      '@type': 'Offer', name: `Delivery to ${row.barangay}`, price: row.fee, priceCurrency: 'PHP',
+    })),
+  });
   if (route === '/catering') schemas.push({
     '@context': 'https://schema.org',
     '@type': 'Service',
@@ -199,6 +261,8 @@ async function main() {
 
   try {
     const { Router } = await vite.ssrLoadModule('wouter');
+    const { PAGE_META } = await vite.ssrLoadModule('/src/lib/seo.ts');
+    const { DISH_PAGES, dishProducts } = await vite.ssrLoadModule('/src/lib/dishPages.ts');
 
     // Vercel's build sets VITE_API_BASE_URL as a real process env var; local
     // builds don't have it set unless the shell exports it, so fall back to
@@ -211,7 +275,7 @@ async function main() {
     }
 
     console.log(`[prerender] fetching real data from ${apiBase}...`);
-    const [products, hours] = await Promise.all([
+    const [products, hours, deliveryFees] = await Promise.all([
       fetch(`${apiBase}/public/menu`).then((r) => {
         if (!r.ok) throw new Error(`GET /public/menu failed: ${r.status}`);
         return r.json();
@@ -219,21 +283,25 @@ async function main() {
       fetch(`${apiBase}/public/business-hours`)
         .then((r) => (r.ok ? r.json() : null))
         .catch(() => null),
+      fetch(`${apiBase}/public/delivery-fees`).then((r) => {
+        if (!r.ok) throw new Error(`GET /public/delivery-fees failed: ${r.status}`);
+        return r.json();
+      }),
     ]);
-    console.log(`[prerender] fetched ${products.length} products, hours=${hours ? 'ok' : 'unavailable'}`);
+    console.log(`[prerender] fetched ${products.length} products, ${deliveryFees.length} delivery areas, hours=${hours ? 'ok' : 'unavailable'}`);
 
+    // Titles/descriptions live in src/lib/seo.ts (shared with the pages' own
+    // usePageMeta), so the static <head> and the hydrated one never disagree.
     const pages = [
-      { route: '/', component: 'Home', title: 'Oishii Nori — Your Sushi Story. Japanese food with a Filipino twist.',
-        description: 'Your Sushi Story starts at Oishii Nori: a Filipino-owned kitchen serving fresh, authentic Japanese food with a Filipino twist in Santa Cruz, Laguna.', initialData: { products, hours } },
-      { route: '/about', component: 'About', title: 'About | Oishii Nori — Filipino-Owned Japanese Kitchen in Santa Cruz, Laguna',
-        description: 'Meet Oishii Nori, a Filipino-owned kitchen in Santa Cruz, Laguna serving fresh Japanese food with a Filipino twist, fair prices, and a warm welcome.', initialData: { hours } },
-      { route: '/our-menu', component: 'OurMenu', title: 'Menu | Oishii Nori — Sushi, Ramen & Katsu in Santa Cruz, Laguna',
-        description: 'Explore Oishii Nori’s live menu with real prices: Japanese favorites and rolls with a Filipino twist in Santa Cruz, Laguna. Find your next craving and order online.', initialData: { products } },
-      { route: '/catering', component: 'Catering', title: 'Catering | Oishii Nori — Sushi Boats & Group Orders in Santa Cruz, Laguna',
-        description: 'Bring Oishii Nori to your next gathering: fresh sushi boats, generous spreads, and group orders in Santa Cruz, Laguna. Share your occasion and let’s talk food.' },
-      { route: '/events', component: 'Events', title: 'Events | Oishii Nori — Your Sushi Story',
-        description: 'Little hands, big rolls: photos from Oishii Nori’s Sushi Making Class for Kids in Santa Cruz, Laguna. Book a sushi class for your school, party or team.' },
-    ];
+      { route: '/', component: 'Home', initialData: { products, hours } },
+      { route: '/sushi', component: 'Sushi', initialData: { products } },
+      { route: '/ramen', component: 'Ramen', initialData: { products } },
+      { route: '/delivery', component: 'Delivery', initialData: { deliveryFees } },
+      { route: '/our-menu', component: 'OurMenu', initialData: { products } },
+      { route: '/catering', component: 'Catering' },
+      { route: '/about', component: 'About', initialData: { hours } },
+      { route: '/events', component: 'Events' },
+    ].map(page => ({ ...page, ...PAGE_META[page.route] }));
     const outputRoot = path.join(root, 'dist', 'public');
     const template = fs.readFileSync(path.join(outputRoot, 'index.html'), 'utf-8');
     for (const page of pages) {
@@ -242,9 +310,20 @@ async function main() {
         React.createElement(Component, page.initialData ? { initialData: page.initialData } : {})));
       const outputPath = path.join(outputRoot, page.route.slice(1), 'index.html');
       fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-      fs.writeFileSync(outputPath, renderPageHtml(template, bodyHtml, page, buildJsonLd(hours, page.route, products)));
+      const jsonLd = buildJsonLd({ hours, route: page.route, products, deliveryFees, pageMeta: PAGE_META, dishPages: DISH_PAGES, dishProducts });
+      fs.writeFileSync(outputPath, renderPageHtml(template, bodyHtml, page, jsonLd));
       console.log(`[prerender] wrote ${page.route}: real content + route metadata + JSON-LD into ${outputPath}`);
     }
+
+    // sitemap.xml comes from the same route list, so a new page can't be
+    // prerendered but missing from the sitemap (or the reverse). /review is a
+    // client-only form page, indexed but not prerendered.
+    const lastmod = new Date().toISOString().slice(0, 10);
+    const sitemapRoutes = [...pages.map(page => page.route), '/review'];
+    const sitemap = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${sitemapRoutes
+      .map(route => `  <url>\n    <loc>${SITE_URL}${route}</loc>\n    <lastmod>${lastmod}</lastmod>\n  </url>`).join('\n')}\n</urlset>\n`;
+    fs.writeFileSync(path.join(outputRoot, 'sitemap.xml'), sitemap);
+    console.log(`[prerender] wrote sitemap.xml with ${sitemapRoutes.length} URLs`);
   } finally {
     await vite.close();
   }

@@ -6,6 +6,9 @@ import About from "@/pages/About";
 import OurMenu from "@/pages/OurMenu";
 import Catering from "@/pages/Catering";
 import Events from "@/pages/Events";
+import Sushi from "@/pages/Sushi";
+import Ramen from "@/pages/Ramen";
+import Delivery from "@/pages/Delivery";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
@@ -23,6 +26,9 @@ function Router() {
       <Route path="/our-menu">{() => <OurMenu />}</Route>
       <Route path={"/catering"} component={Catering} />
       <Route path={"/events"} component={Events} />
+      <Route path="/sushi">{() => <Sushi />}</Route>
+      <Route path="/ramen">{() => <Ramen />}</Route>
+      <Route path="/delivery">{() => <Delivery />}</Route>
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />

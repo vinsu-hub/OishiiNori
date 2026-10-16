@@ -1,6 +1,6 @@
 # Oishii Nori — Your Sushi Story
 
-> A Filipino-owned kitchen serving authentic Japanese food with a distinctive Filipino twist -- sushi, ramen, tako/snacks, and cafe drinks in Santa Cruz, Laguna, Philippines.
+> A Filipino-owned kitchen serving authentic Japanese food with a distinctive Filipino twist -- sushi, baked sushi, ramen, takoyaki, and cafe drinks in Santa Cruz, Laguna, Philippines.
 
 Oishii Nori is a single-location restaurant known for baked sushi, maki rolls, ramen, and cafe drinks, made fresh daily. Filipino-owned, made for everyday cravings, at everyday prices.
 
@@ -9,6 +9,9 @@ Oishii Nori is a single-location restaurant known for baked sushi, maki rolls, r
 - Home: https://www.oishiinori.com/
 - About / our story: https://www.oishiinori.com/about
 - Menu: https://www.oishiinori.com/our-menu
+- Sushi (baked sushi, maki rolls, torched maki, sushi boats): https://www.oishiinori.com/sushi
+- Ramen: https://www.oishiinori.com/ramen
+- Delivery areas and fees (Santa Cruz, Laguna): https://www.oishiinori.com/delivery
 - Catering: https://www.oishiinori.com/catering
 - Events (Sushi Making Class for Kids): https://www.oishiinori.com/events
 - Customer reviews: https://www.oishiinori.com/review
@@ -16,6 +19,10 @@ Oishii Nori is a single-location restaurant known for baked sushi, maki rolls, r
 ## Location
 
 Pedro Guevara Ave, Santa Cruz, Laguna 4009, Philippines
+
+## Delivery
+
+Delivers to the barangays of Santa Cruz, Laguna, with a fee per barangay; the full list and fees are at https://www.oishiinori.com/delivery. No delivery outside Santa Cruz yet. Customers from nearby towns (Pagsanjan, Pila, Lumban, Victoria, Magdalena) can order online for pickup.
 
 ## Hours
 
