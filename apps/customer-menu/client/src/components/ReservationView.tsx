@@ -14,6 +14,7 @@ import { isValidPhilippinePhone, PH_PHONE_HINT } from '@/lib/validators';
 import { formatTime12h } from '@/lib/utils';
 import { useQueuedCompletion } from '@/hooks/useQueuedCompletion';
 import QueuedSubmissionView from '@/components/QueuedSubmissionView';
+import { startVisiblePolling } from '@/lib/polling';
 
 declare global {
   interface Window {
@@ -25,7 +26,7 @@ function toast(message: string, type: 'success' | 'error' | 'info' = 'info') {
   window.toast?.(message, type);
 }
 
-const STATUS_POLL_MS = 5_000;
+const STATUS_POLL_MS = 15_000;
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
@@ -99,12 +100,11 @@ export default function ReservationView({ onBack }: { onBack: () => void }) {
 
   useEffect(() => {
     if (!reservation || reservation.status !== 'pending') return;
-    const interval = setInterval(() => {
+    return startVisiblePolling(() => {
       fetchReservationStatus(reservation.id)
         .then(setReservation)
         .catch(() => {});
     }, STATUS_POLL_MS);
-    return () => clearInterval(interval);
   }, [reservation]);
 
   async function handleSubmit() {

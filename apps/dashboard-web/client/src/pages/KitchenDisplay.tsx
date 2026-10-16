@@ -55,8 +55,11 @@ const STATUS_LABEL: Record<KitchenStatus, string> = {
   completed: 'Completed',
 };
 
-/** Kitchen tablet poll while auto-printing (new orders print within ~5s). */
-const AUTO_POLL_MS = 5_000;
+/** Kitchen tablet poll while auto-printing (new orders print within ~15s). Was 5s,
+ * which alone used up Vercel's monthly CPU budget -- see MIN_POLL_INTERVAL_MS. */
+const AUTO_POLL_MS = 15_000;
+/** Printer Setup shows "Online" within 90s of the last heartbeat. */
+const HEARTBEAT_MS = 60_000;
 /** Orders this tablet already printed -- survives a reload so nothing prints twice. */
 const AUTO_PRINTED_KEY = 'oishii.kitchen.autoPrinted';
 function readAutoPrinted(): Set<string> {
@@ -268,7 +271,7 @@ export default function KitchenDisplay() {
     if (!printOn) return;
     postKitchenPrinterHeartbeat({ status: 'ok' }).catch(() => {});
   }, [printOn]);
-  useVisiblePolling(reportHeartbeat, POLL_INTERVAL_MS);
+  useVisiblePolling(reportHeartbeat, HEARTBEAT_MS);
 
   const sizeIndex = useMemo(() => {
     const map = new Map<string, { product: ApiProduct; size: ApiProductSize }>();

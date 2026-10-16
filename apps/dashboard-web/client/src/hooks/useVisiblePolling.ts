@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { effectivePollMs } from '@/lib/constants';
 
 /**
  * Drop-in replacement for the `load(); setInterval(load, ms); clearInterval`
@@ -6,9 +7,13 @@ import { useEffect } from 'react';
  * Pending Orders, Receive Shipment, Loss Log, Utility Log, Command Center,
  * InventoryAlertsContext) -- none of those checked document.visibilityState,
  * so a backgrounded tab polled exactly as often as a foregrounded one. This
- * keeps the timer running (cheap) but skips the actual fetch while hidden,
- * and refetches immediately the moment the tab becomes visible again so
- * data isn't stale when you switch back to it.
+ * skips the actual fetch while hidden, and refetches immediately the moment
+ * the tab becomes visible again so data isn't stale when you switch back.
+ *
+ * Every wait goes through effectivePollMs (lib/constants.ts): never below
+ * MIN_POLL_INTERVAL_MS, and slowed right down outside business hours. It's
+ * re-evaluated on each tick, so a screen left open overnight speeds back up
+ * on its own in the morning.
  *
  * Deliberately mirrors the exact dependency semantics the original
  * `useEffect(() => {...}, [load])` call sites had (effect re-fires and
@@ -21,11 +26,14 @@ export function useVisiblePolling(load: () => void, intervalMs: number) {
   useEffect(() => {
     load();
 
-    const interval = setInterval(() => {
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
       if (document.visibilityState === 'visible') {
         load();
       }
-    }, intervalMs);
+      timer = setTimeout(tick, effectivePollMs(intervalMs));
+    };
+    timer = setTimeout(tick, effectivePollMs(intervalMs));
 
     const onVisibility = () => {
       if (document.visibilityState === 'visible') {
@@ -35,7 +43,7 @@ export function useVisiblePolling(load: () => void, intervalMs: number) {
     document.addEventListener('visibilitychange', onVisibility);
 
     return () => {
-      clearInterval(interval);
+      clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisibility);
     };
   }, [load, intervalMs]);

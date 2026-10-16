@@ -1,6 +1,49 @@
 # Oishii Nori Command Suite — Session Handoff
 
-## 2026-10-16: local keyword SEO (landing page). Uncommitted, not deployed.
+## 2026-10-16: Vercel paused for CPU; API and polling made ~4x cheaper, with guardrails
+
+**What happened:** Vercel paused every project in the `vince-tamis` team (Hobby plan) on 2026-10-16. The API used 4 h 28 m of the plan's 4 h/month Active CPU. The pause lifts on 2026-11-15 unless the team is upgraded to Pro; the owner is upgrading for October.
+
+**Cause, measured locally against live data:**
+- The kitchen tablet polled 4 endpoints every 5 s, all day.
+- `GET /transactions?active_since=today` cost ~100 ms CPU per call by evening. Its addon, bundle, delivery and hanged lookups used `in.(<~280 UUIDs>)` URLs, and httpx validates each character in Python. It made 19 Supabase round trips per call.
+- postgrest-py parses every response through a recursive pydantic type: 14.6 ms for a 258 KB body vs 1.6 ms with `json.loads`.
+
+**Changes:**
+- **One request per list.** `transactions.py` `_embedded_transactions`: every `GET /transactions` variant (active list, date, status, kitchen status, advance orders) is one PostgREST request that embeds the child rows through foreign keys. Any `APIError` falls back to the old code path.
+  - Verified identical JSON on live data for 9 query shapes, up to 545 orders.
+  - CPU went from 85–100 ms to 13–23 ms per call.
+- **Shared 10 s response cache** (`_live_cache`) for `/transactions*` and `/digital-orders`, stored as JSON bytes.
+  - `main.py` `cpu_meter` clears it after every successful non-GET request.
+  - `advanceWindow()` rounds to the minute so screens share cache keys.
+- **Faster JSON parsing:** `deps.py` `_use_fast_json_parsing` makes postgrest parse with `json.loads`. It's guarded, so it does nothing if postgrest changes.
+- **Login check cached:** `auth.py` reuses a verified token for up to 60 s, never past its `exp`. A deactivation or role change takes up to a minute to apply.
+- **Scheduled-order release check** (`fire_due_scheduled_orders`) runs at most every 20 s per instance.
+- **Lazy imports:** `openai` and `reportlab` load only when used. Cold-start CPU went from 1.1 s to 0.65 s.
+- **Poll rates:**
+
+  | Screen | Before | After |
+  |---|---|---|
+  | Kitchen tablet | 5 s | 15 s |
+  | Kitchen heartbeat | 20 s | 60 s |
+  | Default boards (`POLL_INTERVAL_MS`) | 20 s | 30 s |
+  | New-order alarm | 20 s | 20 s |
+  | TV board | 5 s | 10 s |
+  | Customer order status | 5 s | 10 s |
+  | Customer reservation status | 5 s | 15 s |
+  | Customer shop-open check | 30 s | 120 s |
+
+**Guardrails:**
+1. **Screens:** `useVisiblePolling` (dashboard) and `lib/polling.ts` (customer menu) never poll faster than 15 s (dashboard only). Outside PH 09:00–23:00 they poll every 5 minutes. They skip hidden tabs and refresh as soon as a tab becomes visible.
+2. **API:** every response has a `Server-Timing: cpu;dur=…` header. Requests over 60 ms CPU log `CPU budget: …` warnings in Vercel logs.
+3. **Budget script:** `services/api-fastapi/scripts/cpu_budget.py` projects monthly CPU from the poll schedule using real endpoint costs. It exits 1 above 3 h (75% of Hobby).
+   - Last run: 2.8 h/month with pessimistic assumptions (2 cashiers with every board open, evening-sized order list all day).
+   - Keep its `SCHEDULE` in step when a poll is added.
+   - Tests: `tests/test_cpu_guardrails.py`.
+
+**Not changed:** the print bridge still polls every 20 s by default (`POLL_INTERVAL_SECONDS`). It's counted as 0 devices in the budget; raise it if the bridge comes back into use.
+
+## 2026-10-16: local keyword SEO (landing page). Deployed (a672ff6, a8f538b).
 
 Goal: rank for "sushi in Laguna", "ramen in Laguna", "sushi shop Santa Cruz Laguna" and similar searches. Keyword map: `apps/landing-page/SEO_KEYWORDS.md`.
 

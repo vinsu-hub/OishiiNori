@@ -1,11 +1,14 @@
+import threading
 import uuid
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from cachetools import TTLCache
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from postgrest.exceptions import APIError
+from pydantic import TypeAdapter
 
 from app.auth import CurrentUser, get_current_user, require_role, verify_employee_pin
 from app.bundles import atomic_bundles_available, bundle_rpc, completed_bundle_ids, legacy_recipe_sizes, pending_bundle_item_ids
@@ -1223,6 +1226,114 @@ def _validate_reservation_override(supabase, override_id, table_id, blocking_res
     return override["id"]
 
 
+# The kitchen tablet and every cashier screen poll the same live lists. A built
+# response is reused for up to 10 s, and main.py's cpu_meter clears it after
+# every successful write on this instance, so a sale or status change shows on
+# the next poll. Cached as JSON bytes: re-serializing was part of the cost.
+_LIVE_CACHE_SECONDS = 10
+_live_cache: TTLCache = TTLCache(maxsize=32, ttl=_LIVE_CACHE_SECONDS)
+_live_cache_lock = threading.Lock()
+_transactions_json = TypeAdapter(list[TransactionResponse])
+
+
+def clear_live_cache() -> None:
+    with _live_cache_lock:
+        _live_cache.clear()
+
+
+def live_cache_get(key) -> bytes | None:
+    with _live_cache_lock:
+        return _live_cache.get(key)
+
+
+def live_cache_put(key, body: bytes) -> Response:
+    with _live_cache_lock:
+        _live_cache[key] = body
+    return Response(body, media_type="application/json")
+
+
+def _embedded_transactions(supabase, columns: str, narrow) -> list[dict]:
+    """Every GET /transactions list (Kitchen Display, Order Queue, Floor Plan,
+    advance orders, the print bridge) in ONE PostgREST request. `narrow` adds
+    the filters and ordering to the query.
+
+    The general path below looks up addons, bundle state, deliveries and
+    planned flags with `in.(<every item id>)` filters -- by evening that's
+    six URLs carrying ~280 UUIDs each, and httpx validates every character of
+    them in pure Python. Profiled at ~100 ms CPU per call, polled all day by
+    the kitchen tablet: that alone used up Vercel Hobby's monthly Active CPU
+    (paused 2026-10-16). Embedding the same rows through their foreign keys
+    gives an identical response for a fraction of the CPU.
+
+    Assumes every migration through 0075 is applied; any APIError (missing
+    table/relationship) makes the caller fall back to the general path.
+    """
+    item_columns = (
+        "id, transaction_id, product_size_id, quantity, unit_price, held_ingredients, "
+        "discount_type_id, discount_name, discount_percentage, discount_vat_exempt, discount_amount"
+    )
+    select = (
+        f"{columns}, "
+        f"transaction_items({item_columns}, "
+        "transaction_item_addons(*, menu_addons(name)), "
+        "bundle_fulfillment_batches(restored_at, bundle_pending_deductions(resolved_at)), "
+        "bundle_fulfillments(quantity), "
+        "product_sizes(bundle_components(total_pieces))), "
+        "deliveries(*, profiles(full_name)), "
+        "pos_hanged_orders(transaction_id), "
+        "digital_orders(scheduled_for)"
+    )
+    transactions = _page_rows(narrow(supabase.table("transactions").select(select)))
+
+    def as_list(value) -> list:
+        if value is None:
+            return []
+        return value if isinstance(value, list) else [value]
+
+    for t in transactions:
+        items = t.pop("transaction_items", None) or []
+        for item in items:
+            addons = []
+            for row in item.pop("transaction_item_addons", None) or []:
+                addon_info = row.pop("menu_addons", None) or {}
+                row["addon_name"] = addon_info.get("name")
+                addons.append(row)
+            item["addons"] = addons
+
+            # Same rules as bundles.completed_bundle_ids / pending_bundle_item_ids.
+            batches = as_list(item.pop("bundle_fulfillment_batches", None))
+            legacy = item.pop("bundle_fulfillments", None) or []
+            size = item.pop("product_sizes", None) or {}
+            if batches:
+                fulfilled = any(b.get("restored_at") is None for b in batches)
+            elif legacy:
+                config = size.get("bundle_components")
+                if isinstance(config, list):
+                    config = config[0] if len(config) == 1 else None
+                total = sum(r["quantity"] for r in legacy)
+                fulfilled = bool(config) and total == float(item["quantity"]) * config["total_pieces"]
+            else:
+                fulfilled = False
+            pending = any(
+                p.get("resolved_at") is None
+                for b in batches for p in as_list(b.get("bundle_pending_deductions"))
+            )
+            item["bundle_fulfilled"] = fulfilled
+            item["bundle_deduction_status"] = ("pending_recipe" if pending else "applied") if fulfilled else None
+        t["_items"] = items
+
+        deliveries = as_list(t.pop("deliveries", None))
+        t["delivery"] = None
+        if t.get("order_type") == "delivery" and deliveries:
+            row = deliveries[-1]
+            rider = row.pop("profiles", None) or {}
+            row["rider_name"] = rider.get("full_name")
+            t["delivery"] = row
+        t["is_hanged"] = bool(as_list(t.pop("pos_hanged_orders", None)))
+        t["is_scheduled"] = any(d.get("scheduled_for") for d in as_list(t.pop("digital_orders", None)))
+    return transactions
+
+
 @router.get("/transactions", response_model=list[TransactionResponse])
 def list_transactions(
     on_date: date | None = Query(None, alias="date"),
@@ -1237,6 +1348,11 @@ def list_transactions(
     """`active_since` limits the list to orders still needing attention
     (kitchen not completed, or payment unpaid) plus everything opened on or
     after that PH date, so live boards don't load the whole order history."""
+    cache_key = tuple(str(v) for v in (on_date, status_filter, kitchen_status, advance_order_type,
+                                       advance_from, advance_before, active_since))
+    body = live_cache_get(cache_key)
+    if body is not None:
+        return Response(body, media_type="application/json")
     supabase = get_supabase()
     # Release approved advance orders that are now within their kitchen lead
     # window, so they show up in this very response. Imported lazily because
@@ -1260,12 +1376,14 @@ def list_transactions(
         columns += ", scheduled_for, pickup_customer_name, pickup_customer_phone, advance_schedule_revision, advance_schedule_updated_at, advance_schedule_updated_by"
     elif advance_order_type:
         raise HTTPException(status_code=501, detail="Advance orders need database migration 0068")
-    query = supabase.table("transactions").select(columns)
+    # Each filter is kept as a function so the one-request embedded read and
+    # the general fallback below apply exactly the same ones.
+    filters = []
     if on_date:
         start, end = ph_day_bounds_utc(on_date)
-        query = query.gte("opened_at", start).lte("opened_at", end)
+        filters.append(lambda q: q.gte("opened_at", start).lte("opened_at", end))
     if status_filter:
-        query = query.eq("status", status_filter)
+        filters.append(lambda q: q.eq("status", status_filter))
     if active_since:
         since_start, _ = ph_day_bounds_utc(active_since)
         active = [f"opened_at.gte.{since_start}"]
@@ -1273,21 +1391,33 @@ def list_transactions(
             active.append("kitchen_status.neq.completed")
         if _payment_status_supported_check(supabase):
             active.append("payment_status.eq.unpaid")
-        query = query.or_(",".join(active))
+        active_filter = ",".join(active)
+        filters.append(lambda q: q.or_(active_filter))
     if kitchen_status and _kitchen_status_supported_check(supabase):
-        query = query.eq("kitchen_status", kitchen_status)
+        filters.append(lambda q: q.eq("kitchen_status", kitchen_status))
     if advance_order_type:
         if not advance_from or not advance_before or advance_from.tzinfo is None or advance_before.tzinfo is None or advance_before <= advance_from:
             raise HTTPException(status_code=400, detail="Advance order time range is required")
-        query = (query.eq("order_type", advance_order_type).in_("order_source", ["pos", "grab"]).neq("status", "voided")
-                 .not_.is_("scheduled_for", "null")
-                 .gte("scheduled_for", advance_from.astimezone(timezone.utc).isoformat())
-                 .lt("scheduled_for", advance_before.astimezone(timezone.utc).isoformat())
-                 .order("scheduled_for").order("id"))
-        transactions = _page_rows(query)
-    else:
-        query = query.order("opened_at", desc=True).order("id")
-        transactions = _page_rows(query) if kitchen_status or active_since else query.execute().data
+        filters.append(lambda q: (
+            q.eq("order_type", advance_order_type).in_("order_source", ["pos", "grab"]).neq("status", "voided")
+            .not_.is_("scheduled_for", "null")
+            .gte("scheduled_for", advance_from.astimezone(timezone.utc).isoformat())
+            .lt("scheduled_for", advance_before.astimezone(timezone.utc).isoformat())
+        ))
+
+    def narrow(q):
+        for apply_filter in filters:
+            q = apply_filter(q)
+        if advance_order_type:
+            return q.order("scheduled_for").order("id")
+        return q.order("opened_at", desc=True).order("id")
+
+    fast = _try_embedded(supabase, columns, narrow)
+    if fast is not None:
+        return _cached_response(cache_key, fast)
+
+    query = narrow(supabase.table("transactions").select(columns))
+    transactions = _page_rows(query) if kitchen_status or active_since or advance_order_type else query.execute().data
     if not transactions:
         return []
 
@@ -1313,19 +1443,32 @@ def list_transactions(
     _attach_deliveries(supabase, transactions)
     _attach_planned_flags(supabase, transactions)
 
-    out = []
-    for t in transactions:
-        t.setdefault("kitchen_status", "queued")
-        t.setdefault("order_number", None)
-        t.setdefault("order_type", None)
-        t.setdefault("order_source", "pos")
-        t.setdefault("table_number", None)
-        t.setdefault("guest_count", None)
-        t.setdefault("payment_method", None)
-        t.setdefault("card_type", None)
-        t.setdefault("force_vat_exempt", False)
-        out.append(TransactionResponse(**t, items=items_by_transaction.get(t["id"], [])))
-    return out
+    return [_transaction_response(t, items_by_transaction.get(t["id"], [])) for t in transactions]
+
+
+def _cached_response(cache_key, transactions: list[TransactionResponse]) -> Response:
+    return live_cache_put(cache_key, _transactions_json.dump_json(transactions))
+
+
+def _try_embedded(supabase, columns: str, narrow) -> list[TransactionResponse] | None:
+    try:
+        transactions = _embedded_transactions(supabase, columns, narrow)
+    except APIError:
+        return None
+    return [_transaction_response(t, t.pop("_items")) for t in transactions]
+
+
+def _transaction_response(t: dict, items: list) -> TransactionResponse:
+    t.setdefault("kitchen_status", "queued")
+    t.setdefault("order_number", None)
+    t.setdefault("order_type", None)
+    t.setdefault("order_source", "pos")
+    t.setdefault("table_number", None)
+    t.setdefault("guest_count", None)
+    t.setdefault("payment_method", None)
+    t.setdefault("card_type", None)
+    t.setdefault("force_vat_exempt", False)
+    return TransactionResponse(**t, items=items)
 
 
 @router.get("/transactions/advance-orders", response_model=list[TransactionResponse])

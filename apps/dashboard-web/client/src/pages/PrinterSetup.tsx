@@ -17,6 +17,7 @@ import {
   type TabletRole,
 } from '@/lib/printerPrefs';
 import { useAuth } from '@/contexts/AuthContext';
+import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 
 const POLL_MS = 15_000;
 
@@ -121,11 +122,7 @@ export default function PrinterSetup() {
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => {
-    load();
-    const interval = setInterval(load, POLL_MS);
-    return () => clearInterval(interval);
-  }, [load]);
+  useVisiblePolling(load, POLL_MS);
   useEffect(() => {
     // Best-effort: the sample still prints with the default header if this fails.
     fetchBusinessSettings()

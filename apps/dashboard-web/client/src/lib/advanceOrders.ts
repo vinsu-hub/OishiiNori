@@ -23,8 +23,11 @@ export function formatAdvanceTime(iso: string): string {
 }
 
 export function advanceWindow(now = new Date()): { from: string; before: string } {
+  // Whole minutes, so every screen polling within the same minute asks for the
+  // same range and shares the API's 10-second response cache.
+  const minute = Math.floor(now.getTime() / 60_000) * 60_000;
   return {
-    from: new Date(now.getTime() - 7 * 86400000).toISOString(),
-    before: new Date(now.getTime() + 8 * 86400000).toISOString(),
+    from: new Date(minute - 7 * 86400000).toISOString(),
+    before: new Date(minute + 8 * 86400000).toISOString(),
   };
 }

@@ -4,7 +4,6 @@ from collections import defaultdict
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
-from openai import OpenAI
 
 from app.attendance_utils import hr_table
 from app.auth import CurrentUser, get_current_user, require_role_or_grant
@@ -633,6 +632,10 @@ def query_oishi_ai(body: OishiAiQueryRequest, user: CurrentUser = Depends(get_cu
         "menu_catalog": _menu_catalog_analysis(supabase),
         "menu_addons": _menu_addons(supabase),
     }
+
+    # Imported here: the openai package is ~0.3 s of CPU on every cold start,
+    # and only Oishii AI needs it.
+    from openai import OpenAI
 
     client = OpenAI(api_key=api_key, base_url=GROQ_BASE_URL)
     try:

@@ -1,7 +1,11 @@
+import base64
+import hashlib
+import json
 import time
 from dataclasses import dataclass
 
 import bcrypt
+from cachetools import TTLCache
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from supabase_auth.errors import AuthRetryableError
@@ -101,9 +105,39 @@ def _get_user_with_retry(supabase, token: str):
         return supabase.auth.get_user(token)
 
 
+# Every polled dashboard request used to make two Supabase round trips here
+# (auth.get_user + the profile row) before doing its real work -- about half
+# the CPU of a typical poll. A verified token is reused for up to 60 s (never
+# past its own expiry), so a deactivation or role change takes effect within
+# a minute instead of instantly. Keyed by a hash so raw tokens aren't held.
+_AUTH_CACHE_SECONDS = 60
+_auth_cache: TTLCache = TTLCache(maxsize=512, ttl=_AUTH_CACHE_SECONDS)
+
+
+def _token_expiry(token: str) -> float:
+    """JWT `exp` (unverified -- only used to shorten the cache, never to trust a token)."""
+    try:
+        payload = token.split(".")[1]
+        return float(json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))["exp"])
+    except Exception:
+        return 0.0
+
+
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> CurrentUser:
+    if credentials is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
+    key = hashlib.sha256(credentials.credentials.encode("utf-8")).hexdigest()
+    cached = _auth_cache.get(key)
+    if cached and cached[0] > time.time():
+        return cached[1]
+    user = _verify_user(credentials)
+    _auth_cache[key] = (min(time.time() + _AUTH_CACHE_SECONDS, _token_expiry(credentials.credentials)), user)
+    return user
+
+
+def _verify_user(credentials: HTTPAuthorizationCredentials | None) -> CurrentUser:
     """Validates the caller's Supabase-issued JWT and loads their role.
 
     Delegates token verification to Supabase Auth itself (rather than

@@ -47,6 +47,7 @@ import ReservationView from '@/components/ReservationView';
 import QueuedSubmissionView from '@/components/QueuedSubmissionView';
 import { isValidPhilippinePhone, PH_PHONE_HINT } from '@/lib/validators';
 import { useQueuedCompletion } from '@/hooks/useQueuedCompletion';
+import { startVisiblePolling } from '@/lib/polling';
 
 declare global {
   interface Window {
@@ -100,7 +101,8 @@ interface AddonLine {
   quantity: number;
 }
 
-const STATUS_POLL_MS = 5_000;
+const STATUS_POLL_MS = 10_000;
+const SHOP_OPEN_POLL_MS = 120_000;
 
 export default function App() {
   const [tableNumber] = useState<number | null>(() => {
@@ -221,10 +223,10 @@ export default function App() {
         });
     }
     load();
-    const interval = setInterval(load, 30000);
+    const stop = startVisiblePolling(load, SHOP_OPEN_POLL_MS);
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      stop();
     };
   }, []);
   const [customerNote, setCustomerNote] = useState('');
@@ -260,12 +262,11 @@ export default function App() {
 
   useEffect(() => {
     if (!order || order.status !== 'pending') return;
-    const interval = setInterval(() => {
+    return startVisiblePolling(() => {
       fetchOrderStatus(order.id)
         .then(setOrder)
         .catch(() => {});
     }, STATUS_POLL_MS);
-    return () => clearInterval(interval);
   }, [order]);
 
   const sizeIndex = useMemo(() => {

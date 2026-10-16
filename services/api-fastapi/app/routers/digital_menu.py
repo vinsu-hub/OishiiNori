@@ -24,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 
 from cachetools import TTLCache
 from pydantic import TypeAdapter
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 
 from app.auth import CurrentUser, get_current_user
 from app.deps import get_supabase
@@ -35,7 +35,7 @@ from app.routers.business_days import is_open_today
 from app.routers.products import _list_products_data
 from app.routers.recipes import _get_recipe_data
 from app.routers.reservations import ADVANCE_ORDER_LEAD_MINUTES
-from app.routers.transactions import _create_transaction_row, _get_vat_rate
+from app.routers.transactions import _create_transaction_row, _get_vat_rate, live_cache_get, live_cache_put
 from app.schemas import (
     BoatDepositReturnRequest,
     CreateDigitalOrderRequest,
@@ -435,6 +435,20 @@ def list_digital_orders(
     limit: int = Query(200, le=500),
     user: CurrentUser = Depends(get_current_user),
 ):
+    # Polled by every cashier screen's new-order alarm and the kitchen tablet;
+    # shares transactions.py's 10 s cache, which any successful write clears.
+    cache_key = ("digital-orders", status, limit)
+    body = live_cache_get(cache_key)
+    if body is not None:
+        return Response(body, media_type="application/json")
+    return live_cache_put(cache_key, _digital_orders_json.dump_json(
+        _digital_orders_json.validate_python(_list_digital_orders(status, limit))))
+
+
+_digital_orders_json = TypeAdapter(list[DigitalOrderResponse])
+
+
+def _list_digital_orders(status: str | None, limit: int) -> list[dict]:
     supabase = get_supabase()
     query = supabase.table("digital_orders").select("*")
     if status:
@@ -691,6 +705,8 @@ def approve_digital_order(order_id: str, user: CurrentUser = Depends(get_current
 # don't exist yet (migration 0054 not applied) or the DB hiccups, back off so
 # every poll doesn't repeat a failing query.
 _fire_backoff_until = 0.0
+_fire_next_check = 0.0
+FIRE_CHECK_SECONDS = 20
 
 
 def fire_due_scheduled_orders(supabase) -> int:
@@ -698,9 +714,13 @@ def fire_due_scheduled_orders(supabase) -> int:
     lead window into the kitchen. Safe to call from many concurrent pollers:
     each order is claimed with one conditional UPDATE, so exactly one caller
     fires it. Never raises."""
-    global _fire_backoff_until
-    if time.monotonic() < _fire_backoff_until:
+    global _fire_backoff_until, _fire_next_check
+    now = time.monotonic()
+    if now < _fire_backoff_until or now < _fire_next_check:
         return 0
+    # Every list poll calls this; checking once per 20 s per instance is plenty
+    # against a 20-minute lead window, and saves a query (CPU) on most polls.
+    _fire_next_check = now + FIRE_CHECK_SECONDS
     fired = 0
     try:
         horizon = (datetime.now(timezone.utc) + timedelta(minutes=ADVANCE_ORDER_LEAD_MINUTES)).isoformat()

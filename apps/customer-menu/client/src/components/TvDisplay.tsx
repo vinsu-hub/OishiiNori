@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { startVisiblePolling } from '@/lib/polling';
 
 // Read-only counter ticket board. Open /tv?demo=1 for an entirely local preview.
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string;
-const POLL_MS = 5000;
+const POLL_MS = 10_000;
 
 interface QueueDisplay {
   preparing: number[];
@@ -97,8 +98,8 @@ export default function TvDisplay() {
       }
     }
     void load();
-    const id = window.setInterval(load, POLL_MS);
-    return () => { cancelled = true; window.clearInterval(id); };
+    const stop = startVisiblePolling(() => void load(), POLL_MS);
+    return () => { cancelled = true; stop(); };
   }, [demo]);
 
   useEffect(() => {

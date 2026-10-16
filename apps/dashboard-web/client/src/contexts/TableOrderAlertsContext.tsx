@@ -4,7 +4,6 @@ import { toast } from 'sonner';
 import { ApiDigitalOrder, fetchDigitalOrders } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
-import { POLL_INTERVAL_MS } from '@/lib/constants';
 import { playOnlineOrderBeep, playTableOrderBeep } from '@/lib/orderSounds';
 import { formatCurrency } from '@/lib/utils';
 
@@ -134,7 +133,8 @@ export function TableOrderAlertsProvider({ children }: { children: React.ReactNo
       });
   }, [tableEnabled, onlineEnabled, navigate, user?.id]);
 
-  useVisiblePolling(load, POLL_INTERVAL_MS);
+  // The new-order alarm stays a little quicker than the 30s boards; it's a cheap call.
+  useVisiblePolling(load, 20_000);
 
   return (
     <TableOrderAlertsContext.Provider value={{

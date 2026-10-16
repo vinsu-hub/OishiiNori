@@ -25,7 +25,6 @@ from app.auth import (
 )
 from app.permissions import EXECUTIVE_ONLY_GRANTS, GRANTABLE_PAGES
 from app.deps import get_supabase
-from app.payroll_pdf import build_payslip_pdf
 from app.rate_limit import enforce_rate_limit
 from app.ph_time import today_ph
 from app.schemas import (
@@ -52,6 +51,13 @@ from app.schemas import (
 )
 
 router = APIRouter(tags=["hr"])
+
+
+def build_payslip_pdf(*args, **kwargs):
+    """reportlab costs CPU on every cold start; load it only when a payslip is printed."""
+    from app.payroll_pdf import build_payslip_pdf as build
+
+    return build(*args, **kwargs)
 
 # The old shared demo password. New and reset accounts now get a unique
 # temporary password (_temp_password) instead; this one is kept only so

@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 import traceback
 
 from fastapi import FastAPI, Request
@@ -83,6 +84,29 @@ app.add_middleware(
 )
 
 logger = logging.getLogger("uvicorn.error")
+
+# CPU guardrail. Vercel bills (and on Hobby, pauses at 4 h/month) Active CPU,
+# not wall time -- waiting on Supabase is free, Python work isn't. On
+# 2026-10-16 every app was paused because one polled endpoint cost ~100 ms of
+# CPU per call. Every response now reports its CPU in a Server-Timing header
+# (visible in the browser's Network tab), and anything over the threshold is
+# logged as a warning in Vercel's logs with its route, so the next expensive
+# endpoint shows up before it becomes a bill or a pause. Process CPU, so a
+# request that overlaps another on the same instance can read a bit high.
+SLOW_CPU_MS = 60
+
+
+@app.middleware("http")
+async def cpu_meter(request: Request, call_next):
+    started = time.process_time()
+    response = await call_next(request)
+    cpu_ms = (time.process_time() - started) * 1000
+    if request.method not in ("GET", "HEAD", "OPTIONS") and response.status_code < 400:
+        transactions.clear_live_cache()
+    response.headers["Server-Timing"] = f"cpu;dur={cpu_ms:.1f}"
+    if cpu_ms > SLOW_CPU_MS:
+        logger.warning("CPU budget: %s %s took %.0f ms CPU", request.method, request.url.path, cpu_ms)
+    return response
 
 
 @app.exception_handler(Exception)

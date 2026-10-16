@@ -40,6 +40,37 @@ class _RetryOnDisconnectTransport(httpx.HTTPTransport):
             return super().handle_request(request)
 
 
+def _use_fast_json_parsing() -> None:
+    """postgrest-py parses every response through a recursive pydantic JSON
+    type -- measured at 14.6 ms CPU for a 258 KB order list where json.loads
+    takes 1.6 ms. Vercel bills that CPU (and paused the Hobby plan over it on
+    2026-10-16), so parse with json.loads instead. Same Python values, same
+    fallback to the raw text for a non-JSON body. If a future postgrest moves
+    this method, this quietly does nothing and the stock parser runs.
+    """
+    import json
+
+    from postgrest.base_request_builder import APIResponse
+
+    original = getattr(APIResponse, "from_http_request_response", None)
+    if original is None or getattr(original, "_oishii_fast", False):
+        return
+
+    def from_http_request_response(request_response):
+        count = APIResponse._get_count_from_http_request_response(request_response)
+        try:
+            data = json.loads(request_response.content)
+        except ValueError:
+            data = request_response.text if len(request_response.text) > 0 else []
+        return APIResponse.model_construct(data=data, count=count)
+
+    from_http_request_response._oishii_fast = True
+    APIResponse.from_http_request_response = staticmethod(from_http_request_response)
+
+
+_use_fast_json_parsing()
+
+
 @lru_cache
 def get_supabase() -> Client:
     """Cached service-role Supabase client for the whole process.
