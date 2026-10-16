@@ -7,12 +7,21 @@ Research: 2026-10-16. SERP-overlap clustering was done with web search. US-locat
 | URL | Main keyword | Supporting keywords | Intent |
 |---|---|---|---|
 | `/` | Japanese restaurant Santa Cruz Laguna | sushi Santa Cruz Laguna, sushi shop Santa Cruz Laguna, Japanese food Laguna, Oishii Nori | Local pack, brand |
-| `/sushi` | sushi in Laguna | baked sushi Laguna, sushi bake Santa Cruz, maki rolls Laguna, torched maki, masarap na sushi sa Laguna, murang sushi Santa Cruz | Local pack, listicle |
+| `/sushi` | sushi in Laguna | sushi bake Laguna, sushi bake Santa Cruz, baked sushi Laguna, maki rolls Laguna, torched maki, masarap na sushi sa Laguna, murang sushi Santa Cruz | Local pack, listicle |
 | `/ramen` | ramen in Laguna | ramen Santa Cruz Laguna, ramen near me, saan may ramen sa Laguna, spicy ramen, Oishii Nori Ramen | Local pack, listicle |
 | `/delivery` | sushi delivery Santa Cruz Laguna | Japanese food delivery Laguna, ramen delivery Santa Cruz, baked sushi delivery, [barangay] + food delivery | Transactional |
 | `/catering` | sushi catering Laguna | sushi boat Laguna, sushi party tray Laguna, Japanese food catering Santa Cruz, baked sushi party tray | Commercial |
 | `/our-menu` | Oishii Nori menu | takoyaki Santa Cruz Laguna, bento, donburi, Japanese curry, drip tea | Brand, navigational |
 | `/events` | kids sushi making class Laguna | sushi class Santa Cruz | Niche |
+
+## Philippine search wording
+
+Write the way people in the Philippines search, not US English:
+- **"sushi bake"**, not only "baked sushi". It's the PH name for the dish, and it leads the /sushi title, H1 and FAQ.
+- **pax** for serving sizes, **barkada**, **handaan**, **binyag**, and **party food trays** for catering.
+- **Taglish questions** in the FAQs: "Magkano…?", "Saan may…?", "Pwede bang pa-deliver…?". People ask Google and AI assistants this way.
+- Prices always in **₱ / PHP**.
+- **Location tags:** `lang="en-PH"`, `og:locale=en_PH` and `geo.region=PH-LAG` meta tags in `client/index.html`. The Restaurant schema already has `addressCountry: PH`. The `.com` domain is fine; Google takes country from content, address, Business Profile and links.
 
 ## Rules
 

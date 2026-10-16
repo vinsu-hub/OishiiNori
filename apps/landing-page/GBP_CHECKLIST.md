@@ -20,7 +20,7 @@ For searches like "sushi in Laguna" or "ramen near me", the Maps results at the 
 7. **Service area:** Santa Cruz, Laguna. Add other towns only if you actually deliver there.
 8. **Description** (paste, max 750 characters):
 
-   > Oishii Nori is a Filipino-owned Japanese restaurant on Pedro Guevara Ave in Santa Cruz, Laguna. We serve baked sushi trays, maki and torched maki rolls, sushi boats, ramen bowls like chasu, black garlic, spicy miso and tantanmen, plus takoyaki, bento, donburi and drip tea. Dine in, take out, or order online for delivery anywhere in Santa Cruz. Planning a party? We do sushi catering with sushi boats and party platters for birthdays, office meetings and family gatherings. Japanese food with a Filipino twist, made fresh for everyday cravings.
+   > Oishii Nori is a Filipino-owned Japanese restaurant on Pedro Guevara Ave in Santa Cruz, Laguna. We serve sushi bake trays, maki and torched maki rolls, sushi boats, ramen bowls like chasu, black garlic, spicy miso and tantanmen, plus takoyaki, bento, donburi and drip tea. Dine in, take out, or order online for delivery anywhere in Santa Cruz. Planning a party? We do sushi catering with sushi boats and party platters for birthdays, office meetings and family gatherings. Japanese food with a Filipino twist, made fresh for everyday cravings.
 
 9. **Menu:** add the main items with prices under Menu (or upload a menu photo). Use the exact dish names from the website.
 10. **Attributes:** dine-in, takeout, delivery, reservations, payment options (cash, GCash), and anything else that is true.

@@ -42,11 +42,11 @@ export const DISH_PAGES: Record<DishRoute, DishPageConfig> = {
     route: '/sushi',
     label: 'OISHII NORI / SUSHI',
     display: ['SUSHI IN', 'LAGUNA.'],
-    keyword: 'Baked sushi, maki rolls & sushi boats in Santa Cruz, Laguna',
+    keyword: 'Sushi bake, maki rolls & sushi boats in Santa Cruz, Laguna',
     japanese: '寿司',
-    intro: 'Looking for sushi in Laguna? Oishii Nori is a Filipino-owned Japanese kitchen on Pedro Guevara Ave in Santa Cruz. We make baked sushi trays for 2 to 6 people, maki rolls by 4 or 8 pieces, torched maki, salmon boxes, and sushi boats for parties. Every price on this page comes straight from our live menu.',
+    intro: 'Looking for sushi in Laguna? Oishii Nori is a Filipino-owned Japanese kitchen on Pedro Guevara Ave in Santa Cruz. We make sushi bake trays (baked sushi) for 2 to 6 pax, maki rolls by 4 or 8 pieces, torched maki, salmon boxes, and sushi boats for parties. Every price on this page comes straight from our live menu.',
     sections: [
-      { heading: 'Baked sushi', categories: ['Baked Sushi'] },
+      { heading: 'Sushi bake', categories: ['Baked Sushi'] },
       { heading: 'Maki rolls', categories: ['Oishii Maki Rolls', 'Torched Maki'] },
       { heading: 'Sushi boats & platters', categories: ['Maki & Gyoza Platters (Bundle)', 'Oishii Platter (Bundle)', 'Salmon Box'] },
     ],
@@ -57,13 +57,13 @@ export const DISH_PAGES: Record<DishRoute, DishPageConfig> = {
       const boat = minPrice(products, ['Maki & Gyoza Platters (Bundle)']);
       return [
         ['Where can I get sushi in Santa Cruz, Laguna?', 'At Oishii Nori, Pedro Guevara Ave, Santa Cruz, Laguna 4009. Dine in, take out, or order online for delivery within Santa Cruz.'],
-        ['What is baked sushi?', 'Sushi rice and toppings such as kani, salmon teriyaki, spicy tuna or scallop, layered in a tray and baked. You scoop it onto nori to eat. Our trays come in Small (2–3 pax), Medium (4–5 pax) and Large (5–6 pax).'],
+        ['What is sushi bake?', 'Also called baked sushi: sushi rice and toppings such as kani, salmon teriyaki, spicy tuna or scallop, layered in a tray and baked. You scoop it onto nori to eat. Our trays come in Small (2–3 pax), Medium (4–5 pax) and Large (5–6 pax).'],
         ['Magkano ang sushi sa Oishii Nori?', [
           maki !== null && `Maki rolls start at ${peso(maki)}`,
-          baked !== null && `baked sushi trays at ${peso(baked)}`,
+          baked !== null && `sushi bake trays at ${peso(baked)}`,
           boat !== null && `sushi boats at ${peso(boat)}`,
         ].filter(Boolean).join(', ') + '. See the full list with sizes above.'],
-        ['Do you deliver sushi?', DELIVERY_ANSWER],
+        ['Pwede bang pa-deliver ang sushi?', DELIVERY_ANSWER],
       ];
     },
   },
@@ -87,7 +87,7 @@ export const DISH_PAGES: Record<DishRoute, DishPageConfig> = {
         ['Saan may ramen sa Santa Cruz, Laguna?', 'Dito sa Oishii Nori, Pedro Guevara Ave, Santa Cruz, Laguna. Dine in, take out, or order online.'],
         ['How much is a bowl of ramen?', bowls.length ? `Bowls start at ${peso(Math.min(...bowls))}, and premium bowls are ${peso(Math.max(...bowls))}.` : 'See the live prices above.'],
         ['Is there spicy ramen?', 'Yes: Spicy Miso and Tantanmen are our spicy bowls. Black Garlic is rich and savory without the heat.'],
-        ['Can I get ramen delivered?', DELIVERY_ANSWER],
+        ['Pwede bang pa-deliver ang ramen?', DELIVERY_ANSWER],
       ];
     },
   },

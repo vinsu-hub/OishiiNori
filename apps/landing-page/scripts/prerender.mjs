@@ -128,7 +128,7 @@ function buildJsonLd({ hours, route, products, deliveryFees, pageMeta, dishPages
       {
         '@type': 'Question',
         name: "What's on the menu?",
-        acceptedAnswer: { '@type': 'Answer', text: 'Sushi, baked sushi, maki, ramen, takoyaki, katsu, bento, and drip tea. Explore our full online menu.' },
+        acceptedAnswer: { '@type': 'Answer', text: 'Sushi bake, maki, ramen, takoyaki, katsu, bento, and drip tea. Explore our full online menu.' },
       },
     ],
   };

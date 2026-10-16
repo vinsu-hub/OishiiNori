@@ -12,11 +12,11 @@ export interface PageMeta { title: string; description: string }
 export const PAGE_META = {
   '/': {
     title: 'Oishii Nori | Japanese Restaurant & Sushi in Santa Cruz, Laguna',
-    description: 'Japanese restaurant and sushi shop in Santa Cruz, Laguna: baked sushi, maki, ramen and takoyaki from a Filipino-owned kitchen on Pedro Guevara Ave. Order online, get delivery, or reserve a table.',
+    description: 'Japanese restaurant and sushi shop in Santa Cruz, Laguna, Philippines: sushi bake, maki, ramen and takoyaki from a Filipino-owned kitchen on Pedro Guevara Ave. Order online, get delivery, or reserve a table.',
   },
   '/sushi': {
-    title: 'Sushi in Laguna: Baked Sushi, Maki & Sushi Boats | Oishii Nori',
-    description: 'Looking for sushi in Laguna? Oishii Nori in Santa Cruz serves baked sushi, maki rolls, torched maki and sushi boats, with live menu prices. Order online for pickup or delivery.',
+    title: 'Sushi in Laguna: Sushi Bake, Maki & Sushi Boats | Oishii Nori',
+    description: 'Looking for sushi in Laguna? Oishii Nori in Santa Cruz serves sushi bake trays, maki rolls, torched maki and sushi boats, with live prices in pesos. Order online for pickup or delivery.',
   },
   '/ramen': {
     title: 'Ramen in Laguna | Oishii Nori Ramen Bowls',
@@ -24,7 +24,7 @@ export const PAGE_META = {
   },
   '/delivery': {
     title: 'Sushi Delivery in Santa Cruz, Laguna | Oishii Nori',
-    description: 'Oishii Nori delivers sushi, ramen and takoyaki across Santa Cruz, Laguna. See every barangay we deliver to and its delivery fee, then order online.',
+    description: 'Pa-deliver sushi, ramen and takoyaki anywhere in Santa Cruz, Laguna. See every barangay we deliver to and its delivery fee, then order online.',
   },
   '/our-menu': {
     title: 'Menu & Prices | Oishii Nori, Santa Cruz, Laguna',
@@ -32,7 +32,7 @@ export const PAGE_META = {
   },
   '/catering': {
     title: 'Sushi Catering & Sushi Boats in Laguna | Oishii Nori',
-    description: 'Sushi catering in Santa Cruz, Laguna: sushi boats, maki platters and party trays for birthdays, office meetings and family gatherings. Send us your occasion.',
+    description: 'Sushi catering in Santa Cruz, Laguna: sushi boats, maki platters and party food trays for birthdays, binyag, office meetings and family handaan. Send us your occasion.',
   },
   '/about': {
     title: 'About Oishii Nori | Our Story, a Filipino-Owned Japanese Kitchen',

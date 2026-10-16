@@ -32,7 +32,7 @@ export default function Delivery({ initialData }: { initialData?: { deliveryFees
   const range = amounts.length ? `${peso(Math.min(...amounts))} to ${peso(Math.max(...amounts))}` : null;
   const faq: [string, string][] = [
     ['Magkano ang delivery fee?', range ? `From ${range}, depending on your barangay. The fee is added automatically when you pick your barangay at checkout.` : 'It depends on your barangay; the fee is added automatically at checkout.'],
-    ['Do you deliver outside Santa Cruz?', `Not yet. If you’re in ${NEARBY_TOWNS.slice(0, -1).join(', ')} or ${NEARBY_TOWNS[NEARBY_TOWNS.length - 1]}, order online for pickup at our kitchen on Pedro Guevara Ave.`],
+    ['Nagde-deliver ba kayo sa labas ng Santa Cruz?', `Not yet. If you’re in ${NEARBY_TOWNS.slice(0, -1).join(', ')} or ${NEARBY_TOWNS[NEARBY_TOWNS.length - 1]}, order online for pickup at our kitchen on Pedro Guevara Ave.`],
     ['What can I order for delivery?', 'The full online menu: sushi, baked sushi, maki, sushi boats, ramen, takoyaki, rice meals and drinks.'],
   ];
   return <div className="on-site"><SiteNav /><main tabIndex={-1} id="main-content" ref={revealRef}>
