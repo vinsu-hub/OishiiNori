@@ -15,6 +15,7 @@ const SPP_UUID = '00001101-0000-1000-8000-00805f9b34fb';
 interface SerialPortLike {
   open(options: { baudRate: number }): Promise<void>;
   close(): Promise<void>;
+  readable: ReadableStream<Uint8Array> | null;
   writable: WritableStream<Uint8Array> | null;
   getInfo?(): { bluetoothServiceClassId?: string };
 }
@@ -58,6 +59,50 @@ export async function chooseSerialPrinter(): Promise<SerialPortLike> {
 const CHUNK_BYTES = 512;
 const CHUNK_PAUSE_MS = 60; // ~8 KB/s, below what Bluetooth SPP printers sustain
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** A Bluetooth link needs a moment after the last close, and the printer may be
+ * waking up -- retry the connect a few times before calling it a failure. */
+const OPEN_RETRY_WAITS_MS = [1500, 3000];
+/** A ticket is ~30 KB at ~8 KB/s; anything far past that means the link died mid-job. */
+const JOB_TIMEOUT_MS = 30_000;
+
+/** What the kitchen should check when the printer can't be reached. */
+export const PRINTER_UNREACHABLE =
+  'Kitchen printer not reachable. Check it is ON with paper, close any other Kitchen Display tab, and make sure no other phone or tablet is connected to it.';
+
+function friendly(error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/open|NetworkError|not found|disconnected|lost/i.test(message) || (error instanceof Error && error.name === 'NetworkError')) {
+    return new Error(PRINTER_UNREACHABLE);
+  }
+  return error instanceof Error ? error : new Error(message);
+}
+
+async function openWithRetry(port: SerialPortLike): Promise<void> {
+  // Left open by a job that died half-way: free it first.
+  if (port.writable || port.readable) await port.close().catch(() => {});
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await port.open({ baudRate: 9600 });
+      return;
+    } catch (error) {
+      if (error instanceof Error && error.name === 'InvalidStateError') {
+        await port.close().catch(() => {});
+      }
+      if (attempt >= OPEN_RETRY_WAITS_MS.length) throw friendly(error);
+      await sleep(OPEN_RETRY_WAITS_MS[attempt]);
+    }
+  }
+}
+
+function withTimeout<T>(work: Promise<T>, ms: number, onTimeout: () => void): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  return Promise.race([
+    work,
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(() => { onTimeout(); reject(new Error(PRINTER_UNREACHABLE)); }, ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
 
 let busy: Promise<void> = Promise.resolve();
 
@@ -66,28 +111,54 @@ export function printViaSerial(bytes: Uint8Array): Promise<void> {
   const job = busy.then(async () => {
     const port = await getSavedSerialPrinter();
     if (!port) throw new Error('No printer connected on this tablet');
-    await port.open({ baudRate: 9600 });
+    await openWithRetry(port);
+    let writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
     try {
-      const writer = port.writable!.getWriter();
-      try {
+      writer = port.writable!.getWriter();
+      const w = writer;
+      await withTimeout((async () => {
         // Paced chunks: a 58mm printer has a small buffer and a picture
         // ticket is ~30 KB. Dumping it in one write and closing the link
         // right away cut tickets off half-way.
         for (let i = 0; i < bytes.length; i += CHUNK_BYTES) {
-          await writer.ready;
-          await writer.write(bytes.subarray(i, i + CHUNK_BYTES));
+          await w.ready;
+          await w.write(bytes.subarray(i, i + CHUNK_BYTES));
           await sleep(CHUNK_PAUSE_MS);
         }
-        await writer.ready;
-      } finally {
-        writer.releaseLock();
-      }
+        await w.ready;
+      })(), JOB_TIMEOUT_MS, () => { w.abort().catch(() => {}); });
+      writer.releaseLock();
+      writer = null;
       // Keep the link open until the printer has had time to take it all.
       await sleep(1500);
+    } catch (error) {
+      throw friendly(error);
     } finally {
+      if (writer) {
+        try { writer.releaseLock(); } catch { /* already released */ }
+      }
+      // Always free the printer, even after a failed job, or every later job fails to open it.
       await port.close().catch(() => {});
     }
   });
   busy = job.catch(() => {});
+  return job;
+}
+
+/** Connects and disconnects without printing: is the printer reachable again? */
+export function probeSerialPrinter(): Promise<boolean> {
+  const job = busy.then(async () => {
+    const port = await getSavedSerialPrinter();
+    if (!port) return false;
+    try {
+      if (port.writable || port.readable) await port.close().catch(() => {});
+      await port.open({ baudRate: 9600 });
+      await port.close().catch(() => {});
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  busy = job.then(() => {}, () => {});
   return job;
 }

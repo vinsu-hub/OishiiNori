@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Progress } from '@/components/ui/progress';
-import { CalendarDays, CheckCircle2, ChevronDown, ChevronUp, Printer, Volume2, VolumeX, Zap } from 'lucide-react';
+import { AlertTriangle, CalendarDays, CheckCircle2, ChevronDown, ChevronUp, Printer, Volume2, VolumeX, Zap } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { BundleFulfillmentChecklist } from '@/components/kitchen/BundleFulfillmentChecklist';
 import { LogExtraUsageDialog } from '@/components/kitchen/LogExtraUsageDialog';
@@ -36,7 +36,7 @@ import {
   type TicketProductIndex,
 } from '@/lib/kitchenTicket';
 import { rawbtServerAvailable, sendToRawBT, sendToRawBTServer } from '@/lib/rawbt';
-import { chooseSerialPrinter, getSavedSerialPrinter, printViaSerial, serialPrintingSupported } from '@/lib/serialPrinter';
+import { chooseSerialPrinter, getSavedSerialPrinter, printViaSerial, probeSerialPrinter, serialPrintingSupported } from '@/lib/serialPrinter';
 import { getKitchenPrintOnAccept, getTabletRole, setKitchenPrintOnAccept } from '@/lib/printerPrefs';
 import { POLL_INTERVAL_MS, toIsoDatePH, todayIsoPH } from '@/lib/constants';
 import { formatTimestamp12h } from '@/lib/utils';
@@ -60,6 +60,8 @@ const STATUS_LABEL: Record<KitchenStatus, string> = {
 const AUTO_POLL_MS = 10_000;
 /** Printer Setup shows "Online" within 90s of the last heartbeat. */
 const HEARTBEAT_MS = 60_000;
+/** While the hands-free printer can't be reached, check for it again this often. */
+const PRINTER_RECHECK_MS = 30_000;
 /** Orders this tablet already printed -- survives a reload so nothing prints twice. */
 const AUTO_PRINTED_KEY = 'oishii.kitchen.autoPrinted';
 function readAutoPrinted(): Set<string> {
@@ -202,6 +204,19 @@ export default function KitchenDisplay() {
   const seenQueuedIdsRef = useRef<Set<string> | null>(null);
   /** Set while a hands-free printer is available, so taps (Reprint/Accept) use it too. */
   const handsFreeRef = useRef<((bytes: Uint8Array) => Promise<void>) | null>(null);
+  // Set when the hands-free printer stops answering (off, out of range, or
+  // held by another device). Printing falls back to the RawBT tap flow and
+  // the screen says so, instead of showing "Auto-print ON" while nothing prints.
+  const [printerFault, setPrinterFault] = useState<string | null>(null);
+  const printerFaultRef = useRef<string | null>(null);
+  const reportPrinterFault = useCallback((message: string) => {
+    if (printerFaultRef.current === null) {
+      toast.error(message, { duration: 10000 });
+      postKitchenPrinterHeartbeat({ status: 'error', error_message: message }).catch(() => {});
+    }
+    printerFaultRef.current = message;
+    setPrinterFault(message);
+  }, []);
   const seenOverdueIdsRef = useRef<Set<string>>(new Set());
 
   // Separate 1s tick (elapsed-time labels/progress bars) from the 20s data
@@ -269,7 +284,8 @@ export default function KitchenDisplay() {
   // whether the print itself succeeded.
   const reportHeartbeat = useCallback(() => {
     if (!printOn) return;
-    postKitchenPrinterHeartbeat({ status: 'ok' }).catch(() => {});
+    const fault = printerFaultRef.current;
+    postKitchenPrinterHeartbeat(fault ? { status: 'error', error_message: fault } : { status: 'ok' }).catch(() => {});
   }, [printOn]);
   useVisiblePolling(reportHeartbeat, HEARTBEAT_MS);
 
@@ -298,7 +314,7 @@ export default function KitchenDisplay() {
     if (handsFreeRef.current) {
       handsFreeRef.current(kitchenTicketEscpos(order, index))
         .then(() => postKitchenPrinterHeartbeat({ status: 'ok', printed_order_number: order.order_number }).catch(() => {}))
-        .catch((e) => toast.error(e instanceof Error ? e.message : 'Failed to print ticket'));
+        .catch((e) => reportPrinterFault(e instanceof Error ? e.message : 'Failed to print ticket'));
       return true;
     }
     try {
@@ -437,7 +453,9 @@ export default function KitchenDisplay() {
   // tap, so new orders wait behind a single "Print next order" button.
   const autoPrintOn = tabletRole === 'kitchen';
   const [printPath, setPrintPath] = useState<'checking' | 'serial' | 'server' | 'tap'>('checking');
-  const handsFree = printPath === 'serial' || printPath === 'server';
+  const handsFree = (printPath === 'serial' || printPath === 'server') && !printerFault;
+  /** Tickets wait for a tap: RawBT only, or the hands-free printer is down. */
+  const tapToPrint = printPath === 'tap' || (printPath !== 'checking' && !!printerFault);
   const sendHandsFree = useCallback(
     (bytes: Uint8Array) => (printPath === 'serial' ? printViaSerial(bytes) : sendToRawBTServer(bytes)),
     [printPath]
@@ -493,9 +511,7 @@ export default function KitchenDisplay() {
           try {
             await sendHandsFree(kitchenTicketEscpos(order, ticketIndex));
           } catch (e) {
-            const message = e instanceof Error ? e.message : 'Auto-print failed';
-            postKitchenPrinterHeartbeat({ status: 'error', error_message: message }).catch(() => {});
-            toast.error(`Auto-print failed: ${message}`);
+            reportPrinterFault(e instanceof Error ? e.message : 'Auto-print failed');
             break;
           }
           autoPrintedRef.current.add(key);
@@ -511,7 +527,25 @@ export default function KitchenDisplay() {
       autoBusyRef.current = false;
       if (changed) load();
     })();
-  }, [handsFree, sendHandsFree, pendingAuto, products.length, ticketIndex, acceptPrinted, load]);
+  }, [handsFree, sendHandsFree, pendingAuto, products.length, ticketIndex, acceptPrinted, load, reportPrinterFault]);
+
+  /** Is the hands-free printer answering again? Clears the fault so auto-print resumes. */
+  const recheckPrinter = useCallback(async (announce: boolean) => {
+    const ok = printPath === 'serial' ? await probeSerialPrinter() : await rawbtServerAvailable();
+    if (ok) {
+      printerFaultRef.current = null;
+      setPrinterFault(null);
+      postKitchenPrinterHeartbeat({ status: 'ok' }).catch(() => {});
+      toast.success('Kitchen printer is back — new orders print by themselves again.');
+    } else if (announce) {
+      toast.error('Still can’t reach the kitchen printer.');
+    }
+  }, [printPath]);
+  useEffect(() => {
+    if (!printerFault || (printPath !== 'serial' && printPath !== 'server')) return;
+    const timer = setInterval(() => { void recheckPrinter(false); }, PRINTER_RECHECK_MS);
+    return () => clearInterval(timer);
+  }, [printerFault, printPath, recheckPrinter]);
 
   useEffect(() => {
     handsFreeRef.current = handsFree ? sendHandsFree : null;
@@ -522,6 +556,8 @@ export default function KitchenDisplay() {
     try {
       await chooseSerialPrinter();
       setPrintPath('serial');
+      printerFaultRef.current = null;
+      setPrinterFault(null);
       toast.success('Printer connected — new orders will print by themselves.');
     } catch (e) {
       if (e instanceof Error && e.name === 'NotFoundError') {
@@ -732,7 +768,9 @@ export default function KitchenDisplay() {
                             {tabletRole === 'kitchen'
                               ? handsFree
                                 ? 'Printing ticket…'
-                                : 'Waiting to print — tap “Print next order” above'
+                                : printPath === 'checking'
+                                  ? 'Checking the printer…'
+                                  : 'Waiting to print — tap “Print next order” above'
                               : 'Sent to the kitchen printer'}
                           </p>
                         )}
@@ -775,7 +813,30 @@ export default function KitchenDisplay() {
     <DashboardLayout title="Kitchen Display">
       <FullscreenButton corner="bottom-right" />
       <div className="p-6 space-y-4">
-        {autoPrintOn && printPath === 'tap' && pendingAuto.length > 0 && (
+        {autoPrintOn && printerFault && (
+          <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border-2 border-red-500 bg-red-50 p-4 text-red-950">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+              <div>
+                <p className="font-semibold">Auto-print is paused: the kitchen printer isn’t answering</p>
+                <p className="text-sm">{printerFault}</p>
+                <p className="text-sm">Until it’s back, tap “Print next order” to print through the RawBT app. This screen checks the printer again every 30 seconds.</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button className="min-h-12" variant="outline" onClick={() => { void recheckPrinter(true); }}>
+                Try printer again
+              </Button>
+              {printPath === 'serial' && (
+                // After the printer was re-paired, Chrome's saved link can go stale.
+                <Button className="min-h-12" variant="outline" onClick={connectPrinter}>
+                  Choose printer again
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+        {autoPrintOn && tapToPrint && pendingAuto.length > 0 && (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border-2 border-primary bg-primary/10 p-4">
             <div>
               <p className="font-semibold">
@@ -838,7 +899,7 @@ export default function KitchenDisplay() {
             {tabletRole === 'kitchen' ? (
               <span
                 className={`inline-flex min-h-10 items-center gap-2 rounded-md px-3 text-sm font-medium ${
-                  handsFree ? 'bg-green-600 text-white' : 'bg-primary text-primary-foreground'
+                  handsFree ? 'bg-green-600 text-white' : printerFault ? 'bg-red-600 text-white' : 'bg-primary text-primary-foreground'
                 }`}
                 title={
                   handsFree
@@ -849,7 +910,9 @@ export default function KitchenDisplay() {
                 {handsFree ? <Zap className="w-4 h-4" aria-hidden="true" /> : <Printer className="w-4 h-4" aria-hidden="true" />}
                 {handsFree
                   ? 'Auto-print ON — new orders print by themselves'
-                  : printPath === 'checking'
+                  : printerFault
+                    ? 'Auto-print paused — printer not answering'
+                    : printPath === 'checking'
                     ? 'Kitchen tablet — checking printer…'
                     : 'Kitchen tablet — tap to print (auto-print off)'}
               </span>
