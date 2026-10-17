@@ -1,5 +1,15 @@
 # Oishii Nori Command Suite — Session Handoff
 
+## 2026-10-17: back up on Pro; End-of-Day override for the Oct 16 outage
+
+- The team is on Pro. All five apps redeployed with the CPU fixes. The kitchen tablet now polls every 10 s, and `MIN_POLL_INTERVAL_MS` is 10 s. `cpu_budget.py` projects 2.33 h/month (fae88e4).
+- The outage hit before End-of-Day on Oct 16, so the morning's orders landed in shift #6. `services/api-fastapi/scripts/override_eod.py` closed shift #6 at 2026-10-17 00:00 PHT and opened shift #7 for Oct 17 at 10:45 PHT, opened by Normelita. It is a dry run without `--apply`.
+- Shift #6 has `shift_report.cash_count_pending = true`, with `actual_cash` and `difference` set to null, and no `closed_by`.
+  - Executives see a banner on every page (`PendingCashCountBanner`).
+  - They enter the count once on Shift Reports (`POST /shift-reports/{id}/cash-count`).
+  - Expected cash for Oct 16 is ₱26,394.
+- Order 1098 (an Oct 16 delivery) was paid at 11:30 on Oct 17. It counts in shift #7, the shift that collected it.
+
 ## 2026-10-16: Vercel paused for CPU; API and polling made ~4x cheaper, with guardrails
 
 **What happened:** Vercel paused every project in the `vince-tamis` team (Hobby plan) on 2026-10-16. The API used 4 h 28 m of the plan's 4 h/month Active CPU. The pause lifts on 2026-11-15 unless the team is upgraded to Pro; the owner is upgrading for October.
