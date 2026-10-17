@@ -2135,8 +2135,29 @@ export interface ShiftReport {
   register_name: string;
   payments: Record<string, number>;
   sales: { gross: number; discounts: number; cash_refunds: number; net: number; taxes: number; order_count: number };
-  cash_drawer: { starting_cash: number; cash_payments: number; cash_refunds: number; paid_in: number; paid_out: number; operating_expenses: number; owner_transfers: number; rider_fees_cash?: number; rider_fees_deductible?: number; expected_cash: number; actual_cash: number; difference: number };
+  cash_drawer: { starting_cash: number; cash_payments: number; cash_refunds: number; paid_in: number; paid_out: number; operating_expenses: number; owner_transfers: number; rider_fees_cash?: number; rider_fees_deductible?: number; expected_cash: number; actual_cash: number | null; difference: number | null };
   entries: ShiftMovement[];
+  /** Closed by an End-of-Day override; an executive still has to enter the counted cash. */
+  cash_count_pending?: boolean;
+  override_note?: string;
+  cash_counted_by?: string;
+  cash_counted_at?: string;
+}
+
+export interface PendingCashCount {
+  id: string;
+  shift_number: number;
+  business_date: string;
+  expected_cash: number;
+  override_note: string | null;
+}
+
+export function fetchPendingCashCounts(): Promise<PendingCashCount[]> {
+  return request('/shift-reports/pending-cash-counts');
+}
+
+export function recordCashCount(shiftId: string, cashRegisterTotal: number): Promise<{ id: string; actual_cash: number; difference: number }> {
+  return request(`/shift-reports/${shiftId}/cash-count`, { method: 'POST', body: JSON.stringify({ cash_register_total: cashRegisterTotal }) });
 }
 
 export interface ShiftReportSummary {

@@ -198,6 +198,53 @@ def list_shift_reports(user: CurrentUser = Depends(get_current_user)):
             for r in rows]
 
 
+def _executive(user: CurrentUser) -> None:
+    if user.role != "executive":
+        raise HTTPException(status_code=403, detail="Only an executive can enter this cash count")
+
+
+@router.get("/shift-reports/pending-cash-counts")
+def pending_cash_counts(user: CurrentUser = Depends(get_current_user)):
+    """Shifts closed by an outage override (scripts/override_eod.py) whose
+    drawer was never counted. Executives see them as a notification and
+    enter the count; everyone else gets an empty list."""
+    if user.role != "executive":
+        return []
+    rows = (get_supabase().table("business_days").select("id,shift_number,business_date,shift_report")
+            .eq("shift_report->>cash_count_pending", "true").order("business_date").execute().data)
+    return [{"id": r["id"], "shift_number": r["shift_number"], "business_date": r["business_date"],
+             "expected_cash": r["shift_report"]["cash_drawer"]["expected_cash"],
+             "override_note": r["shift_report"].get("override_note")} for r in rows]
+
+
+class CashCountIn(BaseModel):
+    cash_register_total: float = Field(ge=0)
+
+
+@router.post("/shift-reports/{shift_id}/cash-count")
+def record_cash_count(shift_id: str, body: CashCountIn, user: CurrentUser = Depends(get_current_user)):
+    """Fill in the counted drawer cash on an override-closed shift. One time
+    only: once counted, the report is frozen like any other."""
+    _executive(user)
+    db = get_supabase()
+    row = (db.table("business_days").select("id,shift_report").eq("id", shift_id)
+           .maybe_single().execute())
+    report = (row.data or {}).get("shift_report") if row else None
+    if not report or not report.get("cash_count_pending"):
+        raise HTTPException(status_code=409, detail="This shift's cash count is not pending")
+    counted = money(body.cash_register_total)
+    drawer = report["cash_drawer"]
+    report = {**report, "cash_count_pending": False,
+              "cash_counted_by": user.full_name, "cash_counted_at": datetime.now(timezone.utc).isoformat(),
+              "cash_drawer": {**drawer, "actual_cash": float(counted),
+                              "difference": float(counted - money(drawer["expected_cash"]))}}
+    updated = (db.table("business_days").update({"shift_report": report, "cash_register_total": float(counted)})
+               .eq("id", shift_id).eq("shift_report->>cash_count_pending", "true").execute().data)
+    if not updated:
+        raise HTTPException(status_code=409, detail="This shift's cash count was already entered")
+    return {"id": shift_id, "actual_cash": float(counted), "difference": report["cash_drawer"]["difference"]}
+
+
 @router.get("/shift-reports/{shift_id}")
 def get_shift_report(shift_id: str, user: CurrentUser = Depends(get_current_user)):
     _front_of_house(user)
