@@ -8,6 +8,10 @@
   - Executives see a banner on every page (`PendingCashCountBanner`).
   - They enter the count once on Shift Reports (`POST /shift-reports/{id}/cash-count`).
   - Expected cash for Oct 16 is ₱26,394.
+- Kitchen printing failed from 12:08 on Oct 17 with "Failed to open serial port" (Web Serial over Bluetooth). Meanwhile the screen still said "Auto-print ON". Fixed in 034c6ff:
+  - `serialPrinter.ts` retries the connect, frees a port left open and times out a hung job.
+  - `KitchenDisplay` shows a red "Auto-print is paused" banner and falls back to the RawBT "Print next order" tap. It rechecks the printer every 30 s and resumes on its own.
+  - The cause on the device side (printer off, held by another device, or a second tab) wasn't confirmed on site.
 - Order 1098 (an Oct 16 delivery) was paid at 11:30 on Oct 17. It counts in shift #7, the shift that collected it.
 
 ## 2026-10-16: Vercel paused for CPU; API and polling made ~4x cheaper, with guardrails
