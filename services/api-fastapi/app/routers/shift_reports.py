@@ -252,7 +252,8 @@ def get_shift_report(shift_id: str, user: CurrentUser = Depends(get_current_user
            .eq("id", shift_id).maybe_single().execute().data)
     if not row or not row.get("shift_report"):
         raise HTTPException(status_code=404, detail="Closed shift report not found")
-    ids = [row["opened_by"], row["closed_by"]]
+    # closed_by is empty on a shift the system closed (scripts/override_eod.py).
+    ids = [i for i in (row["opened_by"], row["closed_by"]) if i]
     staff = {p["id"]: p["full_name"] for p in get_supabase().table("profiles")
              .select("id,full_name").in_("id", ids).execute().data}
     return {**row["shift_report"], "opened_by_name": staff.get(row["opened_by"]),

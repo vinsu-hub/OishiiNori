@@ -56,6 +56,20 @@ class CashCountTests(unittest.TestCase):
         with patch.object(shift_reports, "get_supabase", return_value=db):
             self.assertEqual(self.client.post("/shift-reports/s1/cash-count", json={"cash_register_total": 1}).status_code, 409)
 
+    def test_system_closed_report_opens(self):
+        _as("employee")
+        db = MagicMock()
+        q = db.table.return_value
+        for name in ("select", "eq", "maybe_single", "in_"):
+            getattr(q, name).return_value = q
+        q.execute.side_effect = [MagicMock(data={"shift_report": PENDING, "closed_by": None, "opened_by": "p1"}),
+                                 MagicMock(data=[{"id": "p1", "full_name": "Normelita"}])]
+        with patch.object(shift_reports, "get_supabase", return_value=db):
+            response = self.client.get("/shift-reports/s1")
+        self.assertEqual(response.status_code, 200)
+        q.in_.assert_called_with("id", ["p1"])
+        self.assertIsNone(response.json()["closed_by_name"])
+
 
 if __name__ == "__main__":
     unittest.main()
