@@ -9,7 +9,7 @@ and difference only after close; BusinessDayStatusOut (used by /today,
 
 from datetime import date, datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from postgrest.exceptions import APIError
 
 from app.auth import CurrentUser, get_current_user, require_role, require_role_or_grant, verify_employee_pin
@@ -109,10 +109,12 @@ def get_today_status(user: CurrentUser = Depends(get_current_user)):
 
 
 @router.get("/public/business-day-status", response_model=BusinessDayStatusOut)
-def get_public_today_status():
+def get_public_today_status(request: Request):
     """Unauthenticated mirror of /business-days/today for customer-menu
     (which has no login) -- BusinessDayStatusOut already carries no
     financial fields, so it's safe to expose without auth."""
+    from app.rate_limit import client_ip, local_rate_limit
+    local_rate_limit(f"day-status:{client_ip(request)}", limit=30, window_seconds=60)
     supabase = get_supabase()
     d = today_ph()
     if not _business_days_supported_check(supabase):

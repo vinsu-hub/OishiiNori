@@ -36,6 +36,7 @@ GRANTABLE_PAGES: dict[str, str] = {
     "trends": "Trend Analysis",
     "pnl": "P&L",
     "oishii-ai": "Oishii AI",
+    "events": "Events",
 }
 
-EXECUTIVE_ONLY_GRANTS: frozenset[str] = frozenset({"command-center", "trends", "pnl", "oishii-ai"})
+EXECUTIVE_ONLY_GRANTS: frozenset[str] = frozenset({"command-center", "trends", "pnl", "oishii-ai", "events"})

@@ -15,7 +15,7 @@ decline/cancel are pure business decisions, never conflict re-checks.
 from datetime import date, datetime, time, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import Response, APIRouter, Depends, HTTPException, Query, Request
 from postgrest.exceptions import APIError
 
 from app.auth import CurrentUser, get_current_user, require_role, verify_employee_pin
@@ -316,7 +316,9 @@ def _blocking_reservation(supabase, table_id: str, at: datetime) -> Optional[dic
 
 
 @router.get("/public/business-hours", response_model=PublicBusinessHoursResponse)
-def public_business_hours():
+def public_business_hours(response: Response):
+    from app.rate_limit import public_cache
+    public_cache(response, 300)
     open_time, close_time, closed_weekdays = _get_business_hours(get_supabase())
     return {"open_time": open_time, "close_time": close_time, "closed_weekdays": closed_weekdays}
 

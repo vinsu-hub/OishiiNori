@@ -25,13 +25,14 @@ from datetime import datetime, timedelta, timezone
 
 from cachetools import TTLCache
 from pydantic import TypeAdapter
+from postgrest.exceptions import APIError
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 
 from app.auth import CurrentUser, get_current_user
 from app.deps import get_supabase
 from app.ph_time import ph_day_bounds_utc, today_ph
 from app.idempotency import check_idempotency_key, record_idempotency_key
-from app.rate_limit import client_ip, enforce_rate_limit
+from app.rate_limit import client_ip, enforce_rate_limit, local_rate_limit, public_cache
 from app.routers.business_days import is_open_today
 from app.routers.products import _list_products_data
 from app.routers.recipes import _get_recipe_data
@@ -102,21 +103,38 @@ def _fetch_digital_order(supabase, order_id: str) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
+# Public catalog reads are the busiest unauthenticated endpoints. Each is
+# cached here and at Vercel's CDN (public_cache), so a burst of visitors costs
+# one Supabase read per window instead of one per page view. The menu window
+# is short because it carries sold-out state.
+_public_cache: TTLCache = TTLCache(maxsize=8, ttl=30)
+MENU_CACHE_SECONDS = 30
+CATALOG_CACHE_SECONDS = 300
+
+
+def _cached_public(key: str, build):
+    if key not in _public_cache:
+        _public_cache[key] = build()
+    return _public_cache[key]
+
+
 @router.get("/public/menu", response_model=list[ProductOut])
-def public_menu():
+def public_menu(response: Response):
     # POS packaging SKUs are cash-register line items, not customer-facing
     # dishes. Keep the shared product catalog for the POS but hide these
     # sales-only containers from the online ordering menu.
-    return [
+    public_cache(response, MENU_CACHE_SECONDS)
+    return _cached_public("menu", lambda: [
         product for product in _list_products_data(get_supabase(), active_only=True, department=None)
         if product["category"].casefold() != "packaging"
-    ]
+    ])
 
 
 @router.get("/public/addons", response_model=list[MenuAddonOut])
-def public_addons():
-    result = get_supabase().table("menu_addons").select("*").eq("active", True).order("name").execute()
-    return result.data
+def public_addons(response: Response):
+    public_cache(response, MENU_CACHE_SECONDS)
+    return _cached_public("addons", lambda: get_supabase().table("menu_addons").select("*")
+                          .eq("active", True).order("name").execute().data)
 
 
 @router.get("/public/product-sizes/{product_size_id}/recipe", response_model=list[RecipeItemOut])
@@ -125,11 +143,12 @@ def public_recipe(product_size_id: str):
 
 
 @router.get("/public/delivery-fees", response_model=list[DeliveryFeeOut])
-def public_delivery_fees():
-    """The barangay dropdown + fee lookup for the general delivery/pickup
-    link (apps/customer-menu with no ?table= param)."""
-    result = get_supabase().table("delivery_fees").select("barangay, zone, fee").order("barangay").execute()
-    return result.data
+def public_delivery_fees(response: Response):
+    """The barangay/town dropdown + fee lookup for the general delivery/pickup
+    link (apps/customer-menu with no ?table= param). Grouped by zone."""
+    public_cache(response, CATALOG_CACHE_SECONDS)
+    return _cached_public("delivery-fees", lambda: get_supabase().table("delivery_fees")
+                          .select("barangay, zone, fee").order("zone").order("barangay").execute().data)
 
 
 # The restaurant TV polls this every few seconds and several screens may
@@ -187,6 +206,10 @@ def public_queue_display(request: Request):
 
 @router.post("/public/orders", response_model=DigitalOrderStatusResponse)
 def submit_digital_order(body: CreateDigitalOrderRequest, request: Request):
+    local_rate_limit(f"order-submit:{client_ip(request)}", limit=10, window_seconds=60)
+    if body.website:
+        # Honeypot filled in: a bot. Nothing is saved.
+        raise HTTPException(status_code=400, detail="Could not place this order. Please refresh the page and try again.")
     supabase = get_supabase()
     enforce_rate_limit(supabase, f"order-submit:{client_ip(request)}", window_seconds=60, limit=20)
     existing_id = check_idempotency_key(supabase, body.idempotency_key, "POST /public/orders")
@@ -237,6 +260,7 @@ def submit_digital_order(body: CreateDigitalOrderRequest, request: Request):
     else:
         if not body.customer_name or not body.customer_phone:
             raise HTTPException(status_code=400, detail="Name and phone number are required")
+        _limit_pending_per_phone(supabase, body.customer_phone)
         if body.order_channel == "delivery":
             if not body.address or not body.barangay:
                 raise HTTPException(status_code=400, detail="Address and barangay are required for delivery")
@@ -381,8 +405,60 @@ def submit_digital_order(body: CreateDigitalOrderRequest, request: Request):
         ]
         supabase.table("digital_order_addons").insert(addon_rows).execute()
 
+    if body.order_channel != "dine_in_qr":
+        _claim_first_order_promo(supabase, order["id"])
+
     record_idempotency_key(supabase, body.idempotency_key, "POST /public/orders", order["id"])
     return _fetch_digital_order(supabase, order["id"])
+
+
+MAX_PENDING_ORDERS_PER_PHONE = 3
+
+
+def _limit_pending_per_phone(supabase, phone: str) -> None:
+    """A real customer rarely has more than one order waiting; this stops a
+    script from filling the cashier's queue with one phone number."""
+    linked = (supabase.table("deliveries").select("digital_order_id").eq("customer_phone", phone)
+              .not_.is_("digital_order_id", "null").order("id", desc=True).limit(50).execute().data)
+    ids = [row["digital_order_id"] for row in linked]
+    if not ids:
+        return
+    pending = (supabase.table("digital_orders").select("id").in_("id", ids)
+               .eq("status", "pending").execute().data)
+    if len(pending) >= MAX_PENDING_ORDERS_PER_PHONE:
+        raise HTTPException(status_code=409, detail="You already have orders waiting for confirmation. Please wait for the shop to confirm them.")
+
+
+def _promo_size_id(supabase) -> str | None:
+    try:
+        row = (supabase.table("business_settings").select("first_order_promo_size_id")
+               .eq("id", 1).maybe_single().execute())
+    except APIError:
+        return None  # migration 0078 not applied yet
+    return (row.data or {}).get("first_order_promo_size_id") if row else None
+
+
+def _claim_first_order_promo(supabase, order_id: str) -> bool:
+    """First delivery/pickup order of the PH day gets the promo item free.
+    The claim table's primary key on the date makes "first" atomic; a
+    declined order releases its claim (see reject_digital_order)."""
+    size_id = _promo_size_id(supabase)
+    if not size_id:
+        return False
+    try:
+        won = (supabase.table("online_promo_claims")
+               .upsert({"promo_date": today_ph().isoformat(), "digital_order_id": order_id},
+                       on_conflict="promo_date", ignore_duplicates=True)
+               .execute().data)
+    except APIError:
+        return False
+    if not won:
+        return False
+    supabase.table("digital_order_items").insert({
+        "digital_order_id": order_id, "product_size_id": size_id, "quantity": 1,
+        "unit_price": 0, "held_ingredients": [], "is_promo": True,
+    }).execute()
+    return True
 
 
 PROOF_STORAGE_BUCKET = "payment-proofs"
@@ -391,12 +467,13 @@ PROOF_MAX_BYTES = 5 * 1024 * 1024
 
 
 @router.post("/public/orders/{order_id}/proof-of-payment", response_model=DigitalOrderStatusResponse)
-async def upload_proof_of_payment(order_id: str, file: UploadFile = File(...)):
+async def upload_proof_of_payment(order_id: str, request: Request, file: UploadFile = File(...)):
     """Unauthenticated, same trust model as every other /public/* endpoint
     here -- the order's own unguessable id is the entire access control,
     identical posture to public_order_status above. Only allowed while
     still pending, so a decided order's record can't be tampered with
     after the fact."""
+    local_rate_limit(f"proof-upload:{client_ip(request)}", limit=10, window_seconds=600)
     supabase = get_supabase()
     order = _fetch_digital_order(supabase, order_id)
     if not order:
@@ -424,7 +501,9 @@ async def upload_proof_of_payment(order_id: str, file: UploadFile = File(...)):
 
 
 @router.get("/public/orders/{order_id}", response_model=DigitalOrderStatusResponse)
-def public_order_status(order_id: str):
+def public_order_status(order_id: str, request: Request):
+    # The customer's page polls this every 10 s while pending.
+    local_rate_limit(f"order-status:{client_ip(request)}", limit=30, window_seconds=60)
     order = _fetch_digital_order(get_supabase(), order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -456,12 +535,98 @@ def list_digital_orders(
 _digital_orders_json = TypeAdapter(list[DigitalOrderResponse])
 
 
+BOARD_STAGES = ("pending", "in_queue", "out_for_delivery", "completed")
+
+
+def board_stage(order: dict, tx: dict | None) -> str | None:
+    """Where an online order is, for the cashier's Online tab. None = hidden
+    (declined, or a voided order)."""
+    if order["status"] == "pending":
+        return "pending"
+    if order["status"] != "approved":
+        return None
+    if tx is None:
+        return "in_queue"  # approved advance order, not in the kitchen yet
+    if tx.get("status") == "voided":
+        return None
+    delivered = (order.get("delivery") or {}).get("delivered_at")
+    if order.get("order_channel") == "delivery":
+        if delivered:
+            return "completed"
+        return "out_for_delivery" if tx.get("kitchen_status") == "completed" else "in_queue"
+    return "completed" if tx.get("kitchen_status") == "completed" else "in_queue"
+
+
+def _require_front_of_house(user: CurrentUser) -> None:
+    if user.role in ("kitchen", "rider", "stocker"):
+        raise HTTPException(status_code=403, detail="Front-of-house staff only")
+
+
+@router.get("/digital-orders/board")
+def digital_orders_board(user: CurrentUser = Depends(get_current_user)):
+    """The cashier's Online orders tab: today's website delivery/pickup orders
+    (plus anything still pending, or scheduled for today), each with its stage."""
+    _require_front_of_house(user)
+    cache_key = ("digital-board", today_ph().isoformat())
+    body = live_cache_get(cache_key)
+    if body is not None:
+        return Response(body, media_type="application/json")
+    version = live_cache_version()
+    supabase = get_supabase()
+    start, _ = ph_day_bounds_utc(today_ph())
+    orders = (supabase.table("digital_orders").select("*")
+              .in_("order_channel", ["delivery", "pickup"])
+              .or_(f"created_at.gte.{start},status.eq.pending,scheduled_for.gte.{start}")
+              .order("created_at", desc=True).limit(300).execute().data)
+    orders = _hydrate_digital_orders(supabase, orders)
+    tx_ids = [o["transaction_id"] for o in orders if o.get("transaction_id")]
+    txs = {t["id"]: t for t in (supabase.table("transactions")
+                                .select("id, order_number, status, kitchen_status, payment_status")
+                                .in_("id", tx_ids).execute().data if tx_ids else [])}
+    board = []
+    for order in orders:
+        tx = txs.get(order.get("transaction_id"))
+        stage = board_stage(order, tx)
+        if stage is None:
+            continue
+        order["stage"] = stage
+        order["kitchen_status"] = (tx or {}).get("kitchen_status")
+        order["pos_order_number"] = (tx or {}).get("order_number")
+        order["payment_status"] = (tx or {}).get("payment_status")
+        board.append(order)
+    return live_cache_put(cache_key, _board_json.dump_json(_board_json.validate_python(board)), version)
+
+
+_board_json = TypeAdapter(list[DigitalOrderResponse])
+
+
+@router.post("/digital-orders/{order_id}/delivered")
+def mark_digital_order_delivered(order_id: str, user: CurrentUser = Depends(get_current_user)):
+    """Cashier confirms an online delivery reached the customer."""
+    _require_front_of_house(user)
+    supabase = get_supabase()
+    row = (supabase.table("deliveries").select("id, delivered_at")
+           .eq("digital_order_id", order_id).limit(1).execute().data)
+    if not row:
+        raise HTTPException(status_code=404, detail="This order has no delivery")
+    if row[0]["delivered_at"]:
+        return {"id": order_id, "delivered_at": row[0]["delivered_at"]}
+    now = datetime.now(timezone.utc).isoformat()
+    supabase.table("deliveries").update({"delivered_at": now}).eq("id", row[0]["id"]).execute()
+    return {"id": order_id, "delivered_at": now}
+
+
 def _list_digital_orders(status: str | None, limit: int) -> list[dict]:
     supabase = get_supabase()
     query = supabase.table("digital_orders").select("*")
     if status:
         query = query.eq("status", status)
     orders = query.order("created_at", desc=True).limit(limit).execute().data
+    return _hydrate_digital_orders(supabase, orders)
+
+
+def _hydrate_digital_orders(supabase, orders: list[dict]) -> list[dict]:
+    """Attach items, add-ons and the delivery row to digital_orders rows."""
     if not orders:
         return []
 
@@ -631,10 +796,9 @@ def _fire_digital_order(supabase, order: dict, actor_id: str):
             for i in order["items"]
         ],
         payment_method=pos_payment_method,
-        # Delivery/pickup orders are never dine-in -- label them takeout so
-        # the kitchen ticket unambiguously reads as a to-go/carried-out order,
-        # regardless of which of the two non-QR channels this came from.
-        order_type="takeout" if order.get("order_channel") != "dine_in_qr" else None,
+        # Delivery orders are deliveries (they show on the Deliveries page with
+        # an Online origin); pickup orders are takeout.
+        order_type={"delivery": "delivery", "pickup": "takeout"}.get(order.get("order_channel")),
         order_source="qr" if order.get("order_channel") == "dine_in_qr" else "online",
     )
 
@@ -652,14 +816,33 @@ def _fire_digital_order(supabase, order: dict, actor_id: str):
         + delivery_fee
         + float(order.get("packaging_fee") or 0)
     )
-    if addons_subtotal:
+    # The free first-order item was priced from the catalog like any line;
+    # make it ₱0 and take its price back off the totals.
+    promo_credit = _zero_promo_lines(supabase, order, transaction)
+    adjustment = addons_subtotal - promo_credit
+    if adjustment:
         supabase.table("transactions").update(
             {
-                "total_amount": transaction.total_amount + addons_subtotal,
-                "tax_amount": transaction.tax_amount + addons_subtotal * _get_vat_rate(supabase),
+                "total_amount": transaction.total_amount + adjustment,
+                "tax_amount": transaction.tax_amount + adjustment * _get_vat_rate(supabase),
             }
         ).eq("id", transaction.id).execute()
     return transaction
+
+
+def _zero_promo_lines(supabase, order: dict, transaction) -> float:
+    promo_sizes = [i["product_size_id"] for i in order["items"] if i.get("is_promo")]
+    credit = 0.0
+    lines = list(transaction.items)
+    for size_id in promo_sizes:
+        # The promo line was inserted last, so it is the last line of that size.
+        line = next((l for l in reversed(lines) if l.product_size_id == size_id and float(l.unit_price) > 0), None)
+        if line is None:
+            continue
+        credit += float(line.unit_price) * float(line.quantity)
+        supabase.table("transaction_items").update({"unit_price": 0}).eq("id", line.id).execute()
+        lines.remove(line)
+    return credit
 
 
 def _parse_scheduled_for(order: dict) -> datetime | None:
@@ -790,6 +973,11 @@ def reject_digital_order(
         .execute()
     )
     result = updated.data[0]
+    # A declined first order gives the free item back to the next customer today.
+    try:
+        supabase.table("online_promo_claims").delete().eq("digital_order_id", order_id).execute()
+    except APIError:
+        pass
     result["items"] = order["items"]
     result["addons"] = order["addons"]
     result["delivery"] = order.get("delivery")

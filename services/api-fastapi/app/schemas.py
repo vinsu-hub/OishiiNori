@@ -457,15 +457,21 @@ DigitalOrderStatus = Literal["pending", "approved", "rejected"]
 PaymentMethod = str
 
 
+# Caps on what one public order can carry: generous for a real customer,
+# useless for a scripted flood (see public traffic safety, 2026-10-19).
+MAX_ONLINE_ORDER_LINES = 30
+MAX_ONLINE_LINE_QUANTITY = 30
+
+
 class DigitalOrderItemCreate(BaseModel):
     product_size_id: str
-    quantity: float = Field(gt=0)
-    held_ingredients: list[str] = Field(default_factory=list)
+    quantity: float = Field(gt=0, le=MAX_ONLINE_LINE_QUANTITY)
+    held_ingredients: list[str] = Field(default_factory=list, max_length=20)
 
 
 class DigitalOrderAddonCreate(BaseModel):
     addon_id: str
-    quantity: int = Field(gt=0)
+    quantity: int = Field(gt=0, le=MAX_ONLINE_LINE_QUANTITY)
 
 
 DigitalOrderChannel = Literal["dine_in_qr", "delivery", "pickup"]
@@ -477,18 +483,21 @@ class CreateDigitalOrderRequest(BaseModel):
     # not here, since the requirement itself depends on order_channel.
     table_number: int | None = Field(default=None, gt=0)
     order_channel: DigitalOrderChannel = "dine_in_qr"
-    items: list[DigitalOrderItemCreate]
-    addons: list[DigitalOrderAddonCreate] = Field(default_factory=list)
+    items: list[DigitalOrderItemCreate] = Field(max_length=MAX_ONLINE_ORDER_LINES)
+    addons: list[DigitalOrderAddonCreate] = Field(default_factory=list, max_length=MAX_ONLINE_ORDER_LINES)
     payment_method: PaymentMethod
-    customer_note: str | None = None
+    customer_note: str | None = Field(default=None, max_length=300)
     # Delivery/pickup only -- name+phone always, address+barangay only for
     # an actual delivery (the fee is looked up server-side from barangay,
     # never trusted from the client).
-    customer_name: str | None = None
+    customer_name: str | None = Field(default=None, max_length=120)
     customer_phone: str | None = None
-    address: str | None = None
-    landmark: str | None = None
-    barangay: str | None = None
+    address: str | None = Field(default=None, max_length=300)
+    landmark: str | None = Field(default=None, max_length=300)
+    barangay: str | None = Field(default=None, max_length=80)
+    # Honeypot: a hidden field real customers never fill. Bots that do get a
+    # fake success and nothing is saved.
+    website: str | None = None
     # Set by a client that might retry/replay this exact submission (a flaky
     # connection losing the response, or an offline-queue replay) -- see
     # app/idempotency.py. Omitting it keeps today's exact behavior.
@@ -518,6 +527,8 @@ class DigitalOrderItemResponse(BaseModel):
     quantity: float
     unit_price: float
     held_ingredients: list[str] = Field(default_factory=list)
+    # The free first-online-order-of-the-day item (0078).
+    is_promo: bool = False
 
 
 class MenuAddonOut(BaseModel):
@@ -559,6 +570,10 @@ class DigitalOrderResponse(BaseModel):
     # Populated by GET /deliveries only (the rider's "For Pick Up" tab keys
     # off `ready`); None everywhere else and for orders with no transaction yet.
     kitchen_status: str | None = None
+    # Populated by GET /digital-orders/board only.
+    stage: str | None = None
+    pos_order_number: int | None = None
+    payment_status: str | None = None
     scheduled_for: datetime | None = None
 
 

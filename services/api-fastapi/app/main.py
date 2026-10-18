@@ -43,6 +43,7 @@ from app.routers import (
     transactions,
     utility_logs,
     override_key,
+    events,
 )
 
 # Security-hardening pass: this used to be allow_origins=["*"]. Auth here is
@@ -166,6 +167,7 @@ app.include_router(kitchen_printer.router)
 app.include_router(login_lookup.router)
 app.include_router(item_units.router)
 app.include_router(override_key.router)
+app.include_router(events.router)
 
 
 @app.get("/health")

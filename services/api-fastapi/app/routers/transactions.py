@@ -441,6 +441,35 @@ def _attach_deliveries(supabase, transactions: list[dict]) -> None:
     for t in transactions:
         if t["id"] in deliveries_by_tx:
             t["delivery"] = deliveries_by_tx[t["id"]]
+    # Approved online deliveries keep their delivery row on the digital order.
+    missing = [t["id"] for t in transactions if t.get("order_type") == "delivery" and not t["delivery"]]
+    for offset in range(0, len(missing), ID_BATCH_SIZE):
+        linked = (supabase.table("digital_orders")
+                  .select("transaction_id, deliveries(*, profiles(full_name))")
+                  .in_("transaction_id", missing[offset:offset + ID_BATCH_SIZE]).execute().data)
+        for row in linked:
+            found = row.get("deliveries") or []
+            found = found if isinstance(found, list) else [found]
+            if found:
+                delivery = found[-1]
+                rider = delivery.pop("profiles", None) or {}
+                delivery["rider_name"] = rider.get("full_name")
+                for t in transactions:
+                    if t["id"] == row["transaction_id"]:
+                        t["delivery"] = delivery
+
+
+def delivery_row_for_transaction(db, transaction_id: str) -> dict | None:
+    """The deliveries row of a POS delivery (by transaction) or of an
+    approved online delivery (by its digital order)."""
+    row = db.table("deliveries").select("*").eq("transaction_id", transaction_id).limit(1).execute().data
+    if row:
+        return row[0]
+    linked = db.table("digital_orders").select("id").eq("transaction_id", transaction_id).limit(1).execute().data
+    if not linked:
+        return None
+    row = db.table("deliveries").select("*").eq("digital_order_id", linked[0]["id"]).limit(1).execute().data
+    return row[0] if row else None
 
 
 def _attach_planned_flags(supabase, transactions: list[dict]) -> None:
@@ -1340,7 +1369,7 @@ def _embedded_transactions(supabase, columns: str, narrow) -> list[dict]:
         "product_sizes(bundle_components(total_pieces))), "
         "deliveries(*, profiles(full_name)), "
         "pos_hanged_orders(transaction_id), "
-        "digital_orders(scheduled_for)"
+        "digital_orders(scheduled_for, deliveries(*, profiles(full_name)))"
     )
     transactions = _page_rows(narrow(supabase.table("transactions").select(select)))
 
@@ -1382,6 +1411,10 @@ def _embedded_transactions(supabase, columns: str, narrow) -> list[dict]:
         t["_items"] = items
 
         deliveries = as_list(t.pop("deliveries", None))
+        digital = as_list(t.pop("digital_orders", None))
+        if not deliveries:
+            # Approved online deliveries keep their delivery row on the digital order.
+            deliveries = [d for order in digital for d in as_list(order.get("deliveries"))]
         t["delivery"] = None
         if t.get("order_type") == "delivery" and deliveries:
             row = deliveries[-1]
@@ -1389,7 +1422,7 @@ def _embedded_transactions(supabase, columns: str, narrow) -> list[dict]:
             row["rider_name"] = rider.get("full_name")
             t["delivery"] = row
         t["is_hanged"] = bool(as_list(t.pop("pos_hanged_orders", None)))
-        t["is_scheduled"] = any(d.get("scheduled_for") for d in as_list(t.pop("digital_orders", None)))
+        t["is_scheduled"] = any(d.get("scheduled_for") for d in digital)
     return transactions
 
 
@@ -1768,12 +1801,11 @@ def update_rider_payout(
         raise HTTPException(status_code=404, detail="Order not found")
     if tx.data["order_type"] != "delivery" or tx.data["status"] == "voided":
         raise HTTPException(status_code=400, detail="Only active delivery orders can have a rider payout")
-    delivery = (db.table("deliveries").select("id")
-                .eq("transaction_id", transaction_id).maybe_single().execute())
-    if not delivery or not delivery.data:
+    delivery = delivery_row_for_transaction(db, transaction_id)
+    if not delivery:
         raise HTTPException(status_code=404, detail="Delivery details not found")
     updated = (db.table("deliveries").update({"rider_payout": round(body.rider_payout, 2)})
-               .eq("id", delivery.data["id"]).execute())
+               .eq("id", delivery["id"]).execute())
     return updated.data[0]
 
 
