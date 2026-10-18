@@ -53,7 +53,12 @@ class AuthCacheTests(unittest.TestCase):
 class LiveCacheTests(unittest.TestCase):
     def setUp(self):
         transactions.clear_live_cache()
+        # Without migration 0077 (live_version) the cache is a plain 10 s one.
+        transactions._version_state.update(supported=False, value=None, checked_at=0.0)
         self.client = TestClient(app)
+
+    def tearDown(self):
+        transactions._version_state.update(supported=None, value=None, checked_at=0.0)
 
     def test_successful_write_clears_cached_lists(self):
         transactions.live_cache_put(("probe",), b"[]")

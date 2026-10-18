@@ -39,6 +39,15 @@ COLD_STARTS_PER_DAY = 40
 SHARED_CACHE_SECONDS = 10
 CACHE_HIT_MS = 2.0
 
+# Supabase free plan: 5 GB egress a month, and every request is a log line
+# (1 GB of logs a month). Live lists are re-downloaded only when the database
+# change counter moves (migration 0077), so egress follows order activity, not
+# polling: ~600 order events on a busy day, collapsed into 5 s check windows.
+SUPABASE_EGRESS_LIMIT_GB = 5.0
+ORDER_CHANGE_WINDOWS_PER_DAY = 600
+API_INSTANCES = 2  # warm Vercel instances, each with its own cache
+VERSION_CHECK_SECONDS = 5
+
 
 def schedule(today: str, adv_from: str, adv_before: str, devices: dict) -> list[tuple]:
     """(screen, device count, poll seconds, endpoint). Matches the frontends as of 2026-10-16."""
@@ -88,6 +97,26 @@ def main() -> int:
         (now + timedelta(days=8)).isoformat().replace("+00:00", "Z"),
         {"kitchen": args.kitchen, "cashier": args.cashier, "tv": args.tv, "bridge": args.bridge},
     )
+
+    import httpx
+
+    wire = {"bytes": 0, "requests": 0}
+    send = httpx.Client.send
+
+    def counting_send(self, request, **kwargs):
+        response = send(self, request, **kwargs)
+        wire["bytes"] += response.num_bytes_downloaded
+        wire["requests"] += 1
+        return response
+
+    httpx.Client.send = counting_send
+
+    def supabase_cost(path: str) -> tuple[int, int]:
+        """(compressed bytes, requests) one rebuild of `path` takes from Supabase."""
+        clear_live_cache()
+        wire.update(bytes=0, requests=0)
+        client.get(path)
+        return wire["bytes"], wire["requests"]
 
     def measure(path: str) -> float:
         total = 0.0
@@ -140,11 +169,32 @@ def main() -> int:
     limit = HOBBY_LIMIT_HOURS * WARN_FRACTION
     print(f"\nTotal: {hours:.2f} h / month  (Hobby limit {HOBBY_LIMIT_HOURS:.0f} h, guardrail {limit:.1f} h)")
     print("Note: one-off actions (sales, reports, Oishii AI) come on top; keep headroom for them.")
-    if hours > limit:
+    failed = hours > limit
+    if failed:
         print("FAIL: over the guardrail. Slow a poll down or make the endpoint cheaper before deploying.")
-        return 1
-    print("OK")
-    return 0
+
+    # Supabase: a full day's order list is the heavy one, so size it on yesterday.
+    yesterday = (now + timedelta(hours=8) - timedelta(days=1)).date().isoformat()
+    shared = {path.replace(f"active_since={today}", f"active_since={yesterday}")
+              for _, devices, _, path in rows if devices and path in shared_rate}
+    per_build = [supabase_cost(path) for path in sorted(shared)]
+    build_bytes = sum(b for b, _ in per_build)
+    build_requests = sum(r for _, r in per_build)
+    rebuilds = ORDER_CHANGE_WINDOWS_PER_DAY * API_INSTANCES
+    checks = BUSY_HOURS_PER_DAY * 3600 / VERSION_CHECK_SECONDS * API_INSTANCES
+    egress_gb = rebuilds * build_bytes * 30 / 1e9
+    requests_day = rebuilds * build_requests + checks
+    egress_limit = SUPABASE_EGRESS_LIMIT_GB * WARN_FRACTION
+    print(f"\nSupabase: one rebuild of every live list = {build_bytes / 1024:.0f} KB, {build_requests} requests")
+    print(f"Projected egress {egress_gb:.2f} GB / month (limit {SUPABASE_EGRESS_LIMIT_GB:.0f} GB, guardrail {egress_limit:.2f} GB), "
+          f"~{requests_day / 1000:.0f}k Supabase requests / day")
+    print("Assumes migration 0077 (live_version) is applied; without it every poll window re-downloads.")
+    if egress_gb > egress_limit:
+        print("FAIL: Supabase egress over the guardrail. Make the live lists smaller before deploying.")
+        failed = True
+    if not failed:
+        print("OK")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

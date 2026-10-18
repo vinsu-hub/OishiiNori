@@ -18,6 +18,7 @@ concepts, not wired into recipe/ingredient deduction -- see migration
 0017's header comment for why.
 """
 
+import json
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -35,7 +36,7 @@ from app.routers.business_days import is_open_today
 from app.routers.products import _list_products_data
 from app.routers.recipes import _get_recipe_data
 from app.routers.reservations import ADVANCE_ORDER_LEAD_MINUTES
-from app.routers.transactions import _create_transaction_row, _get_vat_rate, live_cache_get, live_cache_put
+from app.routers.transactions import _create_transaction_row, _get_vat_rate, live_cache_get, live_cache_put, live_cache_version
 from app.schemas import (
     BoatDepositReturnRequest,
     CreateDigitalOrderRequest,
@@ -148,6 +149,11 @@ def public_queue_display(request: Request):
     staff move it there."""
     if "v" in _queue_display_cache:
         return _queue_display_cache["v"]
+    # Rebuilt only when orders change (live_version), not on every TV poll.
+    body = live_cache_get(("queue-display",))
+    if body is not None:
+        return Response(body, media_type="application/json")
+    version = live_cache_version()
     supabase = get_supabase()
     enforce_rate_limit(supabase, f"queue-display:{client_ip(request)}", window_seconds=60, limit=120)
     start, end = ph_day_bounds_utc(today_ph())
@@ -175,6 +181,7 @@ def public_queue_display(request: Request):
     ready_rows.sort(key=lambda r: r["kitchen_status_updated_at"] or r["opened_at"], reverse=True)
     result = {"preparing": preparing, "ready": [r["order_number"] for r in ready_rows[:12]]}
     _queue_display_cache["v"] = result
+    live_cache_put(("queue-display",), json.dumps(result).encode(), version)
     return result
 
 
@@ -436,13 +443,14 @@ def list_digital_orders(
     user: CurrentUser = Depends(get_current_user),
 ):
     # Polled by every cashier screen's new-order alarm and the kitchen tablet;
-    # shares transactions.py's 10 s cache, which any successful write clears.
+    # shares transactions.py's live cache (rebuilt only when orders change).
     cache_key = ("digital-orders", status, limit)
     body = live_cache_get(cache_key)
     if body is not None:
         return Response(body, media_type="application/json")
+    version = live_cache_version()
     return live_cache_put(cache_key, _digital_orders_json.dump_json(
-        _digital_orders_json.validate_python(_list_digital_orders(status, limit))))
+        _digital_orders_json.validate_python(_list_digital_orders(status, limit))), version)
 
 
 _digital_orders_json = TypeAdapter(list[DigitalOrderResponse])

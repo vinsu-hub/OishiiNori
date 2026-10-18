@@ -1,5 +1,20 @@
 # Oishii Nori Command Suite — Session Handoff
 
+## 2026-10-19: Supabase egress/log budget; executive order erase; client stock names
+
+- **Supabase free plan:** egress was at 4.27/5 GB and log ingestion at 6.74/1 GB.
+  - Cause: the live lists were re-downloaded about every 10 s, and every Supabase request is a log line.
+  - Fix, migration **0077** (`live_version` change counter plus statement triggers on the order tables):
+    - The API rebuilds a live list only when the counter moves, checking it at most every 5 s per instance. Lists still rebuild at least every 5 min.
+    - Writes now call `expire_version_check()` instead of wiping the cache, so the kitchen printer heartbeat no longer forces rebuilds.
+    - Without 0077 it falls back to the old 10 s cache.
+  - `scripts/cpu_budget.py` now also projects Supabase egress (about 1.2 GB/month) and fails above 3.75 GB.
+- **Migration 0076:** executive override key (`profiles.override_key_hash`) and `erase_transaction()`.
+  - Executives set the key in Settings and can permanently delete orders on Deliveries; the order's stock is returned.
+  - Order #1047 is to be erased that way.
+- **Both 0076 and 0077 must be applied by hand** in the Supabase SQL editor.
+- `scripts/apply_client_stock_names.py` applies the client's raw-material names, units and pack sizes (199 changes in the dry run). It hasn't been applied yet and is waiting for the owner's OK.
+
 ## 2026-10-17: back up on Pro; End-of-Day override for the Oct 16 outage
 
 - The team is on Pro. All five apps redeployed with the CPU fixes. The kitchen tablet now polls every 10 s, and `MIN_POLL_INTERVAL_MS` is 10 s. `cpu_budget.py` projects 2.33 h/month (fae88e4).

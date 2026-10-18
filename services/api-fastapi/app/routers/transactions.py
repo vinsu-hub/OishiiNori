@@ -1,5 +1,6 @@
 import logging
 import threading
+import time
 import uuid
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
@@ -1229,14 +1230,52 @@ def _validate_reservation_override(supabase, override_id, table_id, blocking_res
     return override["id"]
 
 
-# The kitchen tablet and every cashier screen poll the same live lists. A built
-# response is reused for up to 10 s, and main.py's cpu_meter clears it after
-# every successful write on this instance, so a sale or status change shows on
-# the next poll. Cached as JSON bytes: re-serializing was part of the cost.
+# The kitchen tablet and every cashier and TV screen poll the same live lists.
+# A built response (JSON bytes) is reused until the database's change counter
+# (live_version, migration 0077) moves: any write to a table these lists read
+# bumps it. Checking the counter is one ~100-byte request at most every
+# VERSION_CHECK_SECONDS per instance, where a rebuild downloads the whole list
+# -- this is what keeps Supabase egress and log volume inside the free plan.
+# Without migration 0077 it falls back to a plain 10 s cache.
 _LIVE_CACHE_SECONDS = 10
-_live_cache: TTLCache = TTLCache(maxsize=32, ttl=_LIVE_CACHE_SECONDS)
+VERSION_CHECK_SECONDS = 5
+# Safety net for anything the triggers don't cover.
+_LIVE_CACHE_MAX_AGE_SECONDS = 300
+_live_cache: dict = {}
 _live_cache_lock = threading.Lock()
 _transactions_json = TypeAdapter(list[TransactionResponse])
+_version_state = {"supported": None, "value": None, "checked_at": 0.0}
+
+
+def current_live_version(supabase=None) -> int | None:
+    """The change counter, read at most once per VERSION_CHECK_SECONDS.
+    None when migration 0077 isn't applied."""
+    now = time.monotonic()
+    with _live_cache_lock:
+        if _version_state["supported"] is False:
+            return None
+        if _version_state["value"] is not None and now - _version_state["checked_at"] < VERSION_CHECK_SECONDS:
+            return _version_state["value"]
+    try:
+        rows = (supabase or get_supabase()).table("live_version").select("version").eq("id", 1).execute().data
+    except APIError:
+        with _live_cache_lock:
+            _version_state["supported"] = False
+        return None
+    value = int(rows[0]["version"]) if rows else None
+    with _live_cache_lock:
+        _version_state.update(supported=value is not None, value=value, checked_at=now)
+    return value
+
+
+def expire_version_check() -> None:
+    """After a write on this instance: check the counter on the next read,
+    so the screen that made the change sees it straight away."""
+    with _live_cache_lock:
+        _version_state["checked_at"] = 0.0
+        gated = _version_state["supported"] is True
+    if not gated:
+        clear_live_cache()
 
 
 def clear_live_cache() -> None:
@@ -1245,13 +1284,30 @@ def clear_live_cache() -> None:
 
 
 def live_cache_get(key) -> bytes | None:
+    version = current_live_version()
+    now = time.monotonic()
     with _live_cache_lock:
-        return _live_cache.get(key)
+        entry = _live_cache.get(key)
+    if entry is None:
+        return None
+    built_version, built_at, body = entry
+    if version is None:
+        fresh = built_version is None and now - built_at < _LIVE_CACHE_SECONDS
+    else:
+        fresh = built_version == version and now - built_at < _LIVE_CACHE_MAX_AGE_SECONDS
+    return body if fresh else None
 
 
-def live_cache_put(key, body: bytes) -> Response:
+def live_cache_version() -> int | None:
+    """Read before building, so a change mid-build is caught by the next check."""
+    return current_live_version()
+
+
+def live_cache_put(key, body: bytes, version: int | None = None) -> Response:
     with _live_cache_lock:
-        _live_cache[key] = body
+        if len(_live_cache) >= 64:
+            _live_cache.pop(next(iter(_live_cache)))
+        _live_cache[key] = (version, time.monotonic(), body)
     return Response(body, media_type="application/json")
 
 
@@ -1356,6 +1412,7 @@ def list_transactions(
     body = live_cache_get(cache_key)
     if body is not None:
         return Response(body, media_type="application/json")
+    version = live_cache_version()
     supabase = get_supabase()
     # Release approved advance orders that are now within their kitchen lead
     # window, so they show up in this very response. Imported lazily because
@@ -1417,7 +1474,7 @@ def list_transactions(
 
     fast = _try_embedded(supabase, columns, narrow)
     if fast is not None:
-        return _cached_response(cache_key, fast)
+        return _cached_response(cache_key, fast, version)
 
     query = narrow(supabase.table("transactions").select(columns))
     transactions = _page_rows(query) if kitchen_status or active_since or advance_order_type else query.execute().data
@@ -1449,8 +1506,8 @@ def list_transactions(
     return [_transaction_response(t, items_by_transaction.get(t["id"], [])) for t in transactions]
 
 
-def _cached_response(cache_key, transactions: list[TransactionResponse]) -> Response:
-    return live_cache_put(cache_key, _transactions_json.dump_json(transactions))
+def _cached_response(cache_key, transactions: list[TransactionResponse], version: int | None) -> Response:
+    return live_cache_put(cache_key, _transactions_json.dump_json(transactions), version)
 
 
 def _try_embedded(supabase, columns: str, narrow) -> list[TransactionResponse] | None:

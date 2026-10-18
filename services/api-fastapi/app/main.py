@@ -103,7 +103,7 @@ async def cpu_meter(request: Request, call_next):
     response = await call_next(request)
     cpu_ms = (time.process_time() - started) * 1000
     if request.method not in ("GET", "HEAD", "OPTIONS") and response.status_code < 400:
-        transactions.clear_live_cache()
+        transactions.expire_version_check()
     response.headers["Server-Timing"] = f"cpu;dur={cpu_ms:.1f}"
     if cpu_ms > SLOW_CPU_MS:
         logger.warning("CPU budget: %s %s took %.0f ms CPU", request.method, request.url.path, cpu_ms)
