@@ -12,8 +12,8 @@
 - **Migration 0076:** executive override key (`profiles.override_key_hash`) and `erase_transaction()`.
   - Executives set the key in Settings and can permanently delete orders on Deliveries; the order's stock is returned.
   - Order #1047 is to be erased that way.
-- **Both 0076 and 0077 must be applied by hand** in the Supabase SQL editor.
-- `scripts/apply_client_stock_names.py` applies the client's raw-material names, units and pack sizes (199 changes in the dry run). It hasn't been applied yet and is waiting for the owner's OK.
+- **0076 and 0077 were applied on 2026-10-19.** Verified: the counter bumps on order writes, and a minute of kitchen polling is now 5 tiny Supabase requests.
+- `scripts/apply_client_stock_names.py` was applied on 2026-10-19 (199 changes). Every name on the client's 4 sheets now matches a Station Item exactly, and a re-run reports 0 changes.
 
 ## 2026-10-17: back up on Pro; End-of-Day override for the Oct 16 outage
 
