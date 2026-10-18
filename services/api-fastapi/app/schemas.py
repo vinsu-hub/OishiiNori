@@ -1650,6 +1650,8 @@ class BusinessSettingsOut(BaseModel):
     receipt_phone: str | None = None
     receipt_tin: str | None = None
     receipt_footer: str | None = None
+    # First online order of the day gets this product size free (0078); None = off.
+    first_order_promo_size_id: str | None = None
 
 
 class BusinessSettingsUpdate(BaseModel):
@@ -1663,6 +1665,8 @@ class BusinessSettingsUpdate(BaseModel):
     receipt_phone: str | None = Field(default=None, max_length=60)
     receipt_tin: str | None = Field(default=None, max_length=40)
     receipt_footer: str | None = Field(default=None, max_length=240)
+    # On = the free 4 pcs Torikatsu Maki for the first online order each day.
+    first_order_promo_enabled: bool | None = None
 
 
 # ---------------------------------------------------------------------------
