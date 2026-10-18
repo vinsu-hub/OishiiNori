@@ -54,6 +54,7 @@ export default function Settings() {
         {user?.role === 'executive' && (
           <>
             <OverrideKeyCard />
+            <FirstOrderPromoCard />
             <BusinessSettingsCard />
             <BusinessHoursCard />
           </>
@@ -456,6 +457,56 @@ function OverrideKeyCard() {
           <div className="space-y-1"><Label htmlFor="ok-confirm">Type it again</Label><Input id="ok-confirm" type="password" value={confirmKey} onChange={(e) => setConfirmKey(e.target.value)} autoComplete="new-password" /></div>
           <div className="sm:col-span-2"><Button type="submit" disabled={saving || !employeeNumber || !pin}>{saving ? 'Saving…' : isSet ? 'Change override key' : 'Set override key'}</Button></div>
         </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** First online order of the day gets a free 4 pcs Torikatsu Maki (on/off). */
+function FirstOrderPromoCard() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetchBusinessSettings()
+      .then((settings) => setEnabled(!!settings.first_order_promo_size_id))
+      .catch(() => setEnabled(null));
+  }, []);
+
+  async function toggle(next: boolean) {
+    setSaving(true);
+    const previous = enabled;
+    setEnabled(next);
+    try {
+      const settings = await updateBusinessSettings({ first_order_promo_enabled: next });
+      setEnabled(!!settings.first_order_promo_size_id);
+      toast.success(next ? 'First-order promo turned on' : 'First-order promo turned off');
+    } catch (error) {
+      setEnabled(previous);
+      toast.error(apiErrorDetail(error, 'Could not update the promo'));
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <Card className="max-w-xl">
+      <CardHeader>
+        <CardTitle className="font-corp-display">Online order promo</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <div className="flex items-start gap-3">
+          <Checkbox
+            id="first-order-promo"
+            checked={!!enabled}
+            disabled={enabled === null || saving}
+            onCheckedChange={(value) => { void toggle(value === true); }}
+          />
+          <Label htmlFor="first-order-promo" className="leading-snug">
+            Free 4 pcs Torikatsu Maki for the first online order each day
+          </Label>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          The first delivery or pickup order from the website each day gets it free, and the customer sees a pop-up. If that order is declined, the next customer gets it.
+        </p>
       </CardContent>
     </Card>
   );

@@ -25,7 +25,7 @@ function Router() {
       <Route path="/about">{() => <About />}</Route>
       <Route path="/our-menu">{() => <OurMenu />}</Route>
       <Route path={"/catering"} component={Catering} />
-      <Route path={"/events"} component={Events} />
+      <Route path="/events">{() => <Events />}</Route>
       <Route path="/sushi">{() => <Sushi />}</Route>
       <Route path="/ramen">{() => <Ramen />}</Route>
       <Route path="/delivery">{() => <Delivery />}</Route>

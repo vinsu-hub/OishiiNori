@@ -29,6 +29,7 @@ const KitchenDisplay = lazyWithReload(() => import('./pages/KitchenDisplay'), 'K
 const Reservations = lazyWithReload(() => import('./pages/Reservations'), 'Reservations');
 const POSManagement = lazyWithReload(() => import('./pages/POSManagement'), 'POSManagement');
 const CommandCenter = lazyWithReload(() => import('./pages/CommandCenter'), 'CommandCenter');
+const EventsManager = lazyWithReload(() => import('./pages/Events'), 'Events');
 const TrendAnalysis = lazyWithReload(() => import('./pages/TrendAnalysis'), 'TrendAnalysis');
 const MenuEditing = lazyWithReload(() => import('./pages/MenuEditing'), 'MenuEditing');
 const PnL = lazyWithReload(() => import('./pages/PnL'), 'PnL');
@@ -98,6 +99,7 @@ function Router() {
         <Route path={'/reservations'} component={Reservations} />
         <Route path={'/pos-management'} component={POSManagement} />
         <Route path={'/command-center'} component={CommandCenter} />
+        <Route path={'/events-manager'} component={EventsManager} />
         <Route path={'/trends'} component={TrendAnalysis} />
         <Route path={'/menu-editing'} component={MenuEditing} />
         <Route path={'/pnl'} component={PnL} />

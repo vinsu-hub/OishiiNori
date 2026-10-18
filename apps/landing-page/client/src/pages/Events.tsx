@@ -5,6 +5,34 @@ import SiteNav from '@/components/SiteNav';
 import SiteFooter from '@/components/SiteFooter';
 import FoodPhoto from '@/components/FoodPhoto';
 import { usePageMeta } from '@/lib/seo';
+import EventSignupForm from '@/components/EventSignupForm';
+import { fetchEvents, type PublicEvent } from '@/lib/api';
+
+const PH_DATE = new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', weekday: 'short', month: 'short', day: 'numeric' });
+const PH_TIME = new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit' });
+function eventWhen(event: PublicEvent): string {
+  const start = new Date(event.starts_at);
+  const end = event.ends_at ? ` – ${PH_TIME.format(new Date(event.ends_at))}` : '';
+  return `${PH_DATE.format(start)} · ${PH_TIME.format(start)}${end}`;
+}
+
+function EventCard({ event }: { event: PublicEvent }) {
+  const upcoming = new Date(event.starts_at).getTime() > Date.now();
+  return <article className="on-event-card">
+    {event.image_url && <img className="on-event-poster" src={event.image_url} alt={`Poster: ${event.title}`} loading="lazy" decoding="async" />}
+    <div className="on-event-body">
+      <p className="on-eyebrow">{upcoming ? 'UPCOMING EVENT' : 'RECENT EVENT'}</p>
+      <h3>{event.title}</h3>
+      <p className="on-event-when">{eventWhen(event)}</p>
+      {event.location && <p className="on-event-where">{event.location}</p>}
+      {event.price_label && <p className="on-event-price">{event.price_label}</p>}
+      {event.description && <p className="on-event-description">{event.description}</p>}
+      {event.accepting_signups
+        ? <EventSignupForm eventId={event.id} title={event.title} />
+        : upcoming && <p className="on-event-badge">{event.slots_full ? 'Slots full' : 'Sign-ups closed'}</p>}
+    </div>
+  </article>;
+}
 
 const DIR = '/events/sushi-kids';
 // [file number, thumb width, thumb height, alt]
@@ -60,8 +88,14 @@ function Lightbox({ index, onClose, onMove }: { index: number; onClose: () => vo
   </div>;
 }
 
-export default function Events() {
+export default function Events({ initialData }: { initialData?: { events: PublicEvent[] } } = {}) {
   const revealRef = useReveal();
+  const [events, setEvents] = useState<PublicEvent[]>(initialData?.events ?? []);
+  useEffect(() => {
+    let active = true;
+    fetchEvents().then(data => { if (active) setEvents(data); }).catch(() => {});
+    return () => { active = false; };
+  }, []);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(true);
   const [open, setOpen] = useState<number | null>(null);
@@ -79,12 +113,17 @@ export default function Events() {
   const move = useCallback((delta: number) => setOpen(current => current === null ? null : (current + delta + PHOTOS.length) % PHOTOS.length), []);
 
   return <div className="on-site"><SiteNav /><main tabIndex={-1} id="main-content" ref={revealRef}>
+    {events.length > 0 && <section className="on-events-upcoming on-container" aria-labelledby="upcoming-events">
+      <p className="on-label">OISHII NORI / EVENTS</p>
+      <h2 id="upcoming-events">UPCOMING <span>EVENTS.</span></h2>
+      <div className="on-event-list">{events.map(event => <EventCard key={event.id} event={event} />)}</div>
+    </section>}
     <section className="on-events-hero on-container">
       <div>
-        <p className="on-label">OISHII NORI / EVENTS</p>
+        <p className="on-label">OISHII NORI / PAST CLASSES</p>
         <h1>YOUR <span>SUSHI</span><br />STORY.<span className="on-h1-sub">Kids sushi making class in Santa Cruz, Laguna</span></h1>
         <p className="on-events-sub">Little hands, big rolls — our Sushi Making Class for Kids.</p>
-        <p className="on-events-meta">SANTA CRUZ, LAGUNA · OCTOBER 2026</p>
+        <p className="on-events-meta">PAST CLASS · SANTA CRUZ, LAGUNA</p>
         <div className="on-actions"><a className="on-button" href="#gallery">See the photos <span className="on-arrow" aria-hidden="true">↓</span></a><a className="on-button on-outline" href="/catering#catering-inquiry">Book a class <span className="on-arrow" aria-hidden="true">↗</span></a></div>
       </div>
       <figure className="on-events-video">

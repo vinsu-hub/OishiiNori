@@ -1,5 +1,24 @@
 # Oishii Nori Command Suite — Session Handoff
 
+## 2026-10-19 (later): online ordering upgrade
+
+- **Delivery fees** are now the owner's list: 26 Santa Cruz barangays (zone "Santa Cruz") and 14 towns (zone "Nearby towns"); dropdowns are grouped by zone. The ₱10 take-out bowl applies only to Ramen (all three), Rice Meals, Donburi, Gohan and Kare Raisu / Curry. Both were applied by script.
+- **Migration 0078** (owner applies by hand) adds:
+  - the first-online-order promo: free Torikatsu Maki 4 pcs for the first delivery/pickup order of the PH day; a declined order releases it; the Settings toggle turns it on or off;
+  - `events` and `event_signups`;
+  - rate-limit cleanup.
+- **Dashboard:**
+  - Order Queue has an Online tab (Pending / In queue / Out for delivery / Completed, Review → Approve → Print receipt, Mark delivered).
+  - Cashiers now get online-order alerts, a 2-minute reminder beep and a banner.
+  - Deliveries shows an Origin badge. Approved online deliveries are now `order_type='delivery'`.
+  - Events manager at `/events-manager`: executives, or the `events` grant.
+- **Website:** BIR seal on About; Events page lists events from `/public/events` with sign-ups; delivery copy covers the nearby towns.
+- **Public traffic:**
+  - CDN `Cache-Control` on menu, add-ons, fees, hours and events.
+  - In-memory first-line rate limits.
+  - Order caps (30 lines, quantity ≤ 30, 300-character notes), a honeypot, and at most 3 pending orders per phone.
+- **After 0078 is applied:** run `scripts/seed_event.py --apply` (the Halloween class, Oct 31 8:30 AM).
+
 ## 2026-10-19: Supabase egress/log budget; executive order erase; client stock names
 
 - **Supabase free plan:** egress was at 4.27/5 GB and log ingestion at 6.74/1 GB.

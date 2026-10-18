@@ -65,6 +65,7 @@ export function buildTicketHeader(order: TicketOrder, width = PAPER_WIDTH_CHARS)
     if (order.pickup_customer_phone) lines.push(center(asciiSafe(order.pickup_customer_phone), width));
   }
   if (order.order_source === 'grab') lines.push(center('GRAB', width));
+  if (order.order_source === 'online') lines.push(center(onlineLabel(orderType), width));
   if (orderType === 'dine_in' && order.table_number != null) {
     lines.push(center(`TABLE ${order.table_number}`, width));
   }
@@ -181,6 +182,11 @@ function wrapToWidth(ctx: CanvasRenderingContext2D, text: string, maxWidth: numb
   });
 }
 
+/** Website orders say so on the ticket, so the kitchen packs them to go. */
+function onlineLabel(orderType: string | null): string {
+  return orderType === 'delivery' ? 'ONLINE DELIVERY' : 'ONLINE PICKUP';
+}
+
 function ticketRuns(order: TicketOrder, index: TicketProductIndex): Run[] {
   const runs: Run[] = [];
   const orderType = order.order_type;
@@ -191,6 +197,7 @@ function ticketRuns(order: TicketOrder, index: TicketProductIndex): Run[] {
     weight: '900',
     align: 'center',
   });
+  if (order.order_source === 'online') runs.push({ text: onlineLabel(orderType), size: 32, weight: '900', align: 'center' });
   if (order.scheduled_for) {
     runs.push({ text: order.advance_schedule_revision ? 'ADVANCE - UPDATED' : 'ADVANCE ORDER', size: 32, weight: '900', align: 'center' });
     runs.push({ text: orderType === 'delivery' ? 'RIDER READY' : 'PICKUP READY', size: 28, weight: '900', align: 'center' });

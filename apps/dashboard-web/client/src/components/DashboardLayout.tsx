@@ -5,6 +5,7 @@ import { Header } from '@/components/Header';
 import { Sidebar } from '@/components/Sidebar';
 import { ChangePasswordScreen } from '@/components/ChangePasswordScreen';
 import { PendingCashCountBanner } from '@/components/PendingCashCountBanner';
+import { OnlineOrdersBanner } from '@/components/OnlineOrdersBanner';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -99,6 +100,7 @@ export function DashboardLayout({ children, title, headerExtra }: DashboardLayou
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         <Header title={title} onMenuClick={() => setMobileNavOpen(true)} extra={headerExtra} />
         <PendingCashCountBanner />
+        <OnlineOrdersBanner />
         <main className="flex-1 overflow-auto">{children}</main>
       </div>
     </div>

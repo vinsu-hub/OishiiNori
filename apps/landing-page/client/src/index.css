@@ -482,3 +482,9 @@ input:not([type=radio]):not([type=checkbox]),textarea,select{font-size:16px!impo
 .on-delivery-zones h3{font-size:30px;margin-bottom:12px}
 .on-delivery-zones ul{list-style:none;margin:0;padding:0}
 .on-delivery-zones li{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--on-line);font-size:15px}
+
+/* BIR Registration Seal (About) */
+.on-bir figure{margin:28px 0 0;max-width:720px}.on-bir img{display:block;width:100%;height:auto;background:#fff;border:1px solid var(--on-line);padding:12px}.on-bir figcaption{margin-top:12px;font-size:14px;line-height:1.5}
+/* Upcoming events (Events) */
+.on-events-upcoming{padding-top:150px}.on-events-upcoming h2 span{color:var(--on-red)}.on-event-list{display:grid;gap:48px;margin-top:36px}.on-event-card{display:grid;grid-template-columns:minmax(0,420px) minmax(0,1fr);gap:48px;align-items:start;border-top:3px solid var(--on-red);padding-top:32px}.on-event-poster{display:block;width:100%;height:auto;border:1px solid var(--on-line)}.on-event-body h3{font-size:clamp(36px,3.4vw,52px)}.on-event-when{font-weight:800;font-size:16px;margin:16px 0 4px!important}.on-event-where{margin:0!important;font-size:14px}.on-event-price{display:inline-block;margin:16px 0 0!important;padding:6px 12px;background:var(--on-red);color:#fff;font-weight:800;font-size:14px}.on-event-description{white-space:pre-line}.on-event-badge{display:inline-block;padding:10px 16px;border:2px solid var(--on-ink);font-weight:800;text-transform:uppercase;letter-spacing:.06em;font-size:13px}.on-event-form{max-width:620px}.on-honeypot{position:absolute;left:-10000px;width:1px;height:1px;opacity:0}
+@media(max-width:767px){.on-events-upcoming{padding-top:122px}.on-event-card{grid-template-columns:1fr;gap:24px}}

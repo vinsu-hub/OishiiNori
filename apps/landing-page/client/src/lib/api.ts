@@ -213,3 +213,38 @@ export interface DeliveryFee {
 export function fetchDeliveryFees(): Promise<DeliveryFee[]> {
   return request('/public/delivery-fees');
 }
+
+// ---------------------------------------------------------------------------
+// Events (managed by the owners in the dashboard's Events tab)
+// ---------------------------------------------------------------------------
+
+export interface PublicEvent {
+  id: string;
+  title: string;
+  description: string;
+  location: string;
+  starts_at: string;
+  ends_at: string | null;
+  price_label: string | null;
+  image_url: string | null;
+  signups_open: boolean;
+  slots_full: boolean;
+  accepting_signups: boolean;
+}
+
+export function fetchEvents(): Promise<PublicEvent[]> {
+  return request('/public/events');
+}
+
+export interface EventSignupPayload {
+  name: string;
+  phone: string;
+  email?: string;
+  slots: number;
+  notes?: string;
+  website?: string;
+}
+
+export function submitEventSignup(eventId: string, payload: EventSignupPayload): Promise<{ ok: boolean }> {
+  return request(`/public/events/${eventId}/signups`, { method: 'POST', body: JSON.stringify(payload) });
+}

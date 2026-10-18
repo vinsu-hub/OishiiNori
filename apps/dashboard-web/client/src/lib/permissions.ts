@@ -39,6 +39,7 @@ export const GRANTABLE_PAGES: GrantablePage[] = [
   { key: 'trends', label: 'Trend Analysis', group: 'Executive Analytics' },
   { key: 'pnl', label: 'P&L', group: 'Executive Analytics' },
   { key: 'oishii-ai', label: 'Oishii AI', group: 'Executive Analytics' },
+  { key: 'events', label: 'Events', group: 'Executive Analytics' },
 ];
 
-export const EXECUTIVE_ONLY_GRANTS = new Set(['command-center', 'trends', 'pnl', 'oishii-ai']);
+export const EXECUTIVE_ONLY_GRANTS = new Set(['command-center', 'trends', 'pnl', 'oishii-ai', 'events']);

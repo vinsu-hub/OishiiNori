@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { useLocation } from 'wouter';
 import { toast } from 'sonner';
-import { ApiDigitalOrder, fetchDigitalOrders } from '@/lib/api';
+import { fetchDigitalOrders } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 import { playOnlineOrderBeep, playTableOrderBeep } from '@/lib/orderSounds';
@@ -12,6 +12,12 @@ interface TableOrderAlertsContextType {
   pendingPickupCount: number;
   pendingDeliveryCount: number;
   pendingScheduledCount: number;
+  /** Website delivery/pickup orders waiting for a cashier (any schedule). */
+  pendingOnlineCount: number;
+  /** When the longest-waiting online order came in (ms), or null. */
+  oldestOnlinePendingAt: number | null;
+  /** Whether this account reviews online orders. */
+  onlineEnabled: boolean;
 }
 
 const TableOrderAlertsContext = createContext<TableOrderAlertsContextType>({
@@ -19,7 +25,16 @@ const TableOrderAlertsContext = createContext<TableOrderAlertsContextType>({
   pendingPickupCount: 0,
   pendingDeliveryCount: 0,
   pendingScheduledCount: 0,
+  pendingOnlineCount: 0,
+  oldestOnlinePendingAt: null,
+  onlineEnabled: false,
 });
+
+/** Where cashiers review website orders: Order Queue's Online tab. */
+export const ONLINE_ORDERS_ROUTE = '/order-queue?tab=online';
+// An online order left this long gets a repeat beep every minute.
+const ONLINE_REMINDER_AFTER_MS = 2 * 60_000;
+const ONLINE_REMINDER_EVERY_MS = 60_000;
 
 // Pages where a pending (not yet approved) QR order isn't actionable: the
 // kitchen only cares once the cashier approves it, and Kitchen Display
@@ -27,11 +42,6 @@ const TableOrderAlertsContext = createContext<TableOrderAlertsContextType>({
 const QUIET_PATHS = ['/kitchen-display'];
 // Roles that never approve table orders.
 const NON_CASHIER_ROLES = new Set(['rider', 'stocker']);
-
-function onlineOrderRoute(order: ApiDigitalOrder): string {
-  if (order.scheduled_for) return '/scheduled-orders';
-  return order.order_channel === 'delivery' ? '/delivery-requests' : '/online-orders';
-}
 
 /** Watches the shared pending digital-order queue across dashboard pages. */
 export function TableOrderAlertsProvider({ children }: { children: React.ReactNode }) {
@@ -41,6 +51,8 @@ export function TableOrderAlertsProvider({ children }: { children: React.ReactNo
   const [pendingPickupCount, setPendingPickupCount] = useState(0);
   const [pendingDeliveryCount, setPendingDeliveryCount] = useState(0);
   const [pendingScheduledCount, setPendingScheduledCount] = useState(0);
+  const [pendingOnlineCount, setPendingOnlineCount] = useState(0);
+  const [oldestOnlinePendingAt, setOldestOnlinePendingAt] = useState<number | null>(null);
   // First successful load establishes a baseline, without chiming for old orders.
   const seenTableIdsRef = useRef<Set<string> | null>(null);
   const seenOnlineIdsRef = useRef<Set<string> | null>(null);
@@ -50,8 +62,9 @@ export function TableOrderAlertsProvider({ children }: { children: React.ReactNo
   locationRef.current = location;
 
   const tableEnabled = !!user && !NON_CASHIER_ROLES.has(user.role);
+  // Cashiers review website orders too (Order Queue → Online).
   const onlineEnabled = !!user && !['kitchen', 'rider', 'stocker'].includes(user.role) && (
-    user.role === 'manager' || user.role === 'executive' || user.extraPages.includes('online-orders')
+    ['employee', 'manager', 'executive'].includes(user.role) || user.extraPages.includes('online-orders')
   );
 
   useEffect(() => {
@@ -63,6 +76,8 @@ export function TableOrderAlertsProvider({ children }: { children: React.ReactNo
     setPendingPickupCount(0);
     setPendingDeliveryCount(0);
     setPendingScheduledCount(0);
+    setPendingOnlineCount(0);
+    setOldestOnlinePendingAt(null);
   }, [user?.id]);
 
   const load = useCallback(() => {
@@ -79,6 +94,10 @@ export function TableOrderAlertsProvider({ children }: { children: React.ReactNo
           setPendingPickupCount(onlineOrders.filter((o) => o.order_channel === 'pickup' && !o.scheduled_for).length);
           setPendingDeliveryCount(onlineOrders.filter((o) => o.order_channel === 'delivery' && !o.scheduled_for).length);
           setPendingScheduledCount(onlineOrders.filter((o) => !!o.scheduled_for).length);
+          setPendingOnlineCount(onlineOrders.length);
+          setOldestOnlinePendingAt(onlineOrders.length
+            ? Math.min(...onlineOrders.map((o) => Date.parse(o.created_at)))
+            : null);
         }
 
         const seenTable = seenTableIdsRef.current;
@@ -105,7 +124,7 @@ export function TableOrderAlertsProvider({ children }: { children: React.ReactNo
         if (freshOnline.length) {
           playOnlineOrderBeep();
           for (const order of freshOnline) {
-            const destination = onlineOrderRoute(order);
+            const destination = ONLINE_ORDERS_ROUTE;
             const kind = order.order_channel === 'delivery' ? 'Delivery' : 'Pickup';
             const amount = formatCurrency(order.subtotal + (order.delivery?.delivery_fee ?? 0));
             toast.custom((toastId) => (
@@ -136,12 +155,26 @@ export function TableOrderAlertsProvider({ children }: { children: React.ReactNo
   // The new-order alarm stays a little quicker than the 30s boards; it's a cheap call.
   useVisiblePolling(load, 20_000);
 
+  // Reminder: an online order nobody has reviewed for 2 minutes beeps again
+  // every minute until someone approves or declines it.
+  useEffect(() => {
+    if (!onlineEnabled || oldestOnlinePendingAt === null) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() - oldestOnlinePendingAt >= ONLINE_REMINDER_AFTER_MS) playOnlineOrderBeep();
+    }, ONLINE_REMINDER_EVERY_MS);
+    return () => clearInterval(timer);
+  }, [onlineEnabled, oldestOnlinePendingAt]);
+
   return (
     <TableOrderAlertsContext.Provider value={{
       pendingCount: tableEnabled ? pendingCount : 0,
       pendingPickupCount: onlineEnabled ? pendingPickupCount : 0,
       pendingDeliveryCount: onlineEnabled ? pendingDeliveryCount : 0,
       pendingScheduledCount: onlineEnabled ? pendingScheduledCount : 0,
+      pendingOnlineCount: onlineEnabled ? pendingOnlineCount : 0,
+      oldestOnlinePendingAt: onlineEnabled ? oldestOnlinePendingAt : null,
+      onlineEnabled,
     }}>
       {children}
     </TableOrderAlertsContext.Provider>

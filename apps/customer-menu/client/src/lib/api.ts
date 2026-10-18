@@ -126,6 +126,8 @@ export interface SubmitOrderPayload {
   idempotency_key?: string;
   /** Advance order: ISO time the customer wants it (delivery/pickup only). */
   scheduled_for?: string;
+  /** Honeypot: a hidden field people never fill. Sent only if a bot filled it. */
+  website?: string;
 }
 
 export interface DeliveryFee {
@@ -154,6 +156,8 @@ export interface DigitalOrderStatusItem {
   quantity: number;
   unit_price: number;
   held_ingredients: string[];
+  /** The free first-online-order-of-the-day item. */
+  is_promo?: boolean;
 }
 
 export interface DigitalOrderStatusAddon {

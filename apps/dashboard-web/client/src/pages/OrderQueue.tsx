@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'wouter';
+import { useLocation, useSearch } from 'wouter';
 import { toast } from 'sonner';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -34,6 +34,8 @@ import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 import { buildDigitalOrderLookup } from '@/lib/digitalOrderLookup';
 import { DigitalOrderInfo } from '@/components/shared/DigitalOrderInfo';
 import { playOrderReadyBeep } from '@/lib/orderSounds';
+import { OnlineOrdersBoard } from '@/components/orders/OnlineOrdersBoard';
+import { useTableOrderAlerts } from '@/contexts/TableOrderAlertsContext';
 
 type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline' | 'gold';
 
@@ -66,7 +68,15 @@ const PAGE_SIZE = 10;
 export default function OrderQueue() {
   // Kitchen accounts see order status only -- voids and refunds are cashier work.
   const readOnly = useAuth().user?.role === 'kitchen';
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
+  // In-store orders vs website orders (?tab=online). Kitchen accounts keep
+  // the read-only in-store view only.
+  const search = useSearch();
+  const tab: 'store' | 'online' = !readOnly && new URLSearchParams(search).get('tab') === 'online' ? 'online' : 'store';
+  const { pendingOnlineCount } = useTableOrderAlerts();
+  const [boardPending, setBoardPending] = useState<number | null>(null);
+  const onlinePending = boardPending ?? pendingOnlineCount;
+  const setTab = (next: 'store' | 'online') => navigate(next === 'online' ? `${location}?tab=online` : location, { replace: true });
   const [transactions, setTransactions] = useState<ApiTransaction[]>([]);
   const [products, setProducts] = useState<ApiProduct[]>([]);
   const [digitalOrderLookup, setDigitalOrderLookup] = useState<Map<string, ApiDigitalOrder>>(new Map());
@@ -98,6 +108,7 @@ export default function OrderQueue() {
   }, []);
 
   const load = useCallback(() => {
+    if (tab === 'online') return; // the Online board polls its own list
     const transactionStatusParam = (TRANSACTION_STATUS_VALUES as string[]).includes(statusFilter)
       ? (statusFilter as TransactionStatus)
       : undefined;
@@ -122,7 +133,7 @@ export default function OrderQueue() {
       .catch((e) => toast.error(`Failed to load orders: ${e instanceof Error ? e.message : 'Unknown error'}`))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateFilter, statusFilter, soundOn]);
+  }, [dateFilter, statusFilter, soundOn, tab]);
 
   useVisiblePolling(load, POLL_INTERVAL_MS);
 
@@ -219,6 +230,24 @@ export default function OrderQueue() {
 
   return (
     <DashboardLayout title="Order Queue">
+      {!readOnly && (
+        <div className="flex gap-2 px-6 pt-6" role="tablist" aria-label="Order source">
+          <Button role="tab" aria-selected={tab === 'store'} variant={tab === 'store' ? 'default' : 'outline'} className="min-h-10" onClick={() => setTab('store')}>
+            In-store
+          </Button>
+          <Button role="tab" aria-selected={tab === 'online'} variant={tab === 'online' ? 'default' : 'outline'} className="min-h-10 gap-2" onClick={() => setTab('online')}>
+            Online
+            {onlinePending > 0 && (
+              <span className="rounded-full bg-amber-500 px-2 text-xs font-semibold text-white">{onlinePending} pending</span>
+            )}
+          </Button>
+        </div>
+      )}
+      {tab === 'online' ? (
+        <div className="p-6">
+          <OnlineOrdersBoard onPendingCount={setBoardPending} />
+        </div>
+      ) : (
       <div className="p-6 space-y-3">
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1">
@@ -390,6 +419,7 @@ export default function OrderQueue() {
           </div>
         )}
       </div>
+      )}
 
       <Dialog open={!!voidTarget} onOpenChange={(open) => !open && setVoidTarget(null)}>
         <DialogContent>

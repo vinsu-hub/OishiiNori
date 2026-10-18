@@ -53,7 +53,24 @@ const TONE: Record<string, string> = {
   delivered: 'bg-green-100 text-green-900 border-green-300',
 };
 
+/** Where the delivery was punched: at the POS counter, or by the customer online. */
+function OriginBadge({ t }: { t: ApiTransaction }) {
+  const online = t.order_source === 'online';
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${
+        online ? 'border-blue-300 bg-blue-50 text-blue-900' : 'border-slate-300 bg-slate-50 text-slate-800'
+      }`}
+    >
+      Origin: {online ? 'Online delivery' : 'POS delivery'}
+    </span>
+  );
+}
+
 function orderTotal(t: ApiTransaction): number {
+  // POS deliveries keep the fee outside total_amount; an online order's
+  // total already includes it.
+  if (t.order_source === 'online') return t.total_amount;
   return t.total_amount + (t.delivery?.delivery_fee ?? 0);
 }
 
@@ -225,9 +242,12 @@ export default function PosDeliveries() {
                         </div>
                         <p className="text-xl font-bold">{formatCurrency(orderTotal(t))}</p>
                       </div>
-                      <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${TONE[st.tone]}`}>
-                        <st.Icon className="h-3.5 w-3.5" aria-hidden="true" /> {st.label}
-                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${TONE[st.tone]}`}>
+                          <st.Icon className="h-3.5 w-3.5" aria-hidden="true" /> {st.label}
+                        </span>
+                        <OriginBadge t={t} />
+                      </div>
                       {t.delivery && (
                         <div className="text-sm">
                           <p className="font-medium">{t.delivery.customer_name}</p>
@@ -290,6 +310,7 @@ export default function PosDeliveries() {
               {paidToday.map((t) => (
                 <div key={t.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm">
                   <span className="font-semibold">Order #{t.order_number ?? t.id.slice(0, 8)}</span>
+                  <OriginBadge t={t} />
                   <span className="text-muted-foreground">{t.delivery?.customer_name}</span>
                   <span className="text-muted-foreground">Fee {formatCurrency(t.delivery?.delivery_fee ?? 0)}</span>
                   <span className="text-muted-foreground">Rider {t.delivery?.rider_payout == null ? '—' : formatCurrency(t.delivery.rider_payout)}</span>

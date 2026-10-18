@@ -146,7 +146,7 @@ export function receiptHtml(r: ReceiptData): string {
       return (
         row(
           `${line.quantity}x ${line.name}`,
-          formatCurrency(line.unitPrice * line.quantity),
+          line.unitPrice === 0 ? 'FREE' : formatCurrency(line.unitPrice * line.quantity),
         ) + addons + (line.discountName ? row(`  1 unit: ${line.discountName}`, '') : '')
       );
     })
@@ -244,7 +244,7 @@ export function receiptEscpos(
   for (const line of r.lines) {
     rows(
       `${line.quantity}x ${line.name}`,
-      money(line.unitPrice * line.quantity),
+      line.unitPrice === 0 ? 'FREE' : money(line.unitPrice * line.quantity),
     );
     for (const addon of line.addons)
       rows(
@@ -339,9 +339,13 @@ function printReceiptViaBrowser(r: ReceiptData): void {
 export function ReceiptDialog({
   receipt,
   onClose,
+  title,
+  description,
 }: {
   receipt: ReceiptData | null;
   onClose: () => void;
+  title?: string;
+  description?: string;
 }) {
   const printButtonRef = useRef<HTMLButtonElement>(null);
   const { user } = useAuth();
@@ -357,13 +361,10 @@ export function ReceiptDialog({
       >
         <DialogHeader>
           <DialogTitle>
-            Sale complete
-            {receipt?.orderNumber != null
-              ? ` · Order #${receipt.orderNumber}`
-              : ''}
+            {title ?? `Sale complete${receipt?.orderNumber != null ? ` · Order #${receipt.orderNumber}` : ''}`}
           </DialogTitle>
           <DialogDescription>
-            Print the customer order slip, or close to begin the next order.
+            {description ?? 'Print the customer order slip, or close to begin the next order.'}
           </DialogDescription>
         </DialogHeader>
         {receipt && (

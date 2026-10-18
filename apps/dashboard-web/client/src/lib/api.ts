@@ -769,6 +769,8 @@ export interface ApiDigitalOrderItem {
   quantity: number;
   unit_price: number;
   held_ingredients: string[];
+  /** The free first-online-order-of-the-day item (migration 0078). */
+  is_promo?: boolean;
 }
 
 export interface ApiDigitalOrderAddon {
@@ -823,6 +825,23 @@ export interface ApiDigitalOrder {
   kitchen_status?: string | null;
   /** Advance order: when the customer wants it (null = as soon as possible). */
   scheduled_for?: string | null;
+  packaging_fee?: number;
+  boat_deposit?: number;
+  /** Set by GET /digital-orders/board only. */
+  stage?: DigitalBoardStage | null;
+  pos_order_number?: number | null;
+  payment_status?: string | null;
+}
+
+/** The cashier's Online tab in Order Queue. */
+export type DigitalBoardStage = 'pending' | 'in_queue' | 'out_for_delivery' | 'completed';
+
+export function fetchDigitalBoard(): Promise<ApiDigitalOrder[]> {
+  return request('/digital-orders/board');
+}
+
+export function markDigitalOrderDelivered(id: string): Promise<{ id: string; delivered_at: string }> {
+  return request(`/digital-orders/${id}/delivered`, { method: 'POST' });
 }
 
 export function fetchDigitalOrders(status?: DigitalOrderStatus): Promise<ApiDigitalOrder[]> {
@@ -1937,6 +1956,8 @@ export interface ApiBusinessSettings {
   receipt_phone?: string | null;
   receipt_tin?: string | null;
   receipt_footer?: string | null;
+  /** Free item for the first online order each day; null = promo off (0078). */
+  first_order_promo_size_id?: string | null;
 }
 
 export function fetchBusinessSettings(): Promise<ApiBusinessSettings> {
@@ -1954,6 +1975,7 @@ export function updateBusinessSettings(
     receipt_phone: string;
     receipt_tin: string;
     receipt_footer: string;
+    first_order_promo_enabled: boolean;
   }>
 ): Promise<ApiBusinessSettings> {
   return request('/settings/business', { method: 'PATCH', body: JSON.stringify(body) });
@@ -2591,4 +2613,85 @@ export function setOverrideKey(body: { employee_number: string; pin: string; new
 /** Permanently erases an order (executives only, with their override key). Its stock is returned. */
 export function eraseTransaction(id: string, body: { override_key: string; reason: string }): Promise<{ id: string; erased: boolean }> {
   return request(`/transactions/${id}/erase`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+// ---- Events on the website (migration 0078) ----
+
+export interface ApiEvent {
+  id: string;
+  title: string;
+  description: string;
+  location: string;
+  starts_at: string;
+  ends_at: string | null;
+  price_label: string | null;
+  image_url: string | null;
+  listed: boolean;
+  signups_open: boolean;
+  slots_full: boolean;
+  created_at: string;
+  updated_at: string;
+  signup_count: number;
+  slots_taken: number;
+  new_signups: number;
+}
+
+export interface EventPayload {
+  title: string;
+  description: string;
+  location: string;
+  starts_at: string;
+  ends_at: string | null;
+  price_label: string | null;
+  listed?: boolean;
+  signups_open?: boolean;
+  slots_full?: boolean;
+}
+
+export type EventSignupStatus = 'new' | 'confirmed' | 'cancelled';
+
+export interface ApiEventSignup {
+  id: string;
+  event_id: string;
+  name: string;
+  phone: string;
+  email: string | null;
+  slots: number;
+  notes: string | null;
+  status: EventSignupStatus;
+  created_at: string;
+}
+
+export function fetchEvents(): Promise<ApiEvent[]> {
+  return request('/events');
+}
+
+export function createEvent(body: EventPayload): Promise<ApiEvent> {
+  return request('/events', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function updateEvent(id: string, body: Partial<EventPayload>): Promise<ApiEvent> {
+  return request(`/events/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+export function deleteEvent(id: string): Promise<{ id: string; deleted: boolean }> {
+  return request(`/events/${id}`, { method: 'DELETE' });
+}
+
+export function uploadEventImage(id: string, file: File): Promise<ApiEvent> {
+  const formData = new FormData();
+  formData.append('file', file);
+  return requestMultipart(`/events/${id}/image`, formData);
+}
+
+export function fetchEventSignups(eventId: string): Promise<ApiEventSignup[]> {
+  return request(`/events/${eventId}/signups`);
+}
+
+export function updateEventSignupStatus(id: string, status: EventSignupStatus): Promise<ApiEventSignup> {
+  return request(`/event-signups/${id}`, { method: 'PATCH', body: JSON.stringify({ status }) });
+}
+
+export function fetchNewEventSignupCount(): Promise<{ count: number }> {
+  return request('/events/new-signups');
 }

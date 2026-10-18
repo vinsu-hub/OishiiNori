@@ -123,7 +123,7 @@ function buildJsonLd({ hours, route, products, deliveryFees, pageMeta, dishPages
       {
         '@type': 'Question',
         name: 'Do you deliver?',
-        acceptedAnswer: { '@type': 'Answer', text: 'Yes, across Santa Cruz, Laguna. The fee depends on your barangay; see oishiinori.com/delivery for every area. Coming from Pagsanjan, Pila or Lumban? Order online for pickup.' },
+        acceptedAnswer: { '@type': 'Answer', text: 'Yes, across Santa Cruz, Laguna, and to nearby towns such as Pagsanjan, Pila, Lumban and Magdalena. The fee depends on your barangay or town; see oishiinori.com/delivery for every area.' },
       },
       {
         '@type': 'Question',
@@ -192,7 +192,7 @@ function buildJsonLd({ hours, route, products, deliveryFees, pageMeta, dishPages
     description: pageMeta['/delivery'].description,
     url: `${SITE_URL}/delivery`,
     provider: { '@id': `${SITE_URL}/#restaurant` },
-    areaServed: deliveryFees.map(row => ({ '@type': 'Place', name: `${row.barangay}, Santa Cruz, Laguna` })),
+    areaServed: deliveryFees.map(row => ({ '@type': 'Place', name: row.zone === 'Nearby towns' ? `${row.barangay}, Laguna` : `${row.barangay}, Santa Cruz, Laguna` })),
     offers: deliveryFees.map(row => ({
       '@type': 'Offer', name: `Delivery to ${row.barangay}`, price: row.fee, priceCurrency: 'PHP',
     })),
@@ -275,7 +275,7 @@ async function main() {
     }
 
     console.log(`[prerender] fetching real data from ${apiBase}...`);
-    const [products, hours, deliveryFees] = await Promise.all([
+    const [products, hours, deliveryFees, events] = await Promise.all([
       fetch(`${apiBase}/public/menu`).then((r) => {
         if (!r.ok) throw new Error(`GET /public/menu failed: ${r.status}`);
         return r.json();
@@ -287,6 +287,11 @@ async function main() {
         if (!r.ok) throw new Error(`GET /public/delivery-fees failed: ${r.status}`);
         return r.json();
       }),
+      // Owner-managed events; the page also refreshes them at runtime, so a
+      // failure here just means the static HTML starts without them.
+      fetch(`${apiBase}/public/events`)
+        .then((r) => (r.ok ? r.json() : []))
+        .catch(() => []),
     ]);
     console.log(`[prerender] fetched ${products.length} products, ${deliveryFees.length} delivery areas, hours=${hours ? 'ok' : 'unavailable'}`);
 
@@ -300,7 +305,7 @@ async function main() {
       { route: '/our-menu', component: 'OurMenu', initialData: { products } },
       { route: '/catering', component: 'Catering' },
       { route: '/about', component: 'About', initialData: { hours } },
-      { route: '/events', component: 'Events' },
+      { route: '/events', component: 'Events', initialData: { events } },
     ].map(page => ({ ...page, ...PAGE_META[page.route] }));
     const outputRoot = path.join(root, 'dist', 'public');
     const template = fs.readFileSync(path.join(outputRoot, 'index.html'), 'utf-8');

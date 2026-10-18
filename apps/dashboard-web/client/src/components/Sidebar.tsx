@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useInventoryAlerts } from '@/contexts/InventoryAlertsContext';
 import { useTableOrderAlerts } from '@/contexts/TableOrderAlertsContext';
 import { useLocation, useSearch } from 'wouter';
 import { DEPARTMENT_CONFIG } from '@/lib/types';
+import { fetchNewEventSignupCount } from '@/lib/api';
+import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -42,7 +44,7 @@ import {
   Star,
   Mail,
   UserPlus,
-  Printer, Bike, PauseCircle, LayoutGrid } from 'lucide-react';
+  Printer, Bike, PauseCircle, LayoutGrid, PartyPopper } from 'lucide-react';
 
 interface SidebarProps {
   collapsed: boolean;
@@ -66,6 +68,7 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
     pendingPickupCount,
     pendingDeliveryCount,
     pendingScheduledCount,
+    pendingOnlineCount,
   } = useTableOrderAlerts();
   const [location, navigate] = useLocation();
   const search = useSearch();
@@ -73,6 +76,15 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
   // Persisted independently of the overall sidebar collapsed/expanded state
   // (a different concern -- whether the Stock group's own children are
   // shown). Mirrors DashboardLayout's sidebarCollapsed persistence pattern.
+  // Events tab badge: new website sign-ups. A rare event, so a slow check.
+  const canSeeEvents = !!user && (user.role === 'executive' || user.extraPages.includes('events'));
+  const [newEventSignups, setNewEventSignups] = useState(0);
+  const loadEventSignups = useCallback(() => {
+    if (!canSeeEvents) return;
+    fetchNewEventSignupCount().then((r) => setNewEventSignups(r.count)).catch(() => {});
+  }, [canSeeEvents]);
+  useVisiblePolling(loadEventSignups, 300_000);
+
   const [stockGroupOpen, setStockGroupOpen] = useState(
     () => typeof window === 'undefined' || localStorage.getItem('stockNavGroupOpen') !== 'false'
   );
@@ -149,7 +161,8 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
   // decision -- cashiers may edit the menu).
   const beforeStockItems: NavItem[] = [
     { icon: ShoppingCart, label: 'POS Terminal', href: '/pos' },
-    { icon: ListOrdered, label: 'Order Queue', href: '/order-queue' },
+    // Badge: website orders waiting for the cashier (Order Queue → Online).
+    { icon: ListOrdered, label: 'Order Queue', href: '/order-queue', badge: pendingOnlineCount },
     { icon: ClipboardList, label: 'Order History', href: '/order-history' },
     // Every role: the cashier approves QR table orders (2026-10-04 client
     // decision), so the badge here is how they notice one is waiting.
@@ -173,6 +186,9 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
       : []),
     ...(isExecutive || hasGrant('command-center')
       ? [{ icon: LayoutDashboard, label: 'Command Center', href: '/command-center' }]
+      : []),
+    ...(canSeeEvents
+      ? [{ icon: PartyPopper, label: 'Events', href: '/events-manager', badge: newEventSignups }]
       : []),
     ...(isManagerOrExecutive || hasGrant('online-orders')
       ? [{ icon: Truck, label: 'Online Orders', href: '/online-orders', badge: pendingPickupCount }]

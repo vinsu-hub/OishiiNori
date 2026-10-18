@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import React, { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   ArrowRight,
   CheckCircle2,
@@ -152,6 +152,15 @@ export default function App() {
   }, [orderChannel, deliveryFees.length]);
 
   const selectedFee = deliveryFees.find((f) => f.barangay === barangay)?.fee ?? null;
+  // Dropdown groups: Santa Cruz barangays first, then nearby towns.
+  const feeGroups = useMemo(() => {
+    const groups = new Map<string, DeliveryFee[]>();
+    for (const fee of deliveryFees) groups.set(fee.zone, [...(groups.get(fee.zone) ?? []), fee]);
+    const rank = (zone: string) => (zone === 'Santa Cruz' ? 0 : zone === 'Nearby towns' ? 1 : 2);
+    return Array.from(groups.entries())
+      .sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b))
+      .map(([zone, fees]) => [zone, [...fees].sort((a, b) => a.barangay.localeCompare(b.barangay))] as const);
+  }, [deliveryFees]);
 
   function toLocalDateTimeInput(date: Date) {
     const offsetMs = date.getTimezoneOffset() * 60_000;
@@ -230,6 +239,14 @@ export default function App() {
     };
   }, []);
   const [customerNote, setCustomerNote] = useState('');
+  // Honeypot (hidden from people); only bots fill it.
+  const [website, setWebsite] = useState('');
+  // Set when this order won the first-online-order-of-the-day free item.
+  const [promoItemName, setPromoItemName] = useState<string | null>(null);
+  const promoOkRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (promoItemName) promoOkRef.current?.focus();
+  }, [promoItemName]);
   const [submitting, setSubmitting] = useState(false);
   const [justPlaced, setJustPlaced] = useState(false);
   const [order, setOrder] = useState<DigitalOrderStatus | null>(null);
@@ -415,7 +432,7 @@ export default function App() {
 
   async function submitFinalOrder(method: string) {
     if (!effectiveChannel) return null;
-    return submitOrder({
+    const result = await submitOrder({
       table_number: tableNumber ?? undefined,
       order_channel: effectiveChannel,
       items: cart.map((l) => ({ product_size_id: l.size.id, quantity: l.quantity, held_ingredients: l.held })),
@@ -434,7 +451,14 @@ export default function App() {
           barangay,
         }),
       }),
+      ...(website && { website }),
     });
+    const promo = result.items.find((item) => item.is_promo);
+    if (promo) {
+      const resolved = sizeIndex.get(promo.product_size_id);
+      setPromoItemName(resolved ? `${resolved.size.size_label} ${resolved.product.name}` : '4 pcs Torikatsu Maki');
+    }
+    return result;
   }
 
   // Main checkout CTA. Cash (any channel) and the dine-in QR flow (waiter-
@@ -879,6 +903,38 @@ export default function App() {
         </button>
       )}
 
+      {promoItemName && (
+        <div className="modal-backdrop" role="presentation" onClick={() => setPromoItemName(null)}>
+          <div
+            className="item-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="promo-title"
+            style={{ maxWidth: 360 }}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => { if (e.key === 'Escape') setPromoItemName(null); }}
+          >
+            <div className="modal-body" style={{ textAlign: 'center' }}>
+              <p style={{ fontSize: 44, margin: 0 }} aria-hidden="true">🎉</p>
+              <h2 id="promo-title">You're our first online customer today!</h2>
+              <p>
+                Since you're the first customer to order online today, you'll receive a <strong>FREE {promoItemName}</strong>. It's
+                already added to your order.
+              </p>
+              <button
+                ref={promoOkRef}
+                className="primary-button"
+                type="button"
+                style={{ width: '100%', marginTop: 12 }}
+                onClick={() => setPromoItemName(null)}
+              >
+                Yay, thank you!
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {closedNoticeOpen && (
         <div className="modal-backdrop" role="presentation" onClick={() => setClosedNoticeOpen(false)}>
           <div
@@ -1209,14 +1265,18 @@ export default function App() {
                         <select
                           className="input"
                           value={barangay}
-                          aria-label="Barangay"
+                          aria-label="Barangay / Town"
                           onChange={(e) => setBarangay(e.target.value)}
                         >
-                          <option value="">Select barangay...</option>
-                          {deliveryFees.map((f) => (
-                            <option key={f.barangay} value={f.barangay}>
-                              {f.barangay} ({peso(f.fee)})
-                            </option>
+                          <option value="">Select barangay / town...</option>
+                          {feeGroups.map(([zone, fees]) => (
+                            <optgroup key={zone} label={zone}>
+                              {fees.map((f) => (
+                                <option key={f.barangay} value={f.barangay}>
+                                  {f.barangay} ({peso(f.fee)})
+                                </option>
+                              ))}
+                            </optgroup>
                           ))}
                         </select>
                       </>
@@ -1224,6 +1284,16 @@ export default function App() {
                   </div>
                 )}
 
+                <input
+                  type="text"
+                  name="website"
+                  tabIndex={-1}
+                  autoComplete="off"
+                  aria-hidden="true"
+                  value={website}
+                  onChange={(e) => setWebsite(e.target.value)}
+                  style={{ position: 'absolute', left: '-10000px', width: 1, height: 1, opacity: 0 }}
+                />
                 <input
                   className="input"
                   style={{ marginBottom: 14 }}
@@ -1553,9 +1623,10 @@ function OrderStatusView({
               <div className="receipt-row" key={item.id}>
                 <span>
                   <strong>{item.quantity}× {name}</strong>
+                  {item.is_promo && <small>FREE · first online order of the day</small>}
                   {item.held_ingredients.length > 0 && <small>Hold: {item.held_ingredients.join(', ')}</small>}
                 </span>
-                <strong>{peso(item.unit_price * item.quantity)}</strong>
+                <strong>{item.is_promo ? `FREE ${peso(0)}` : peso(item.unit_price * item.quantity)}</strong>
               </div>
               );
             })}

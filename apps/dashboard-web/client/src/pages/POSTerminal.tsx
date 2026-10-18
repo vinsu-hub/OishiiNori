@@ -17,7 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
@@ -1730,14 +1730,22 @@ export default function POSTerminal() {
                   if (suggested != null) setDeliveryFeeAmount(String(suggested));
                 }}>
                   <SelectTrigger className="h-8 text-sm flex-1">
-                    <SelectValue placeholder="Barangay" />
+                    <SelectValue placeholder="Barangay / Town" />
                   </SelectTrigger>
                   <SelectContent>
-                    {deliveryFees.map((f) => (
-                      <SelectItem key={f.barangay} value={f.barangay}>
-                        {f.barangay} ({f.zone})
-                      </SelectItem>
-                    ))}
+                    {/* Santa Cruz barangays first, then nearby towns. */}
+                    {Array.from(new Set(deliveryFees.map((f) => f.zone)))
+                      .sort((a, b) => (a === 'Santa Cruz' ? -1 : b === 'Santa Cruz' ? 1 : a.localeCompare(b)))
+                      .map((zone) => (
+                        <SelectGroup key={zone}>
+                          <SelectLabel>{zone}</SelectLabel>
+                          {deliveryFees.filter((f) => f.zone === zone).map((f) => (
+                            <SelectItem key={f.barangay} value={f.barangay}>
+                              {f.barangay} · ₱{f.fee}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      ))}
                   </SelectContent>
                 </Select>
               </div>
