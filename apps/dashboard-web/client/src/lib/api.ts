@@ -2577,3 +2577,18 @@ export function fetchCashExpenseReport(dateFrom: string, dateBefore: string): Pr
 export function createCashExpense(body: { description: string; amount: number }): Promise<ApiCashExpense> {
   return request('/cash-expenses', { method: 'POST', body: JSON.stringify(body) });
 }
+
+// ---- Executive override key and permanent order erase (migration 0076) ----
+
+export function fetchOverrideKeyStatus(): Promise<{ is_set: boolean }> {
+  return request('/profiles/me/override-key');
+}
+
+export function setOverrideKey(body: { employee_number: string; pin: string; new_key: string }): Promise<{ is_set: boolean }> {
+  return request('/profiles/me/override-key', { method: 'POST', body: JSON.stringify(body) });
+}
+
+/** Permanently erases an order (executives only, with their override key). Its stock is returned. */
+export function eraseTransaction(id: string, body: { override_key: string; reason: string }): Promise<{ id: string; erased: boolean }> {
+  return request(`/transactions/${id}/erase`, { method: 'POST', body: JSON.stringify(body) });
+}

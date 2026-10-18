@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Banknote, Bike, CalendarClock, CheckCircle2, ChefHat, PackageCheck, Phone, Wallet } from 'lucide-react';
+import { Banknote, Bike, CalendarClock, CheckCircle2, ChefHat, PackageCheck, Phone, Trash2, Wallet } from 'lucide-react';
+import { Link } from 'wouter';
+import { useAuth } from '@/contexts/AuthContext';
+import { Label } from '@/components/ui/label';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -19,6 +22,9 @@ import {
   type ApiTransaction,
   type TransactionPaymentMethod,
   type TransactionCardType,
+  apiErrorDetail,
+  eraseTransaction,
+  fetchOverrideKeyStatus,
   fetchProducts,
   fetchTransactions,
   settleTransactionPayment,
@@ -61,6 +67,37 @@ export default function PosDeliveries() {
   const [settling, setSettling] = useState(false);
   const [payoutInputs, setPayoutInputs] = useState<Record<string, string>>({});
   const [savingPayout, setSavingPayout] = useState<string | null>(null);
+  // Executives only: permanently erase an order with their own override key.
+  const { user } = useAuth();
+  const isExecutive = user?.role === 'executive';
+  const [eraseTarget, setEraseTarget] = useState<ApiTransaction | null>(null);
+  const [eraseReason, setEraseReason] = useState('');
+  const [eraseKey, setEraseKey] = useState('');
+  const [erasing, setErasing] = useState(false);
+  const [hasOverrideKey, setHasOverrideKey] = useState<boolean | null>(null);
+
+  function openErase(t: ApiTransaction) {
+    setEraseReason('');
+    setEraseKey('');
+    setEraseTarget(t);
+    fetchOverrideKeyStatus().then((r) => setHasOverrideKey(r.is_set)).catch(() => setHasOverrideKey(null));
+  }
+
+  async function confirmErase() {
+    if (!eraseTarget) return;
+    setErasing(true);
+    try {
+      await eraseTransaction(eraseTarget.id, { override_key: eraseKey, reason: eraseReason.trim() });
+      toast.success(`Order #${eraseTarget.order_number ?? ''} was permanently deleted. Its stock was returned.`);
+      setTransactions((previous) => previous.filter((row) => row.id !== eraseTarget.id));
+      setEraseTarget(null);
+      load();
+    } catch (e) {
+      toast.error(apiErrorDetail(e, 'Could not delete the order'));
+    } finally {
+      setErasing(false);
+    }
+  }
 
   useEffect(() => {
     fetchProducts(false).then(setProducts).catch(() => {});
@@ -227,6 +264,15 @@ export default function PosDeliveries() {
                       >
                         <Wallet className="h-4 w-4" aria-hidden="true" /> Cash received
                       </Button>
+                      {isExecutive && (
+                        <Button
+                          className="w-full min-h-11 gap-2 text-red-700 hover:text-red-800"
+                          variant="ghost"
+                          onClick={() => openErase(t)}
+                        >
+                          <Trash2 className="h-4 w-4" aria-hidden="true" /> Delete order
+                        </Button>
+                      )}
                     </CardContent>
                   </Card>
                 );
@@ -299,6 +345,46 @@ export default function PosDeliveries() {
             </Button>
             <Button onClick={confirmSettle} disabled={settling || (settleMethod === 'card' && !settleCardType)}>
               {settling ? 'Saving…' : 'Confirm payment received'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={!!eraseTarget} onOpenChange={(open) => !open && setEraseTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Permanently delete order #{eraseTarget?.order_number}?</DialogTitle>
+            <DialogDescription>
+              {eraseTarget ? formatCurrency(orderTotal(eraseTarget)) : ''} · {eraseTarget?.delivery?.customer_name}. The order is erased
+              from the POS, Deliveries and all reports, and its stock is returned. This can’t be undone.
+              {eraseTarget?.payment_status === 'paid' ? ' Shift reports that were already closed keep their printed totals.' : ''}
+            </DialogDescription>
+          </DialogHeader>
+          {hasOverrideKey === false ? (
+            <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-950">
+              You haven’t set an override key yet. <Link href="/settings" className="font-semibold underline">Set it in Settings</Link>, then come back.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label htmlFor="erase-reason">Reason</Label>
+                <Input id="erase-reason" maxLength={500} value={eraseReason} onChange={(e) => setEraseReason(e.target.value)} placeholder="e.g. test order, wrong entry" />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="erase-key">Your override key</Label>
+                <Input id="erase-key" type="password" autoComplete="off" value={eraseKey} onChange={(e) => setEraseKey(e.target.value)} />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEraseTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmErase}
+              disabled={erasing || hasOverrideKey === false || !eraseReason.trim() || !eraseKey}
+            >
+              {erasing ? 'Deleting…' : 'Delete permanently'}
             </Button>
           </DialogFooter>
         </DialogContent>

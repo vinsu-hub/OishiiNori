@@ -263,3 +263,18 @@ def verify_employee_pin(employee_number: str, pin: str) -> dict | None:
     if not bcrypt.checkpw(pin.encode("utf-8"), profile["kiosk_pin_hash"].encode("utf-8")):
         return None
     return profile
+
+
+def verify_override_key(user: CurrentUser, key: str) -> bool:
+    """bcrypt-checks the caller's own executive override key (0076). Only
+    executives have one; it guards permanent order erase."""
+    key = (key or "").strip()
+    if user.role != "executive" or not key:
+        return False
+    try:
+        row = (get_supabase().table("profiles").select("override_key_hash")
+               .eq("id", user.id).maybe_single().execute())
+    except Exception:
+        return False  # 0076 not applied yet
+    stored = (row.data or {}).get("override_key_hash") if row else None
+    return bool(stored) and bcrypt.checkpw(key.encode("utf-8"), stored.encode("utf-8"))

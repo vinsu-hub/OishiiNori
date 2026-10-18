@@ -1,3 +1,4 @@
+import logging
 import threading
 import uuid
 from collections import defaultdict
@@ -8,9 +9,9 @@ from typing import Literal
 from cachetools import TTLCache
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from postgrest.exceptions import APIError
-from pydantic import TypeAdapter
+from pydantic import BaseModel, Field, TypeAdapter
 
-from app.auth import CurrentUser, get_current_user, require_role, verify_employee_pin
+from app.auth import CurrentUser, get_current_user, require_role, verify_employee_pin, verify_override_key
 from app.bundles import atomic_bundles_available, bundle_rpc, completed_bundle_ids, legacy_recipe_sizes, pending_bundle_item_ids
 from app.deps import get_supabase
 from app.idempotency import check_idempotency_key, record_idempotency_key
@@ -35,6 +36,8 @@ from app.schemas import (
     TransactionResponse,
     VoidTransactionRequest,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["transactions"])
 
@@ -1984,6 +1987,46 @@ def void_transaction(
 
     updated_row, response_items = void_transaction_core(supabase, transaction, user.id, body.reason)
     return TransactionResponse(**updated_row, items=response_items)
+
+
+class EraseTransactionRequest(BaseModel):
+    override_key: str = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+@router.post("/transactions/{transaction_id}/erase")
+def erase_transaction(
+    transaction_id: str,
+    body: EraseTransactionRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Executive-only permanent erase, guarded by the caller's own override
+    key (0076). Stock is returned first (unless a void already returned it),
+    then erase_transaction deletes the order and everything hanging off it.
+    Orders with a refund or cash-refund payout are refused by the database.
+    Nothing is kept in the database; the server log keeps one line."""
+    require_role(user, "executive")
+    if not verify_override_key(user, body.override_key):
+        raise HTTPException(status_code=403, detail="Override key is wrong, or you haven't set one yet (Settings)")
+    supabase = get_supabase()
+    transaction = _fetch_transaction_with_items(supabase, transaction_id)
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    blockers = (supabase.table("refunds").select("id").eq("transaction_id", transaction_id).limit(1).execute().data
+                or supabase.table("shift_cash_movements").select("id").eq("transaction_id", transaction_id)
+                .limit(1).execute().data)
+    if blockers:
+        raise HTTPException(status_code=409, detail="This order has a refund record, so it can't be erased")
+    if transaction["status"] != "voided":
+        _restore_items_stock(supabase, transaction, user.id)
+    try:
+        supabase.rpc("erase_transaction", {"p_id": transaction_id}).execute()
+    except APIError as exc:
+        raise HTTPException(status_code=409, detail=getattr(exc, "message", None) or "Could not erase this order") from exc
+    logger.warning("Order erased: #%s (%s) total %s by %s (%s). Reason: %s",
+                   transaction.get("order_number"), transaction_id, transaction.get("total_amount"),
+                   user.full_name, user.id, body.reason)
+    return {"id": transaction_id, "erased": True}
 
 
 def _set_kitchen_status(supabase, transaction: dict, new_status: str, user: CurrentUser, allow_skip: bool) -> dict:

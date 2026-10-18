@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
-import { apiErrorDetail, changeOwnPassword, fetchBusinessSettings, updateBusinessSettings } from '@/lib/api';
+import { apiErrorDetail, changeOwnPassword, fetchBusinessSettings, fetchOverrideKeyStatus, setOverrideKey, updateBusinessSettings } from '@/lib/api';
 
 const WEEKDAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
@@ -53,6 +53,7 @@ export default function Settings() {
 
         {user?.role === 'executive' && (
           <>
+            <OverrideKeyCard />
             <BusinessSettingsCard />
             <BusinessHoursCard />
           </>
@@ -405,6 +406,56 @@ function BusinessHoursCard() {
             </Button>
           </>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Executives' own override key: authorizes permanently erasing an order (Deliveries). */
+function OverrideKeyCard() {
+  const [isSet, setIsSet] = useState<boolean | null>(null);
+  const [employeeNumber, setEmployeeNumber] = useState('');
+  const [pin, setPin] = useState('');
+  const [newKey, setNewKey] = useState('');
+  const [confirmKey, setConfirmKey] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetchOverrideKeyStatus().then((r) => setIsSet(r.is_set)).catch(() => setIsSet(false));
+  }, []);
+
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    if (newKey.trim().length < 6) { toast.error('Use at least 6 characters for the override key'); return; }
+    if (newKey !== confirmKey) { toast.error('The two keys don’t match'); return; }
+    setSaving(true);
+    try {
+      await setOverrideKey({ employee_number: employeeNumber, pin, new_key: newKey });
+      setIsSet(true);
+      setPin(''); setNewKey(''); setConfirmKey('');
+      toast.success('Override key saved');
+    } catch (error) {
+      toast.error(apiErrorDetail(error, 'Could not save the override key'));
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <Card className="max-w-xl">
+      <CardHeader>
+        <CardTitle className="font-corp-display">Override key</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-sm text-muted-foreground">
+          Your personal key for permanently deleting an order on the Deliveries page. Keep it private; nobody else can see it.
+        </p>
+        <p className="text-sm font-medium">{isSet === null ? 'Checking…' : isSet ? 'Key set ✓' : 'No key yet'}</p>
+        <form onSubmit={save} className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1"><Label htmlFor="ok-emp">Your employee number</Label><Input id="ok-emp" value={employeeNumber} onChange={(e) => setEmployeeNumber(e.target.value)} autoComplete="off" /></div>
+          <div className="space-y-1"><Label htmlFor="ok-pin">Your kiosk PIN</Label><Input id="ok-pin" type="password" inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value)} autoComplete="off" /></div>
+          <div className="space-y-1"><Label htmlFor="ok-new">{isSet ? 'New override key' : 'Override key'}</Label><Input id="ok-new" type="password" value={newKey} onChange={(e) => setNewKey(e.target.value)} autoComplete="new-password" /></div>
+          <div className="space-y-1"><Label htmlFor="ok-confirm">Type it again</Label><Input id="ok-confirm" type="password" value={confirmKey} onChange={(e) => setConfirmKey(e.target.value)} autoComplete="new-password" /></div>
+          <div className="sm:col-span-2"><Button type="submit" disabled={saving || !employeeNumber || !pin}>{saving ? 'Saving…' : isSet ? 'Change override key' : 'Set override key'}</Button></div>
+        </form>
       </CardContent>
     </Card>
   );
