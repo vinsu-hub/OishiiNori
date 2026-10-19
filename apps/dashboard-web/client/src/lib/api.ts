@@ -840,8 +840,9 @@ export function fetchDigitalBoard(): Promise<ApiDigitalOrder[]> {
   return request('/digital-orders/board');
 }
 
-export function markDigitalOrderDelivered(id: string): Promise<{ id: string; delivered_at: string }> {
-  return request(`/digital-orders/${id}/delivered`, { method: 'POST' });
+/** Logs the cash if still unpaid, marks a delivery delivered, closes the ticket. */
+export function completeOnlineOrder(id: string): Promise<{ id: string; stage: 'completed' }> {
+  return request(`/digital-orders/${id}/complete`, { method: 'POST' });
 }
 
 export function fetchDigitalOrders(status?: DigitalOrderStatus): Promise<ApiDigitalOrder[]> {

@@ -15,14 +15,14 @@ function getContext(): AudioContext | null {
   }
 }
 
-function playBeep(frequency: number, startAt: number, durationMs = 150) {
+function playBeep(frequency: number, startAt: number, durationMs = 150, volume = 0.15, type: OscillatorType = 'sine') {
   const audioCtx = getContext();
   if (!audioCtx) return;
   const oscillator = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
-  oscillator.type = 'sine';
+  oscillator.type = type;
   oscillator.frequency.value = frequency;
-  gain.gain.setValueAtTime(0.15, audioCtx.currentTime + startAt);
+  gain.gain.setValueAtTime(volume, audioCtx.currentTime + startAt);
   gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + startAt + durationMs / 1000);
   oscillator.connect(gain);
   gain.connect(audioCtx.destination);
@@ -73,12 +73,35 @@ export function playTableOrderBeep() {
   }
 }
 
-// Customer pickup or delivery order: a short three-note rising chime.
-export function playOnlineOrderBeep() {
+// Online Orders page's speaker toggle; per-device, so each till chooses.
+const ONLINE_MUTE_KEY = 'online-order-sound-muted';
+
+export function isOnlineOrderSoundMuted(): boolean {
   try {
-    playBeep(523, 0, 130);
-    playBeep(659, 0.16, 130);
-    playBeep(784, 0.32, 210);
+    return localStorage.getItem(ONLINE_MUTE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function setOnlineOrderSoundMuted(muted: boolean) {
+  try {
+    if (muted) localStorage.setItem(ONLINE_MUTE_KEY, '1');
+    else localStorage.removeItem(ONLINE_MUTE_KEY);
+  } catch {
+    // Storage blocked: the toggle just won't survive a reload.
+  }
+}
+
+// Website pickup or delivery order: a louder "ding-dong" doorbell, rung
+// twice, so it can't be mistaken for the kitchen, table or ready beeps.
+export function playOnlineOrderBeep(force = false) {
+  if (!force && isOnlineOrderSoundMuted()) return;
+  try {
+    for (const offset of [0, 1.1]) {
+      playBeep(988, offset, 450, 0.3, 'triangle');
+      playBeep(784, offset + 0.42, 650, 0.3, 'triangle');
+    }
   } catch {
     // Browsers may require a user gesture before allowing audio.
   }

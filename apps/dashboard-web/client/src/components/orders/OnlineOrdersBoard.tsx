@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Bike, CalendarClock, Gift, PackageCheck, ShoppingBag } from 'lucide-react';
+import { Banknote, Bike, CalendarClock, Gift, PackageCheck, ShoppingBag } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -21,8 +21,8 @@ import {
   approveDigitalOrder,
   fetchBusinessSettings,
   fetchDigitalBoard,
+  completeOnlineOrder,
   fetchTransaction,
-  markDigitalOrderDelivered,
   rejectDigitalOrder,
 } from '@/lib/api';
 import { formatCurrency, formatTimestamp12h } from '@/lib/utils';
@@ -40,7 +40,7 @@ import {
 const STAGES: { key: DigitalBoardStage; label: string }[] = [
   { key: 'pending', label: 'Pending' },
   { key: 'in_queue', label: 'In queue' },
-  { key: 'out_for_delivery', label: 'Out for delivery' },
+  { key: 'out_for_delivery', label: 'Out / ready for pickup' },
   { key: 'completed', label: 'Completed' },
 ];
 
@@ -69,6 +69,10 @@ function kitchenLabel(order: ApiDigitalOrder): string | null {
   }
 }
 
+function needsCash(order: ApiDigitalOrder): boolean {
+  return order.payment_status === 'unpaid';
+}
+
 function paymentLabel(method: string): string {
   return method === 'cash' ? 'Cash on delivery/pickup' : method;
 }
@@ -86,6 +90,8 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
   const [busy, setBusy] = useState(false);
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [business, setBusiness] = useState<ReceiptBusiness | null>(null);
+  const [completeTarget, setCompleteTarget] = useState<ApiDigitalOrder | null>(null);
+  const [cashReceived, setCashReceived] = useState('');
 
   useEffect(() => {
     fetchBusinessSettings().then((s) => setBusiness(receiptBusinessFromSettings(s))).catch(() => {});
@@ -220,15 +226,25 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
     }
   }
 
-  async function markDelivered(order: ApiDigitalOrder) {
+  async function complete(order: ApiDigitalOrder) {
+    setBusy(true);
     try {
-      await markDigitalOrderDelivered(order.id);
-      toast.success(`${orderNumber(order)} marked delivered`);
+      await completeOnlineOrder(order.id);
+      toast.success(needsCash(order)
+        ? `${orderNumber(order)} — ${formatCurrency(orderTotal(order))} cash logged, order completed`
+        : `${orderNumber(order)} completed`);
+      setCompleteTarget(null);
       load();
     } catch (e) {
-      toast.error(apiErrorDetail(e, 'Could not mark it delivered'));
+      toast.error(apiErrorDetail(e, 'Could not complete the order'));
+    } finally {
+      setBusy(false);
     }
   }
+
+  const completeDue = completeTarget ? orderTotal(completeTarget) : 0;
+  const cashNumber = Number(cashReceived);
+  const changeDue = cashReceived.trim() && Number.isFinite(cashNumber) ? cashNumber - completeDue : null;
 
   const visible = byStage[stage];
 
@@ -289,6 +305,11 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
                       </Badge>
                     )}
                     {status && <Badge variant="outline">{status}</Badge>}
+                    {order.stage !== 'pending' && needsCash(order) && (
+                      <Badge variant="destructive" className="gap-1">
+                        <Banknote className="h-3.5 w-3.5" aria-hidden /> Unpaid · Cash
+                      </Badge>
+                    )}
                   </div>
                   {order.delivery && (
                     <div className="text-sm">
@@ -309,9 +330,16 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
                       Review order
                     </Button>
                   )}
-                  {order.stage === 'out_for_delivery' && (
-                    <Button className="w-full min-h-11 gap-2" variant="outline" onClick={() => markDelivered(order)}>
-                      <PackageCheck className="h-4 w-4" aria-hidden /> Mark delivered
+                  {/* Not while the kitchen is still cooking: closing the ticket clears it from the Kitchen Display. */}
+                  {(order.stage === 'out_for_delivery' || (order.stage === 'in_queue' && order.kitchen_status === 'ready')) && order.pos_order_number != null && (
+                    <Button
+                      className="w-full min-h-11 gap-2"
+                      variant={order.stage === 'out_for_delivery' ? 'default' : 'outline'}
+                      onClick={() => { setCashReceived(''); setCompleteTarget(order); }}
+                    >
+                      {needsCash(order)
+                        ? <><Banknote className="h-4 w-4" aria-hidden /> Cash received &amp; complete</>
+                        : <><PackageCheck className="h-4 w-4" aria-hidden /> Complete order</>}
                     </Button>
                   )}
                 </CardContent>
@@ -415,6 +443,66 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
                     </Button>
                   </>
                 )}
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!completeTarget} onOpenChange={(open) => !open && !busy && setCompleteTarget(null)}>
+        <DialogContent>
+          {completeTarget && (
+            <>
+              <DialogHeader>
+                <DialogTitle>
+                  {needsCash(completeTarget) ? 'Cash received' : 'Complete'} · {orderNumber(completeTarget)}
+                </DialogTitle>
+                <DialogDescription>
+                  {needsCash(completeTarget)
+                    ? `Log the cash ${completeTarget.order_channel === 'delivery' ? 'the rider brought back' : 'from the customer'}. This marks the order ${completeTarget.order_channel === 'delivery' ? 'delivered' : 'picked up'} and finishes the ticket.`
+                    : `Already paid (${paymentLabel(completeTarget.payment_method)}). This marks the order ${completeTarget.order_channel === 'delivery' ? 'delivered' : 'picked up'} and finishes the ticket.`}
+                </DialogDescription>
+              </DialogHeader>
+              {completeTarget.delivery && (
+                <p className="text-sm">
+                  <span className="font-medium">{completeTarget.delivery.customer_name}</span>
+                  <span className="text-muted-foreground"> · {completeTarget.delivery.customer_phone}</span>
+                </p>
+              )}
+              <div className="space-y-0.5 border-t pt-2 text-sm">
+                {(completeTarget.delivery?.delivery_fee ?? 0) > 0 && (
+                  <p className="flex justify-between"><span>Delivery fee</span><span>{formatCurrency(completeTarget.delivery?.delivery_fee ?? 0)}</span></p>
+                )}
+                <p className="flex justify-between text-base font-bold">
+                  <span>{needsCash(completeTarget) ? 'Amount to collect' : 'Order total'}</span>
+                  <span>{formatCurrency(completeDue)}</span>
+                </p>
+              </div>
+              {needsCash(completeTarget) && (
+                <div className="space-y-1">
+                  <label htmlFor="cash-received" className="text-sm font-medium">Cash received (optional, for change)</label>
+                  <Input
+                    id="cash-received"
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    step="0.01"
+                    value={cashReceived}
+                    onChange={(e) => setCashReceived(e.target.value)}
+                    placeholder={completeDue.toFixed(2)}
+                  />
+                  {changeDue !== null && (
+                    <p className={`text-sm font-medium ${changeDue < 0 ? 'text-destructive' : ''}`}>
+                      {changeDue < 0 ? `Short by ${formatCurrency(-changeDue)}` : `Change: ${formatCurrency(changeDue)}`}
+                    </p>
+                  )}
+                </div>
+              )}
+              <DialogFooter className="gap-2">
+                <Button variant="outline" onClick={() => setCompleteTarget(null)} disabled={busy}>Cancel</Button>
+                <Button onClick={() => complete(completeTarget)} disabled={busy || (changeDue !== null && changeDue < 0)}>
+                  {busy ? 'Saving…' : needsCash(completeTarget) ? `Log ${formatCurrency(completeDue)} & complete` : 'Complete order'}
+                </Button>
               </DialogFooter>
             </>
           )}

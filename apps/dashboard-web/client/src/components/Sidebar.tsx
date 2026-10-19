@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   ShoppingCart,
+  Globe,
   ListOrdered,
   QrCode,
   CalendarCheck,
@@ -65,7 +66,6 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
   const { lowStockCount } = useInventoryAlerts();
   const {
     pendingCount: pendingTableOrders,
-    pendingPickupCount,
     pendingDeliveryCount,
     pendingScheduledCount,
     pendingOnlineCount,
@@ -161,8 +161,12 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
   // decision -- cashiers may edit the menu).
   const beforeStockItems: NavItem[] = [
     { icon: ShoppingCart, label: 'POS Terminal', href: '/pos' },
-    // Badge: website orders waiting for the cashier (Order Queue → Online).
-    { icon: ListOrdered, label: 'Order Queue', href: '/order-queue', badge: pendingOnlineCount },
+    // Every front-of-house role: cashiers approve website orders and log the
+    // cash for them. Badge: website orders waiting for review.
+    ...((user && ['employee', 'manager', 'executive'].includes(user.role)) || hasGrant('online-orders')
+      ? [{ icon: Globe, label: 'Online Orders', href: '/online-orders', badge: pendingOnlineCount }]
+      : []),
+    { icon: ListOrdered, label: 'Order Queue', href: '/order-queue' },
     { icon: ClipboardList, label: 'Order History', href: '/order-history' },
     // Every role: the cashier approves QR table orders (2026-10-04 client
     // decision), so the badge here is how they notice one is waiting.
@@ -189,9 +193,6 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
       : []),
     ...(canSeeEvents
       ? [{ icon: PartyPopper, label: 'Events', href: '/events-manager', badge: newEventSignups }]
-      : []),
-    ...(isManagerOrExecutive || hasGrant('online-orders')
-      ? [{ icon: Truck, label: 'Online Orders', href: '/online-orders', badge: pendingPickupCount }]
       : []),
     ...(isManagerOrExecutive || hasGrant('online-orders')
       ? [{ icon: CalendarClock, label: 'Scheduled Orders', href: '/scheduled-orders', badge: pendingScheduledCount }]
@@ -282,7 +283,7 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
         key={item.href}
         variant={isActive ? 'default' : 'ghost'}
         title={isCollapsed ? item.label : undefined}
-        className={`w-full mb-1 ${isCollapsed ? 'justify-center px-0' : 'justify-start gap-3'} ${
+        className={`w-full mb-1 relative ${isCollapsed ? 'justify-center px-0' : 'justify-start gap-3'} ${
           isActive ? '' : 'text-foreground shadow-none hover:bg-accent'
         }`}
         onClick={() => onNavigate(item.href)}
@@ -293,6 +294,11 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
           <Badge variant="destructive" className="text-xs px-1.5 py-0 ml-auto">
             {item.badge}
           </Badge>
+        )}
+        {isCollapsed && !!item.badge && item.badge > 0 && (
+          <span className="absolute -top-0.5 right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold leading-none text-destructive-foreground">
+            {item.badge > 99 ? '99+' : item.badge}
+          </span>
         )}
       </Button>
     );

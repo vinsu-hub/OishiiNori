@@ -30,8 +30,8 @@ const TableOrderAlertsContext = createContext<TableOrderAlertsContextType>({
   onlineEnabled: false,
 });
 
-/** Where cashiers review website orders: Order Queue's Online tab. */
-export const ONLINE_ORDERS_ROUTE = '/order-queue?tab=online';
+/** Where cashiers review website orders: the Online Orders page. */
+export const ONLINE_ORDERS_ROUTE = '/online-orders';
 // An online order left this long gets a repeat beep every minute.
 const ONLINE_REMINDER_AFTER_MS = 2 * 60_000;
 const ONLINE_REMINDER_EVERY_MS = 60_000;

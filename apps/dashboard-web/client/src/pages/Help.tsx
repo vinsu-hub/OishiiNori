@@ -38,8 +38,8 @@ const HELP_GROUPS: HelpGroup[] = [
           <>
             <p>Every account has one role, shown in the sidebar footer:</p>
             <ul className="list-disc pl-5 space-y-1 mt-1">
-              <li><strong>Employee</strong> — POS Terminal, Order Queue, Kitchen Display, Delivery Requests, Reservations, the Stock group's Ingredient Stock/Station Items/Receive Shipment, Menu Editing, Settings.</li>
-              <li><strong>Manager</strong> — everything above, plus Table Orders, Online Orders, the Stock group's Overview/Alerts/Variance Log/EOD Stock Count (VS), Business Day Report, Refund Approval, Loss Log, Utility Log, POS Management, Employees, HR Attendance, Payroll, Holiday Calendar, and Payroll Settings.</li>
+              <li><strong>Employee</strong> — POS Terminal, Online Orders, Order Queue, Kitchen Display, Delivery Requests, Reservations, the Stock group's Ingredient Stock/Station Items/Receive Shipment, Menu Editing, Settings.</li>
+              <li><strong>Manager</strong> — everything above, plus Table Orders, the Stock group's Overview/Alerts/Variance Log/EOD Stock Count (VS), Business Day Report, Refund Approval, Loss Log, Utility Log, POS Management, Employees, HR Attendance, Payroll, Holiday Calendar, and Payroll Settings.</li>
               <li><strong>Executive</strong> — everything above, plus Command Center, Trend Analysis, P&amp;L, and Oishii AI. Executives land on Command Center after logging in instead of Home, and are the only role exempt from the Business Day POS lock (see below).</li>
               <li><strong>Rider</strong> — a deliberately narrow role: just a Delivery panel showing assigned delivery orders with a map link to the drop-off address, and a way to mark one delivered.</li>
               <li><strong>Stocker</strong> — a deliberately narrow role too: the Stock &amp; Inventory group only, nothing else. No standing account is provisioned by default; create one from Employees if needed.</li>
@@ -241,9 +241,12 @@ const HELP_GROUPS: HelpGroup[] = [
         question: 'Where do delivery/pickup orders show up for staff?',
         answer: (
           <p>
-            <strong>Delivery Requests</strong> — every role sees this; it's the working view for delivery orders
-            that need fulfilling. <strong>Online Orders</strong> (manager/executive) shows every channel at once —
-            dine-in QR, delivery, and pickup — in one table.
+            <strong>Online Orders</strong> (near the top of the sidebar) is the cashier's home for every website
+            delivery and pickup order. The red circle counts orders waiting for review, and a "ding-dong" doorbell
+            rings when a new one arrives (mute it with the speaker button on that page). Approve sends it to the
+            kitchen; when the rider comes back (or the customer picks up), press <strong>Cash received &amp; complete</strong>
+            to log the cash and finish the ticket. The <strong>History</strong> tab lists past online orders with
+            their proof of payment.
           </p>
         ),
       },

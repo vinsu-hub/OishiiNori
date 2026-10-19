@@ -88,9 +88,14 @@ class BoardStageTests(unittest.TestCase):
         self.assertEqual(dm.board_stage(delivery, {"kitchen_status": "completed"}), "out_for_delivery")
         done = {**delivery, "delivery": {"delivered_at": "2026-10-19T05:00:00Z"}}
         self.assertEqual(dm.board_stage(done, {"kitchen_status": "completed"}), "completed")
+        # Cash still with the rider: delivered but not complete until it's logged.
+        self.assertEqual(dm.board_stage(done, {"kitchen_status": "completed", "payment_status": "unpaid"}), "out_for_delivery")
         pickup = {"status": "approved", "order_channel": "pickup"}
-        self.assertEqual(dm.board_stage(pickup, {"kitchen_status": "ready"}), "in_queue")
+        self.assertEqual(dm.board_stage(pickup, {"kitchen_status": "preparing"}), "in_queue")
+        self.assertEqual(dm.board_stage(pickup, {"kitchen_status": "ready"}), "out_for_delivery")
         self.assertEqual(dm.board_stage(pickup, {"kitchen_status": "completed"}), "completed")
+        self.assertEqual(dm.board_stage(pickup, {"kitchen_status": "completed", "payment_status": "unpaid"}), "out_for_delivery")
+        self.assertEqual(dm.board_stage(delivery, {"status": "closed", "kitchen_status": "completed"}), "completed")
         self.assertIsNone(dm.board_stage({"status": "rejected"}, None))
         self.assertIsNone(dm.board_stage(delivery, {"status": "voided", "kitchen_status": "queued"}))
 
@@ -101,6 +106,64 @@ class BoardStageTests(unittest.TestCase):
             self.assertEqual(TestClient(app).get("/digital-orders/board").status_code, 403)
         finally:
             app.dependency_overrides.clear()
+
+
+class ApprovalPaymentTests(unittest.TestCase):
+    def _fire(self, method, channel):
+        order = {"payment_method": method, "order_channel": channel, "items": [], "addons": [], "delivery": None}
+        tx = SimpleNamespace(id="t1", items=[], total_amount=0.0, tax_amount=0.0)
+        with patch.object(dm, "_create_transaction_row", return_value=tx) as create:
+            dm._fire_digital_order(MagicMock(), order, "u1")
+        return create.call_args.kwargs
+
+    def test_cash_orders_stay_unpaid_until_logged(self):
+        self.assertTrue(self._fire("cash", "delivery")["pay_on_delivery"])
+        self.assertTrue(self._fire("cash", "pickup")["pay_on_delivery"])
+
+    def test_proof_paid_orders_are_paid_at_approval(self):
+        kwargs = self._fire("GCash", "delivery")
+        self.assertFalse(kwargs["pay_on_delivery"])
+        self.assertEqual(kwargs["payment_method"], "gcash")
+
+
+class CompleteOnlineOrderTests(unittest.TestCase):
+    def setUp(self):
+        app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+            id="c", role="employee", department=None, full_name="Cashier", extra_pages=[])
+        self.addCleanup(app.dependency_overrides.clear)
+
+    def _run(self, order, tx):
+        tables = {"digital_orders": _chain(order), "transactions": _chain(tx)}
+        db = MagicMock()
+        db.table.side_effect = lambda name: tables[name]
+        with patch.object(dm, "get_supabase", return_value=db), \
+                patch.object(dm, "settle_payment") as settle, \
+                patch.object(dm, "mark_digital_order_delivered") as delivered, \
+                patch.object(dm, "close_transaction") as close:
+            response = TestClient(app).post("/digital-orders/o1/complete")
+        return response, settle, delivered, close
+
+    def test_cash_delivery_is_settled_delivered_and_closed(self):
+        response, settle, delivered, close = self._run(
+            {"id": "o1", "status": "approved", "order_channel": "delivery", "transaction_id": "t1"},
+            {"id": "t1", "status": "open", "payment_status": "unpaid"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(settle.call_args[0][1].payment_method, "cash")
+        delivered.assert_called_once()
+        close.assert_called_once()
+
+    def test_paid_pickup_already_closed_changes_nothing(self):
+        response, settle, delivered, close = self._run(
+            {"id": "o1", "status": "approved", "order_channel": "pickup", "transaction_id": "t1"},
+            {"id": "t1", "status": "closed", "payment_status": "paid"})
+        self.assertEqual(response.status_code, 200)
+        settle.assert_not_called()
+        delivered.assert_not_called()
+        close.assert_not_called()
+
+    def test_pending_order_cannot_be_completed(self):
+        response, *_ = self._run({"id": "o1", "status": "pending", "order_channel": "delivery", "transaction_id": None}, None)
+        self.assertEqual(response.status_code, 409)
 
 
 if __name__ == "__main__":

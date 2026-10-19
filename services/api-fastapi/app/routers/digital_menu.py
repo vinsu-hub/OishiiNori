@@ -37,7 +37,10 @@ from app.routers.business_days import is_open_today
 from app.routers.products import _list_products_data
 from app.routers.recipes import _get_recipe_data
 from app.routers.reservations import ADVANCE_ORDER_LEAD_MINUTES
-from app.routers.transactions import _create_transaction_row, _get_vat_rate, live_cache_get, live_cache_put, live_cache_version
+from app.routers.transactions import (
+    _create_transaction_row, _get_vat_rate, close_transaction, live_cache_get, live_cache_put,
+    live_cache_version, settle_payment,
+)
 from app.schemas import (
     BoatDepositReturnRequest,
     CreateDigitalOrderRequest,
@@ -50,6 +53,7 @@ from app.schemas import (
     ProductOut,
     RecipeItemOut,
     RejectDigitalOrderRequest,
+    SettlePaymentRequest,
     TransactionItemCreate,
 )
 
@@ -584,12 +588,17 @@ def board_stage(order: dict, tx: dict | None) -> str | None:
         return "in_queue"  # approved advance order, not in the kitchen yet
     if tx.get("status") == "voided":
         return None
-    delivered = (order.get("delivery") or {}).get("delivered_at")
+    if tx.get("status") == "closed":
+        return "completed"
+    paid = tx.get("payment_status") != "unpaid"
     if order.get("order_channel") == "delivery":
-        if delivered:
-            return "completed"
+        if (order.get("delivery") or {}).get("delivered_at"):
+            return "completed" if paid else "out_for_delivery"
         return "out_for_delivery" if tx.get("kitchen_status") == "completed" else "in_queue"
-    return "completed" if tx.get("kitchen_status") == "completed" else "in_queue"
+    # Pickup: ready at the counter shares the "out" column until it's paid for.
+    if tx.get("kitchen_status") in ("ready", "completed"):
+        return "completed" if paid and tx.get("kitchen_status") == "completed" else "out_for_delivery"
+    return "in_queue"
 
 
 def _require_front_of_house(user: CurrentUser) -> None:
@@ -649,6 +658,43 @@ def mark_digital_order_delivered(order_id: str, user: CurrentUser = Depends(get_
     now = datetime.now(timezone.utc).isoformat()
     supabase.table("deliveries").update({"delivered_at": now}).eq("id", row[0]["id"]).execute()
     return {"id": order_id, "delivered_at": now}
+
+
+@router.post("/digital-orders/{order_id}/complete")
+def complete_digital_order(order_id: str, user: CurrentUser = Depends(get_current_user)):
+    """Cashier finishes an online order: logs the cash if it's still unpaid,
+    marks a delivery delivered, and closes the ticket. Safe to repeat."""
+    _require_front_of_house(user)
+    supabase = get_supabase()
+    order = (supabase.table("digital_orders").select("id, status, order_channel, transaction_id")
+             .eq("id", order_id).maybe_single().execute())
+    if not order or not order.data:
+        raise HTTPException(status_code=404, detail="Online order not found")
+    order = order.data
+    if order["status"] != "approved" or not order.get("transaction_id"):
+        raise HTTPException(status_code=409, detail="Approve this order and send it to the kitchen first")
+    tx_id = order["transaction_id"]
+    tx = (supabase.table("transactions").select("id, status, payment_status")
+          .eq("id", tx_id).maybe_single().execute())
+    if not tx or not tx.data:
+        raise HTTPException(status_code=404, detail="This order's ticket was not found")
+    if tx.data["status"] == "voided":
+        raise HTTPException(status_code=409, detail="This order was voided")
+    if tx.data.get("payment_status") == "unpaid":
+        try:
+            settle_payment(tx_id, SettlePaymentRequest(payment_method="cash"), user)
+        except HTTPException as exc:
+            if exc.status_code != 409:  # 409: paid meanwhile on another terminal
+                raise
+    if order["order_channel"] == "delivery":
+        mark_digital_order_delivered(order_id, user)
+    if tx.data["status"] == "open":
+        try:
+            close_transaction(tx_id, user)
+        except HTTPException as exc:
+            if exc.status_code != 409:  # 409: closed meanwhile
+                raise
+    return {"id": order_id, "stage": "completed"}
 
 
 def _list_digital_orders(status: str | None, limit: int) -> list[dict]:
@@ -835,6 +881,9 @@ def _fire_digital_order(supabase, order: dict, actor_id: str):
         # an Online origin); pickup orders are takeout.
         order_type={"delivery": "delivery", "pickup": "takeout"}.get(order.get("order_channel")),
         order_source="qr" if order.get("order_channel") == "dine_in_qr" else "online",
+        # Cash is collected by the rider or at the counter, so the sale stays
+        # unpaid until the cashier logs it (Online Orders → Cash received).
+        pay_on_delivery=pos_payment_method == "cash" and order.get("order_channel") in ("delivery", "pickup"),
     )
 
     # Add-ons aren't real catalog products, so they were never part of
