@@ -17,7 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Loader2, Trash2 } from 'lucide-react';
+import { Loader2, Search, Trash2 } from 'lucide-react';
 import {
   ApiIngredient,
   ApiProduct,
@@ -44,13 +44,29 @@ import { LOSS_REASONS } from '@/lib/types';
 import { StockStatusBadge } from '@/components/stock/StockStatusBadge';
 import { STOCK_TABLE_CELL_CLASS, STOCK_TABLE_HEAD_CLASS, STOCK_TABLE_ROW_CLASS } from '@/components/stock/stockTableStyle';
 import { SummaryFieldCell } from '@/components/stock/SummaryFieldCell';
+import { STOCK_STATIONS } from '@/lib/constants';
 
-const STATIONS: { value: StockStation; label: string }[] = [
-  { value: 'tako_snack', label: 'Tako / Snack' },
-  { value: 'cafe_drinks', label: 'Cafe / Drinks' },
-  { value: 'sushi_kitchen_main', label: 'Sushi-Kitchen Main' },
-  { value: 'ramen_hot_line', label: 'Ramen / Hot Line' },
-];
+// Tabs, row order and sections follow the client's stock workbook: one sheet
+// per station, items in sheet order (sort_order), runs of rows grouped by
+// category (scripts/apply_client_stock_layout.py).
+const STATIONS = STOCK_STATIONS;
+const NO_SECTION = 'Other items';
+
+/** Groups items (already in sheet order) into their sections, keeping the
+ * order each section first appears in. */
+export function groupBySection<T extends { category: string | null }>(items: T[]): { section: string; items: T[] }[] {
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    const section = item.category?.trim() || NO_SECTION;
+    if (!groups.has(section)) groups.set(section, []);
+    groups.get(section)!.push(item);
+  }
+  return Array.from(groups, ([section, rows]) => ({ section, items: rows }));
+}
+
+function sectionAnchor(station: string, section: string) {
+  return `stock-${station}-${section.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+}
 
 type ActiveTab = StockStation | 'catalog';
 
@@ -88,7 +104,7 @@ export function StationsPanel({ onViewIngredients }: StationsPanelProps) {
   const search = useSearch();
   const initialStation = (): ActiveTab => {
     const requested = new URLSearchParams(search).get('station');
-    return STATIONS.some((s) => s.value === requested) ? (requested as StockStation) : 'tako_snack';
+    return STATIONS.some((s) => s.value === requested) ? (requested as StockStation) : STATIONS[0].value;
   };
   const [activeTab, setActiveTab] = useState<ActiveTab>(initialStation);
   const [items, setItems] = useState<ApiStockItem[]>([]);
@@ -98,6 +114,7 @@ export function StationsPanel({ onViewIngredients }: StationsPanelProps) {
   const [loading, setLoading] = useState(true);
   const [savingNotes, setSavingNotes] = useState(false);
   const [lossItem, setLossItem] = useState<ApiStockItem | null>(null);
+  const [itemSearch, setItemSearch] = useState('');
 
   const loadStation = useCallback((station: StockStation) => {
     setLoading(true);
@@ -105,7 +122,8 @@ export function StationsPanel({ onViewIngredients }: StationsPanelProps) {
       .then(([stockItems, entries]) => {
         const summaryByItem: Record<string, ApiStockItemDailySummary> = {};
         for (const e of entries) summaryByItem[e.stock_item_id] = e;
-        const sorted = [...stockItems].sort((a, b) => a.name.localeCompare(b.name));
+        // The API returns sheet order (alphabetical until migration 0079 runs).
+        const sorted = stockItems;
         const initialNotes: Record<string, NotesDraft> = {};
         for (const item of sorted) {
           initialNotes[item.id] = draftFromEntry(summaryByItem[item.id]);
@@ -131,6 +149,13 @@ export function StationsPanel({ onViewIngredients }: StationsPanelProps) {
       [itemId]: { ...(prev[itemId] || { notes: '', needsVerification: false }), ...patch },
     }));
   }
+
+  const query = itemSearch.trim().toLowerCase();
+  const sections = useMemo(
+    () => groupBySection(query ? items.filter((i) => i.name.toLowerCase().includes(query)
+      || (i.category || '').toLowerCase().includes(query)) : items),
+    [items, query],
+  );
 
   const changedNotesItems = items.filter((i) => notesDraftChanged(notesDrafts[i.id], originalNotesDrafts[i.id]));
 
@@ -169,7 +194,7 @@ export function StationsPanel({ onViewIngredients }: StationsPanelProps) {
 
   return (
     <div className="space-y-4">
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as ActiveTab)}>
+      <Tabs value={activeTab} onValueChange={(v) => { setActiveTab(v as ActiveTab); setItemSearch(''); }}>
         <TabsList className="h-auto flex-wrap">
           {STATIONS.map((s) => (
             <TabsTrigger key={s.value} value={s.value}>
@@ -223,7 +248,35 @@ export function StationsPanel({ onViewIngredients }: StationsPanelProps) {
                 Save Notes ({changedNotesItems.length})
               </Button>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-3">
+              {!loading && items.length > 0 && (
+                <div className="space-y-2">
+                  <div className="relative max-w-sm">
+                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" aria-hidden />
+                    <Input
+                      className="pl-9"
+                      placeholder="Find an item"
+                      value={itemSearch}
+                      onChange={(e) => setItemSearch(e.target.value)}
+                      aria-label="Find a stock item"
+                    />
+                  </div>
+                  {!query && sections.length > 1 && (
+                    <div className="flex flex-wrap gap-1.5" aria-label="Jump to section">
+                      {sections.map((g) => (
+                        <button
+                          key={g.section}
+                          type="button"
+                          className="rounded-full border bg-muted/50 px-3 py-1 text-xs font-medium hover:bg-muted"
+                          onClick={() => document.getElementById(sectionAnchor(activeTab, g.section))?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                        >
+                          {g.section} <span className="text-muted-foreground">{g.items.length}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
               {loading && <p className="text-sm text-muted-foreground">Loading stock items...</p>}
               {!loading && items.length === 0 && (
                 <p className="text-sm text-muted-foreground py-4">No stock items set up for this station yet.</p>
@@ -243,105 +296,125 @@ export function StationsPanel({ onViewIngredients }: StationsPanelProps) {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {items.map((item) => {
-                      const summary = summaries[item.id];
-                      const d = notesDrafts[item.id] || { notes: '', needsVerification: false };
-                      return (
-                        <TableRow
-                          key={item.id}
-                          className={`${STOCK_TABLE_ROW_CLASS} ${item.needs_review ? 'bg-warning-bg' : ''}`}
-                        >
-                          <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-medium`}>
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              {item.name}
-                              {item.needs_review && <StockStatusBadge variant="critical">Verify</StockStatusBadge>}
-                              {item.ingredient_id && (
-                                <StockStatusBadge variant="neutral">Linked -- {item.ingredient_name}</StockStatusBadge>
-                              )}
-                            </div>
-                            {item.unit && <p className="text-xs text-muted-foreground">{item.unit}</p>}
-                            {item.ingredient_id && (
-                              <button
-                                type="button"
-                                className="text-xs text-primary underline underline-offset-2"
-                                onClick={() => onViewIngredients(item.ingredient_id!)}
-                              >
-                                Edit in Ingredient Stock &rarr;
-                              </button>
-                            )}
-                          </TableCell>
-                          <SummaryFieldCell
-                            field="new_stocks"
-                            itemName={item.name}
-                            summary={summary}
-                            employeeId={user?.id}
-                            onOverride={(field, correctedValue, reason, employeeId) =>
-                              overrideStockItemField(item.id, { field, corrected_value: correctedValue, reason, employee_id: employeeId })
-                            }
-                            onSaved={handleOverrideSaved}
-                            linkedHint={item.ingredient_id ? "corrects the linked ingredient's stock" : undefined}
-                          />
-                          <SummaryFieldCell
-                            field="beginning"
-                            itemName={item.name}
-                            summary={summary}
-                            employeeId={user?.id}
-                            onOverride={(field, correctedValue, reason, employeeId) =>
-                              overrideStockItemField(item.id, { field, corrected_value: correctedValue, reason, employee_id: employeeId })
-                            }
-                            onSaved={handleOverrideSaved}
-                            extra={
-                              summary && !summary.overrides.beginning ? (
-                                <p className="text-[10px] text-muted-foreground">
-                                  {summary.beginning_source === 'carry_forward' ? "from yesterday's ending" : 'no prior count'}
-                                </p>
-                              ) : null
-                            }
-                          />
-                          <SummaryFieldCell
-                            field="usage"
-                            itemName={item.name}
-                            summary={summary}
-                            employeeId={user?.id}
-                            onOverride={(field, correctedValue, reason, employeeId) =>
-                              overrideStockItemField(item.id, { field, corrected_value: correctedValue, reason, employee_id: employeeId })
-                            }
-                            onSaved={handleOverrideSaved}
-                          />
-                          <SummaryFieldCell
-                            field="ending"
-                            itemName={item.name}
-                            summary={summary}
-                            employeeId={user?.id}
-                            onOverride={(field, correctedValue, reason, employeeId) =>
-                              overrideStockItemField(item.id, { field, corrected_value: correctedValue, reason, employee_id: employeeId })
-                            }
-                            onSaved={handleOverrideSaved}
-                            linkedHint={item.ingredient_id ? "corrects the linked ingredient's stock" : undefined}
-                          />
-                          <TableCell className={STOCK_TABLE_CELL_CLASS}>
-                            <Input
-                              className="text-sm min-w-[140px]"
-                              value={d.notes}
-                              onChange={(e) => updateNotesDraft(item.id, { notes: e.target.value })}
-                            />
-                          </TableCell>
-                          <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-center`}>
-                            <input
-                              type="checkbox"
-                              checked={d.needsVerification}
-                              onChange={(e) => updateNotesDraft(item.id, { needsVerification: e.target.checked })}
-                              aria-label="Flag for verification"
-                            />
-                          </TableCell>
-                          <TableCell className={STOCK_TABLE_CELL_CLASS}>
-                            <Button size="sm" variant="ghost" onClick={() => setLossItem(item)}>
-                              Log Loss
-                            </Button>
+                    {sections.length === 0 && (
+                      <TableRow className={STOCK_TABLE_ROW_CLASS}>
+                        <TableCell colSpan={8} className="py-6 text-center text-sm text-muted-foreground">
+                          No item matches “{itemSearch.trim()}”.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {sections.map((group) => (
+                      <React.Fragment key={group.section}>
+                        <TableRow className="bg-muted/60 hover:bg-muted/60">
+                          <TableCell
+                            colSpan={8}
+                            id={sectionAnchor(activeTab, group.section)}
+                            className="scroll-mt-20 py-2 text-xs font-bold uppercase tracking-wide text-foreground"
+                          >
+                            {group.section} <span className="font-normal normal-case text-muted-foreground">· {group.items.length} item{group.items.length === 1 ? '' : 's'}</span>
                           </TableCell>
                         </TableRow>
-                      );
-                    })}
+                      {group.items.map((item) => {
+                        const summary = summaries[item.id];
+                        const d = notesDrafts[item.id] || { notes: '', needsVerification: false };
+                        return (
+                          <TableRow
+                            key={item.id}
+                            className={`${STOCK_TABLE_ROW_CLASS} ${item.needs_review ? 'bg-warning-bg' : ''}`}
+                          >
+                            <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-medium`}>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {item.name}
+                                {item.needs_review && <StockStatusBadge variant="critical">Verify</StockStatusBadge>}
+                                {item.ingredient_id && (
+                                  <StockStatusBadge variant="neutral">Linked -- {item.ingredient_name}</StockStatusBadge>
+                                )}
+                              </div>
+                              {item.unit && <p className="text-xs text-muted-foreground">{item.unit}</p>}
+                              {item.ingredient_id && (
+                                <button
+                                  type="button"
+                                  className="text-xs text-primary underline underline-offset-2"
+                                  onClick={() => onViewIngredients(item.ingredient_id!)}
+                                >
+                                  Edit in Ingredient Stock &rarr;
+                                </button>
+                              )}
+                            </TableCell>
+                            <SummaryFieldCell
+                              field="new_stocks"
+                              itemName={item.name}
+                              summary={summary}
+                              employeeId={user?.id}
+                              onOverride={(field, correctedValue, reason, employeeId) =>
+                                overrideStockItemField(item.id, { field, corrected_value: correctedValue, reason, employee_id: employeeId })
+                              }
+                              onSaved={handleOverrideSaved}
+                              linkedHint={item.ingredient_id ? "corrects the linked ingredient's stock" : undefined}
+                            />
+                            <SummaryFieldCell
+                              field="beginning"
+                              itemName={item.name}
+                              summary={summary}
+                              employeeId={user?.id}
+                              onOverride={(field, correctedValue, reason, employeeId) =>
+                                overrideStockItemField(item.id, { field, corrected_value: correctedValue, reason, employee_id: employeeId })
+                              }
+                              onSaved={handleOverrideSaved}
+                              extra={
+                                summary && !summary.overrides.beginning ? (
+                                  <p className="text-[10px] text-muted-foreground">
+                                    {summary.beginning_source === 'carry_forward' ? "from yesterday's ending" : 'no prior count'}
+                                  </p>
+                                ) : null
+                              }
+                            />
+                            <SummaryFieldCell
+                              field="usage"
+                              itemName={item.name}
+                              summary={summary}
+                              employeeId={user?.id}
+                              onOverride={(field, correctedValue, reason, employeeId) =>
+                                overrideStockItemField(item.id, { field, corrected_value: correctedValue, reason, employee_id: employeeId })
+                              }
+                              onSaved={handleOverrideSaved}
+                            />
+                            <SummaryFieldCell
+                              field="ending"
+                              itemName={item.name}
+                              summary={summary}
+                              employeeId={user?.id}
+                              onOverride={(field, correctedValue, reason, employeeId) =>
+                                overrideStockItemField(item.id, { field, corrected_value: correctedValue, reason, employee_id: employeeId })
+                              }
+                              onSaved={handleOverrideSaved}
+                              linkedHint={item.ingredient_id ? "corrects the linked ingredient's stock" : undefined}
+                            />
+                            <TableCell className={STOCK_TABLE_CELL_CLASS}>
+                              <Input
+                                className="text-sm min-w-[140px]"
+                                value={d.notes}
+                                onChange={(e) => updateNotesDraft(item.id, { notes: e.target.value })}
+                              />
+                            </TableCell>
+                            <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-center`}>
+                              <input
+                                type="checkbox"
+                                checked={d.needsVerification}
+                                onChange={(e) => updateNotesDraft(item.id, { needsVerification: e.target.checked })}
+                                aria-label="Flag for verification"
+                              />
+                            </TableCell>
+                            <TableCell className={STOCK_TABLE_CELL_CLASS}>
+                              <Button size="sm" variant="ghost" onClick={() => setLossItem(item)}>
+                                Log Loss
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                      </React.Fragment>
+                    ))}
                   </TableBody>
                 </Table>
               )}
@@ -394,13 +467,20 @@ function ManageCatalog() {
   const [needsReview, setNeedsReview] = useState(false);
   const [saving, setSaving] = useState(false);
   const [rulesItem, setRulesItem] = useState<ApiStockItem | null>(null);
+  const [sortOrder, setSortOrder] = useState('');
+  const [stationFilter, setStationFilter] = useState<StockStation | 'all'>('all');
+  const [catalogSearch, setCatalogSearch] = useState('');
 
   const load = useCallback(() => {
     setLoading(true);
     Promise.all([fetchStockItems({ active_only: false }), fetchInventory()])
       .then(([stockItems, ing]) => {
+        // Station tabs' order, then the API's sheet order within a station.
+        const stationRank = (s: StockStation) => STATIONS.findIndex((x) => x.value === s);
         setItems(
-          [...stockItems].sort((a, b) => a.station.localeCompare(b.station) || a.name.localeCompare(b.name))
+          stockItems.map((item, index) => ({ item, index }))
+            .sort((a, b) => stationRank(a.item.station) - stationRank(b.item.station) || a.index - b.index)
+            .map(({ item }) => item)
         );
         setIngredients([...ing].sort((a, b) => a.name.localeCompare(b.name)));
       })
@@ -421,8 +501,17 @@ function ManageCatalog() {
     setIngredientId(item.ingredient_id || 'none');
     setActive(item.active);
     setNeedsReview(item.needs_review);
+    setSortOrder(item.sort_order != null ? String(item.sort_order) : '');
     setEditOpen(true);
   }
+
+  const sectionSuggestions = useMemo(
+    () => Array.from(new Set(items.filter((i) => i.station === editing?.station && i.category).map((i) => i.category!))),
+    [items, editing],
+  );
+  const catalogQuery = catalogSearch.trim().toLowerCase();
+  const visibleItems = items.filter((i) => (stationFilter === 'all' || i.station === stationFilter)
+    && (!catalogQuery || i.name.toLowerCase().includes(catalogQuery) || (i.category || '').toLowerCase().includes(catalogQuery)));
 
   async function handleSave() {
     if (!editing) return;
@@ -436,6 +525,10 @@ function ManageCatalog() {
         ingredient_id: ingredientId === 'none' ? null : ingredientId,
         active,
         needs_review: needsReview,
+        // Only sent when changed, so saving works before migration 0079 runs.
+        ...((sortOrder.trim() ? Number(sortOrder) : null) !== (editing.sort_order ?? null)
+          ? { sort_order: sortOrder.trim() ? Math.round(Number(sortOrder)) : null }
+          : {}),
       });
       toast.success(`${name.trim()} saved`);
       setEditOpen(false);
@@ -451,8 +544,28 @@ function ManageCatalog() {
     <Card>
       <CardHeader>
         <CardTitle>Manage Stock Items Catalog</CardTitle>
+        <p className="text-xs text-muted-foreground">
+          In the same order and sections as the stock sheet. Change an item's section or its position number to move it.
+        </p>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap gap-2">
+          <Select value={stationFilter} onValueChange={(v) => setStationFilter(v as StockStation | 'all')}>
+            <SelectTrigger className="w-52" aria-label="Station">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All stations</SelectItem>
+              {STATIONS.map((s) => (
+                <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="relative min-w-56 flex-1 max-w-sm">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" aria-hidden />
+            <Input className="pl-9" placeholder="Find an item or section" value={catalogSearch} onChange={(e) => setCatalogSearch(e.target.value)} aria-label="Find a catalog item" />
+          </div>
+        </div>
         {loading && <p className="text-sm text-muted-foreground">Loading catalog...</p>}
         {!loading && (
           <Table>
@@ -460,7 +573,7 @@ function ManageCatalog() {
               <TableRow className={STOCK_TABLE_ROW_CLASS}>
                 <TableHead className={STOCK_TABLE_HEAD_CLASS}>Station</TableHead>
                 <TableHead className={STOCK_TABLE_HEAD_CLASS}>Name</TableHead>
-                <TableHead className={STOCK_TABLE_HEAD_CLASS}>Category</TableHead>
+                <TableHead className={STOCK_TABLE_HEAD_CLASS}>Section</TableHead>
                 <TableHead className={STOCK_TABLE_HEAD_CLASS}>Unit</TableHead>
                 <TableHead className={STOCK_TABLE_HEAD_CLASS}>Linked Ingredient</TableHead>
                 <TableHead className={STOCK_TABLE_HEAD_CLASS}>Active</TableHead>
@@ -469,7 +582,7 @@ function ManageCatalog() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {items.map((item) => (
+              {visibleItems.map((item) => (
                 <TableRow key={item.id} className={STOCK_TABLE_ROW_CLASS}>
                   <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-muted-foreground`}>
                     {STATIONS.find((s) => s.value === item.station)?.label}
@@ -506,10 +619,10 @@ function ManageCatalog() {
                   </TableCell>
                 </TableRow>
               ))}
-              {items.length === 0 && (
+              {visibleItems.length === 0 && (
                 <TableRow className={STOCK_TABLE_ROW_CLASS}>
                   <TableCell colSpan={8} className="text-center text-sm text-muted-foreground">
-                    No stock items yet.
+                    {items.length === 0 ? 'No stock items yet.' : 'No item matches.'}
                   </TableCell>
                 </TableRow>
               )}
@@ -530,8 +643,11 @@ function ManageCatalog() {
                 <Input value={name} onChange={(e) => setName(e.target.value)} />
               </div>
               <div className="space-y-1">
-                <Label>Category</Label>
-                <Input value={category} onChange={(e) => setCategory(e.target.value)} />
+                <Label htmlFor="stock-item-section">Section</Label>
+                <Input id="stock-item-section" list="stock-item-sections" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. Proteins" />
+                <datalist id="stock-item-sections">
+                  {sectionSuggestions.map((s) => <option key={s} value={s} />)}
+                </datalist>
               </div>
               <div className="space-y-1">
                 <Label>Unit</Label>
@@ -540,6 +656,11 @@ function ManageCatalog() {
               <div className="space-y-1">
                 <Label>Reorder threshold</Label>
                 <Input type="number" value={reorderThreshold} onChange={(e) => setReorderThreshold(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="stock-item-position">Position on the sheet</Label>
+                <Input id="stock-item-position" type="number" step={1} value={sortOrder} onChange={(e) => setSortOrder(e.target.value)} placeholder="Blank = end of its section" />
+                <p className="text-xs text-muted-foreground">Rows go 10, 20, 30… Use 15 to put it between the 1st and 2nd.</p>
               </div>
             </div>
             <div className="space-y-1">

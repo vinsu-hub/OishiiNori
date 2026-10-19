@@ -19,6 +19,7 @@ import {
   ChefHat,
   Package,
   Boxes,
+  Calculator,
   Warehouse,
   ClipboardList,
   Bell,
@@ -116,9 +117,11 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
   // mount), so these two links correctly switch tabs even when /stock is
   // already the active page. Legacy /inventory-count and /stock-count paths
   // still resolve to the same component and are treated as aliases here too.
-  const stationsQueryActive = new URLSearchParams(search).get('tab') === 'stations';
+  const stockTab = new URLSearchParams(search).get('tab');
+  const stationsQueryActive = stockTab === 'stations';
+  const isRecipeCostsActive = location === '/stock' && stockTab === 'costs';
   const isOverviewActive = location === '/stock/overview';
-  const isRecipeIngredientsActive = (location === '/stock' && !stationsQueryActive) || location === '/inventory-count';
+  const isRecipeIngredientsActive = (location === '/stock' && !stationsQueryActive && !isRecipeCostsActive) || location === '/inventory-count';
   const isStationItemsActive = (location === '/stock' && stationsQueryActive) || location === '/stock-count';
   const isReceiveShipmentActive = location === '/inventory-movements';
   const isAlertsActive = location === '/stock/alerts';
@@ -128,6 +131,7 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
     isOverviewActive ||
     isRecipeIngredientsActive ||
     isStationItemsActive ||
+    isRecipeCostsActive ||
     isReceiveShipmentActive ||
     isAlertsActive ||
     isVarianceLogActive ||
@@ -139,6 +143,9 @@ export function Sidebar({ collapsed, onToggleCollapse, mobileOpen, onCloseMobile
       : []),
     { icon: Package, label: 'Ingredient Stock', href: '/stock', isActive: isRecipeIngredientsActive },
     { icon: Boxes, label: 'Station Items', href: '/stock?tab=stations', isActive: isStationItemsActive },
+    ...(isManagerOrExecutive || hasGrant('stock')
+      ? [{ icon: Calculator, label: 'Recipes & Costs', href: '/stock?tab=costs', isActive: isRecipeCostsActive }]
+      : []),
     { icon: Truck, label: 'Receive Shipment', href: '/inventory-movements', isActive: isReceiveShipmentActive },
     ...(canSeeStock
       ? [{ icon: Bell, label: 'Alerts', href: '/stock/alerts', isActive: isAlertsActive, badge: lowStockCount }]

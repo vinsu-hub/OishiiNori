@@ -20,14 +20,10 @@ import {
 } from '@/lib/api';
 import { formatDateTime12h } from '@/lib/utils';
 import { StockStatTile } from '@/components/stock/StockStatTile';
+import { STOCK_STATIONS } from '@/lib/constants';
 import { STOCK_TABLE_CELL_CLASS, STOCK_TABLE_HEAD_CLASS, STOCK_TABLE_ROW_CLASS } from '@/components/stock/stockTableStyle';
 
-const STATIONS: { value: StockStation; label: string }[] = [
-  { value: 'tako_snack', label: 'Tako / Snack' },
-  { value: 'cafe_drinks', label: 'Cafe / Drinks' },
-  { value: 'sushi_kitchen_main', label: 'Sushi-Kitchen Main' },
-  { value: 'ramen_hot_line', label: 'Ramen / Hot Line' },
-];
+const STATIONS = STOCK_STATIONS;
 
 const MOVEMENT_TYPE_LABELS: Record<string, string> = {
   delivery: 'Delivery',

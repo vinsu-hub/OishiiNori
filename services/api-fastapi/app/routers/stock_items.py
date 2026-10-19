@@ -150,15 +150,26 @@ def list_stock_items(
     user: CurrentUser = Depends(get_current_user),
 ):
     supabase = get_supabase()
-    query = supabase.table("stock_items").select(
+    columns = (
         "id, name, station, category, unit, ingredient_id, current_stock, reorder_threshold, "
         "active, needs_review, created_at, updated_at, ingredients(name, current_stock)"
     )
-    if station:
-        query = query.eq("station", station)
-    if active_only:
-        query = query.eq("active", True)
-    result = query.order("name").execute()
+
+    def run(select: str, sheet_order: bool):
+        query = supabase.table("stock_items").select(select)
+        if station:
+            query = query.eq("station", station)
+        if active_only:
+            query = query.eq("active", True)
+        if sheet_order:
+            query = query.order("sort_order", nullsfirst=False)
+        return query.order("name").execute()
+
+    try:
+        result = run(columns + ", sort_order", True)
+    except APIError:
+        # Migration 0079 (sort_order) not run yet: alphabetical, as before.
+        result = run(columns, False)
     return [_to_stock_item_out(row) for row in result.data]
 
 

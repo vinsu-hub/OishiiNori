@@ -233,6 +233,40 @@ export interface ApiRecipeItem {
   needs_review: boolean;
 }
 
+export interface RecipeCoverageSize {
+  id: string;
+  size_label: string;
+  price: number;
+  recipe_lines: number;
+  consumption_rules: number;
+  /** Cost of one serving from the ingredients that have a unit cost; null with no recipe. */
+  cost: number | null;
+  /** Ingredients in this recipe with no unit cost yet. */
+  missing_cost: string[];
+}
+
+export interface RecipeCoverageProduct {
+  id: string;
+  name: string;
+  category: string;
+  is_bundle: boolean;
+  sizes: RecipeCoverageSize[];
+}
+
+export interface RecipeCoverageIngredient {
+  id: string;
+  name: string;
+  category: string | null;
+  base_unit: string;
+  unit_cost: number | null;
+  used_in: number;
+  used_in_examples: string[];
+}
+
+export function fetchRecipeCoverage(): Promise<{ products: RecipeCoverageProduct[]; ingredients: RecipeCoverageIngredient[] }> {
+  return request('/recipes/coverage');
+}
+
 export function fetchRecipe(productSizeId: string): Promise<ApiRecipeItem[]> {
   return request(`/product-sizes/${productSizeId}/recipe`);
 }
@@ -1119,6 +1153,8 @@ export interface ApiStockItem {
   reorder_threshold: number | null;
   active: boolean;
   needs_review: boolean;
+  /** Row position on the client's stock sheet (0079); null sorts last. */
+  sort_order?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -1194,6 +1230,7 @@ export function updateStockItem(
     reorder_threshold: number | null;
     active: boolean;
     needs_review: boolean;
+    sort_order: number | null;
   }>
 ): Promise<ApiStockItem> {
   return request(`/stock-items/${id}`, { method: 'PATCH', body: JSON.stringify(body) });

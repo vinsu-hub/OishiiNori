@@ -19,14 +19,10 @@ import {
   fetchStockItems,
 } from '@/lib/api';
 import { StockStatusBadge, StockStatusVariant } from '@/components/stock/StockStatusBadge';
+import { STOCK_STATION_LABELS } from '@/lib/constants';
 import { STOCK_TABLE_CELL_CLASS, STOCK_TABLE_HEAD_CLASS, STOCK_TABLE_ROW_CLASS } from '@/components/stock/stockTableStyle';
 
-const STATION_LABELS: Record<StockStation, string> = {
-  tako_snack: 'Tako / Snack',
-  cafe_drinks: 'Cafe / Drinks',
-  sushi_kitchen_main: 'Sushi-Kitchen Main',
-  ramen_hot_line: 'Ramen / Hot Line',
-};
+const STATION_LABELS = STOCK_STATION_LABELS;
 
 type AlertType = 'low_stock' | 'expiring' | 'verify';
 type AlertSource = 'Recipe Ingredient' | 'Station Item';

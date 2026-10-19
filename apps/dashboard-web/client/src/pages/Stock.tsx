@@ -4,8 +4,10 @@ import { DashboardLayout } from '@/components/DashboardLayout';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { IngredientsPanel } from '@/components/stock/IngredientsPanel';
 import { StationsPanel } from '@/components/stock/StationsPanel';
+import { RecipeCostsPanel } from '@/components/stock/RecipeCostsPanel';
+import { useAuth } from '@/contexts/AuthContext';
 
-type StockTab = 'ingredients' | 'stations';
+type StockTab = 'ingredients' | 'stations' | 'costs';
 
 // Reads the legacy /inventory-count and /stock-count paths (and a ?tab=
 // query param) so existing bookmarks/links -- and the Sidebar's Stock group
@@ -16,11 +18,15 @@ type StockTab = 'ingredients' | 'stations';
 // Ingredients") -- a mount-only read would silently no-op on that click.
 function resolveTab(pathname: string, search: string): StockTab {
   if (pathname === '/stock-count') return 'stations';
-  if (new URLSearchParams(search).get('tab') === 'stations') return 'stations';
+  const tab = new URLSearchParams(search).get('tab');
+  if (tab === 'stations') return 'stations';
+  if (tab === 'costs') return 'costs';
   return 'ingredients';
 }
 
 export default function Stock() {
+  const { user } = useAuth();
+  const canSeeCosts = user?.role === 'manager' || user?.role === 'executive' || !!user?.extraPages.includes('stock');
   const [location] = useLocation();
   const search = useSearch();
   const [activeTab, setActiveTab] = useState<StockTab>(() => resolveTab(location, search));
@@ -42,6 +48,7 @@ export default function Stock() {
           <TabsList>
             <TabsTrigger value="ingredients">Ingredient Stock</TabsTrigger>
             <TabsTrigger value="stations">Station Items</TabsTrigger>
+            {canSeeCosts && <TabsTrigger value="costs">Recipes &amp; Costs</TabsTrigger>}
           </TabsList>
         </Tabs>
 
@@ -55,6 +62,7 @@ export default function Stock() {
             onFocusIngredientConsumed={() => setFocusIngredientId(undefined)}
           />
         </div>
+        {canSeeCosts && activeTab === 'costs' && <RecipeCostsPanel />}
         <div className={activeTab === 'stations' ? '' : 'hidden'}>
           <StationsPanel
             onViewIngredients={(ingredientId) => {

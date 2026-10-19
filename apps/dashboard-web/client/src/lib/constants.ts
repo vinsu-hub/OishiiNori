@@ -54,3 +54,16 @@ export const CUSTOMER_MENU_URL = 'https://www.oishiinori.com/menu';
 export function tableOrderUrl(tableNumber: number): string {
   return `${CUSTOMER_MENU_URL}?table=${tableNumber}`;
 }
+
+// Stock count stations, named and ordered like the client's stock workbook
+// (one sheet each: RAMEN, MAKI, DRIPTEASTACRUZ, TAKOSTACRUZ).
+export const STOCK_STATIONS: { value: 'ramen_hot_line' | 'sushi_kitchen_main' | 'cafe_drinks' | 'tako_snack'; label: string }[] = [
+  { value: 'ramen_hot_line', label: 'Ramen' },
+  { value: 'sushi_kitchen_main', label: 'Maki' },
+  { value: 'cafe_drinks', label: 'Drip Tea (Sta. Cruz)' },
+  { value: 'tako_snack', label: 'Tako (Sta. Cruz)' },
+];
+
+export const STOCK_STATION_LABELS: Record<(typeof STOCK_STATIONS)[number]['value'], string> = Object.fromEntries(
+  STOCK_STATIONS.map((s) => [s.value, s.label]),
+) as Record<(typeof STOCK_STATIONS)[number]['value'], string>;

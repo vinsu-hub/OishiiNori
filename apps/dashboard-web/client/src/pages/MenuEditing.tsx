@@ -245,6 +245,20 @@ export default function MenuEditing() {
     setEditOpen(true);
   }
 
+  // Stock -> Recipes & Costs links here with ?edit=<productId> to open that
+  // item's editor straight away (once, then the param is dropped).
+  useEffect(() => {
+    const productId = new URLSearchParams(window.location.search).get('edit');
+    if (!productId || loading) return;
+    const product = products.find((p) => p.id === productId);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('edit');
+    window.history.replaceState(null, '', url);
+    if (product) openEdit(product);
+    else toast.error('That menu item was not found (it may be hidden or deleted).');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, products]);
+
   useEffect(() => {
     if (!editOpen || !recipeSizeId) return;
     setLoadingRecipe(true);

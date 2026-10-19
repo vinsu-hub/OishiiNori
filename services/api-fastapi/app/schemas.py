@@ -130,6 +130,43 @@ class RecipeItemOut(BaseModel):
     needs_review: bool = False
 
 
+class RecipeCoverageSize(BaseModel):
+    id: str
+    size_label: str
+    price: float
+    recipe_lines: int
+    consumption_rules: int
+    # Cost of one serving from the ingredients that have a unit cost; the
+    # ones without are listed in missing_cost (so cost is a floor, not the
+    # full cost, until that list is empty). None when there's no recipe.
+    cost: float | None = None
+    missing_cost: list[str] = Field(default_factory=list)
+
+
+class RecipeCoverageProduct(BaseModel):
+    id: str
+    name: str
+    category: str
+    is_bundle: bool
+    sizes: list[RecipeCoverageSize]
+
+
+class RecipeCoverageIngredient(BaseModel):
+    id: str
+    name: str
+    category: str | None = None
+    base_unit: str
+    unit_cost: float | None = None
+    # Active menu sizes whose recipe uses this ingredient.
+    used_in: int
+    used_in_examples: list[str] = Field(default_factory=list)
+
+
+class RecipeCoverageResponse(BaseModel):
+    products: list[RecipeCoverageProduct]
+    ingredients: list[RecipeCoverageIngredient]
+
+
 # --- Menu Editing (executive-only product/size/recipe CRUD) ---
 
 
@@ -835,6 +872,8 @@ class StockItemOut(BaseModel):
     reorder_threshold: float | None = None
     active: bool
     needs_review: bool
+    # Row position on the client's stock sheet (0079); None sorts last.
+    sort_order: int | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -856,6 +895,7 @@ class StockItemUpdate(BaseModel):
     reorder_threshold: float | None = None
     active: bool | None = None
     needs_review: bool | None = None
+    sort_order: int | None = None
 
 
 class StockCountEntryCreate(BaseModel):
