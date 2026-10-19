@@ -44,6 +44,7 @@ from app.schemas import (
     DeliveryFeeOut,
     DigitalOrderResponse,
     DigitalOrderStatusResponse,
+    FirstOrderPromoOut,
     QueueDisplayOut,
     MenuAddonOut,
     ProductOut,
@@ -111,6 +112,11 @@ _public_cache: TTLCache = TTLCache(maxsize=8, ttl=30)
 MENU_CACHE_SECONDS = 30
 CATALOG_CACHE_SECONDS = 300
 
+# The first-online-order free item only goes to an order whose items + add-ons
+# reach this amount, so a small order can't use up the day's promo.
+FIRST_ORDER_PROMO_MIN_SUBTOTAL = 499.0
+FIRST_ORDER_PROMO_ITEM_NAME = "4 pcs Torikatsu Maki"
+
 
 def _cached_public(key: str, build):
     if key not in _public_cache:
@@ -139,6 +145,28 @@ def public_addons(response: Response):
     public_cache(response, MENU_CACHE_SECONDS)
     return _cached_public("addons", lambda: get_supabase().table("menu_addons").select("*")
                           .eq("active", True).order("name").execute().data)
+
+
+@router.get("/public/promo/first-order", response_model=FirstOrderPromoOut)
+def public_first_order_promo(response: Response):
+    """Whether today's first-online-order promo is still up for grabs, for the
+    cart's "add ₱X more" notice. Only a hint: the claim is decided at submit."""
+    public_cache(response, MENU_CACHE_SECONDS)
+
+    def build():
+        supabase = get_supabase()
+        available = False
+        if _promo_size_id(supabase):
+            try:
+                claimed = (supabase.table("online_promo_claims").select("promo_date")
+                           .eq("promo_date", today_ph().isoformat()).limit(1).execute().data)
+                available = not claimed
+            except APIError:
+                available = False  # migration 0078 not applied yet
+        return {"available": available, "min_subtotal": FIRST_ORDER_PROMO_MIN_SUBTOTAL,
+                "item_name": FIRST_ORDER_PROMO_ITEM_NAME}
+
+    return _cached_public("first-order-promo", build)
 
 
 @router.get("/public/product-sizes/{product_size_id}/recipe", response_model=list[RecipeItemOut])
@@ -410,7 +438,7 @@ def submit_digital_order(body: CreateDigitalOrderRequest, request: Request):
         supabase.table("digital_order_addons").insert(addon_rows).execute()
 
     if body.order_channel != "dine_in_qr":
-        _claim_first_order_promo(supabase, order["id"])
+        _claim_first_order_promo(supabase, order["id"], subtotal)
 
     record_idempotency_key(supabase, body.idempotency_key, "POST /public/orders", order["id"])
     return _fetch_digital_order(supabase, order["id"])
@@ -442,10 +470,13 @@ def _promo_size_id(supabase) -> str | None:
     return (row.data or {}).get("first_order_promo_size_id") if row else None
 
 
-def _claim_first_order_promo(supabase, order_id: str) -> bool:
-    """First delivery/pickup order of the PH day gets the promo item free.
-    The claim table's primary key on the date makes "first" atomic; a
-    declined order releases its claim (see reject_digital_order)."""
+def _claim_first_order_promo(supabase, order_id: str, subtotal: float) -> bool:
+    """First delivery/pickup order of the PH day reaching the minimum
+    subtotal gets the promo item free. The claim table's primary key on the
+    date makes "first" atomic; a declined order releases its claim (see
+    reject_digital_order)."""
+    if subtotal < FIRST_ORDER_PROMO_MIN_SUBTOTAL:
+        return False
     size_id = _promo_size_id(supabase)
     if not size_id:
         return False

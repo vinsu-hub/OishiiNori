@@ -32,20 +32,40 @@ class PromoTests(unittest.TestCase):
 
     def test_first_order_gets_a_free_item(self):
         db, tables = self._db(won=True)
-        self.assertTrue(dm._claim_first_order_promo(db, "order-1"))
+        self.assertTrue(dm._claim_first_order_promo(db, "order-1", 499.0))
         row = tables["digital_order_items"].insert.call_args[0][0]
         self.assertEqual((row["product_size_id"], row["unit_price"], row["quantity"], row["is_promo"]), ("tori-4", 0, 1, True))
 
     def test_later_orders_get_nothing(self):
         db, tables = self._db(won=False)
-        self.assertFalse(dm._claim_first_order_promo(db, "order-2"))
+        self.assertFalse(dm._claim_first_order_promo(db, "order-2", 600.0))
         tables["digital_order_items"].insert.assert_not_called()
 
     def test_claim_is_one_per_day(self):
         db, tables = self._db(won=True)
-        dm._claim_first_order_promo(db, "order-1")
+        dm._claim_first_order_promo(db, "order-1", 499.0)
         kwargs = tables["online_promo_claims"].upsert.call_args.kwargs
         self.assertEqual((kwargs["on_conflict"], kwargs["ignore_duplicates"]), ("promo_date", True))
+
+    def test_order_under_minimum_keeps_the_promo_open(self):
+        db, tables = self._db(won=True)
+        self.assertFalse(dm._claim_first_order_promo(db, "order-1", 498.0))
+        tables["online_promo_claims"].upsert.assert_not_called()
+        tables["digital_order_items"].insert.assert_not_called()
+
+    def test_status_endpoint(self):
+        for size_id, claims, expected in (("tori-4", [], True), ("tori-4", [{"promo_date": "x"}], False), (None, [], False)):
+            dm._public_cache.clear()
+            tables = {
+                "business_settings": _chain({"first_order_promo_size_id": size_id}),
+                "online_promo_claims": _chain(claims),
+            }
+            db = MagicMock()
+            db.table.side_effect = lambda name: tables[name]
+            with patch.object(dm, "get_supabase", return_value=db):
+                body = TestClient(app).get("/public/promo/first-order").json()
+            self.assertEqual((body["available"], body["min_subtotal"]), (expected, 499.0))
+        dm._public_cache.clear()
 
     def test_promo_line_is_zeroed_on_approval(self):
         db = MagicMock()

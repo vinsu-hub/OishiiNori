@@ -233,6 +233,16 @@ export function fetchAddons(): Promise<ApiAddon[]> {
   return request('/public/addons');
 }
 
+export interface FirstOrderPromo {
+  available: boolean;
+  min_subtotal: number;
+  item_name: string;
+}
+
+export function fetchFirstOrderPromo(): Promise<FirstOrderPromo> {
+  return request('/public/promo/first-order');
+}
+
 export function fetchRecipe(productSizeId: string): Promise<ApiRecipeItem[]> {
   return request(`/public/product-sizes/${productSizeId}/recipe`);
 }

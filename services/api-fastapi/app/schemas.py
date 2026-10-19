@@ -577,6 +577,14 @@ class DigitalOrderResponse(BaseModel):
     scheduled_for: datetime | None = None
 
 
+class FirstOrderPromoOut(BaseModel):
+    """Public cart notice: is today's first-online-order free item unclaimed."""
+
+    available: bool
+    min_subtotal: float
+    item_name: str
+
+
 class QueueDisplayOut(BaseModel):
     """Public TV feed: order numbers only, by kitchen stage."""
 

@@ -353,6 +353,12 @@
 
 .recipe-backdrop { z-index:60; }
 
+.first-order-promo { margin:16px 0 4px; padding:14px 15px; border:1px solid #f0c9c3; border-radius:16px; background:#fff4f1; }
+.first-order-promo .eyebrow { margin-bottom:8px; }
+.first-order-promo p { margin:0; font-size:14px; line-height:1.5; color:#3b3632; }
+.first-order-promo strong { color:#c92b2b; }
+.first-order-promo-bar { margin-top:10px; height:6px; border-radius:999px; background:#f3dcd7; overflow:hidden; }
+.first-order-promo-bar span { display:block; height:100%; border-radius:inherit; background:#c92b2b; transition:width .3s ease; }
 .addons-panel, .payment-panel { margin:16px 0; padding:15px; border:1px solid #e7ded3; border-radius:16px; background:#fffcf8; }
 .addons-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
 .addons-heading h3 { margin:0; font-family:"Noto Serif JP",serif; font-size:18px; letter-spacing:-.05em; }

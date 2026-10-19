@@ -30,11 +30,13 @@ import {
   ApiRecipeItem,
   DeliveryFee,
   DigitalOrderStatus,
+  FirstOrderPromo,
   OrderChannel,
   PaymentMethod,
   fetchAddons,
   fetchBusinessDayStatus,
   fetchDeliveryFees,
+  fetchFirstOrderPromo,
   fetchMenu,
   fetchOrderStatus,
   fetchPaymentMethods,
@@ -243,6 +245,17 @@ export default function App() {
   const [website, setWebsite] = useState('');
   // Set when this order won the first-online-order-of-the-day free item.
   const [promoItemName, setPromoItemName] = useState<string | null>(null);
+  // Today's first-online-order promo, checked each time the cart opens so the
+  // "add ₱X more" notice disappears once someone has claimed it.
+  const [firstOrderPromo, setFirstOrderPromo] = useState<FirstOrderPromo | null>(null);
+  useEffect(() => {
+    if (!cartOpen || !effectiveChannel || effectiveChannel === 'dine_in_qr') return;
+    let cancelled = false;
+    fetchFirstOrderPromo()
+      .then((promo) => { if (!cancelled) setFirstOrderPromo(promo); })
+      .catch(() => { if (!cancelled) setFirstOrderPromo(null); });
+    return () => { cancelled = true; };
+  }, [cartOpen, effectiveChannel]);
   const promoOkRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (promoItemName) promoOkRef.current?.focus();
@@ -1160,6 +1173,24 @@ export default function App() {
                   <div className="selected-addons">
                     <span>Add-ons</span>
                     <strong>{peso(addonTotal)}</strong>
+                  </div>
+                )}
+                {firstOrderPromo?.available && effectiveChannel !== 'dine_in_qr' && (
+                  <div className="first-order-promo" role="status">
+                    <p className="eyebrow">FIRST ONLINE ORDER TODAY · 初注文</p>
+                    {cartTotal < firstOrderPromo.min_subtotal ? (
+                      <p>
+                        🎉 Today's first online order gets a <strong>FREE {firstOrderPromo.item_name}</strong>. Add{' '}
+                        <strong>{peso(firstOrderPromo.min_subtotal - cartTotal)}</strong> more (min. {peso(firstOrderPromo.min_subtotal)}) to claim it.
+                      </p>
+                    ) : (
+                      <p>
+                        🎉 You qualify! If you're today's first online order, a <strong>FREE {firstOrderPromo.item_name}</strong> will be added.
+                      </p>
+                    )}
+                    <div className="first-order-promo-bar" aria-hidden="true">
+                      <span style={{ width: `${Math.min(100, (cartTotal / firstOrderPromo.min_subtotal) * 100)}%` }} />
+                    </div>
                   </div>
                 )}
                 <div className="cart-total">
