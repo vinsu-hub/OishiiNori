@@ -73,6 +73,29 @@ export function playTableOrderBeep() {
   }
 }
 
+// Rider: a delivery is ready for pickup. A loud square-wave "beep-beep"
+// (like a motorbike horn) three times -- meant to be heard from a pocket.
+export function playRiderReadyAlert() {
+  try {
+    for (const offset of [0, 0.75, 1.5]) {
+      playBeep(740, offset, 180, 0.35, 'square');
+      playBeep(740, offset + 0.25, 260, 0.35, 'square');
+    }
+  } catch {
+    // Browsers may require a user gesture before allowing audio.
+  }
+}
+
+/** Phones keep audio locked until the user taps; call this from a tap. */
+export function unlockAudio() {
+  try {
+    const audioCtx = getContext();
+    void audioCtx?.resume();
+  } catch {
+    // Nothing to unlock.
+  }
+}
+
 // Online Orders page's speaker toggle; per-device, so each till chooses.
 const ONLINE_MUTE_KEY = 'online-order-sound-muted';
 

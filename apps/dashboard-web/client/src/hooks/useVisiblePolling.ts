@@ -22,13 +22,16 @@ import { effectivePollMs } from '@/lib/constants';
  * `user`, and needs an immediate re-fetch the moment auth resolves, not a
  * silent wait for the next interval tick.
  */
-export function useVisiblePolling(load: () => void, intervalMs: number) {
+export function useVisiblePolling(load: () => void, intervalMs: number, options?: { whileHidden?: boolean }) {
+  // whileHidden: keep polling in a background tab (the browser still slows
+  // it down) -- only for alert pages like the rider's Delivery screen.
+  const whileHidden = options?.whileHidden ?? false;
   useEffect(() => {
     load();
 
     let timer: ReturnType<typeof setTimeout>;
     const tick = () => {
-      if (document.visibilityState === 'visible') {
+      if (whileHidden || document.visibilityState === 'visible') {
         load();
       }
       timer = setTimeout(tick, effectivePollMs(intervalMs));
@@ -46,5 +49,5 @@ export function useVisiblePolling(load: () => void, intervalMs: number) {
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisibility);
     };
-  }, [load, intervalMs]);
+  }, [load, intervalMs, whileHidden]);
 }

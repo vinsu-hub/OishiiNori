@@ -25,6 +25,9 @@ export default function Home() {
       navigate('/kitchen-display');
     } else if (user?.role === 'executive') {
       navigate('/command-center');
+    } else if (user?.role === 'rider') {
+      // Riders work from Delivery, where the "ready for pickup" alert lives.
+      navigate('/delivery');
     }
   }, [user, navigate, kitchenHome]);
 

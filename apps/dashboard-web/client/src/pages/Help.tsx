@@ -254,9 +254,11 @@ const HELP_GROUPS: HelpGroup[] = [
         question: "What does the Rider role see?",
         answer: (
           <p>
-            A Rider account has a single <strong>Delivery</strong> page: assigned delivery orders with a map link
-            straight to the drop-off address, and a way to mark a delivery done once it's handed over. Nothing else
-            is in a Rider's sidebar — it's deliberately a one-job account.
+            A Rider account opens straight to the <strong>Delivery</strong> page: every delivery waiting for a rider,
+            with a map link to the drop-off address and a way to mark it done once it's handed over. At the start of
+            each shift, tap <strong>Turn on alerts</strong> there and keep the page open: the phone beeps, vibrates
+            and shows a pop-up whenever the kitchen marks a delivery ready for pickup, and the screen stays awake.
+            Nothing else is in a Rider's sidebar — it's deliberately a one-job account.
           </p>
         ),
       },

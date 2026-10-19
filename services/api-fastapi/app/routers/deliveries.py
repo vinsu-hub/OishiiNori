@@ -15,12 +15,16 @@ changes regardless of where an order started.
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from pydantic import TypeAdapter
 
 from app.auth import CurrentUser, get_current_user, require_role
 from app.deps import get_supabase
 from app.routers.digital_menu import _fetch_digital_order
-from app.routers.transactions import _deliveries_transaction_id_supported_check, fetch_transaction_delivery_ticket
+from app.routers.transactions import (
+    _deliveries_transaction_id_supported_check, fetch_transaction_delivery_ticket, live_cache_get, live_cache_put,
+    live_cache_version,
+)
 from app.schemas import DigitalOrderResponse
 
 router = APIRouter(tags=["deliveries"])
@@ -39,6 +43,21 @@ def list_deliveries(
     require_role(user, "rider", "manager", "executive")
     if status != "pending":
         require_role(user, "manager", "executive")
+    # Riders' phones poll this every 15 s for the "ready for pickup" alert;
+    # the shared live cache rebuilds it only when orders/deliveries change.
+    cache_key = ("deliveries", status)
+    body = live_cache_get(cache_key)
+    if body is not None:
+        return Response(body, media_type="application/json")
+    version = live_cache_version()
+    return live_cache_put(cache_key, _deliveries_json.dump_json(
+        _deliveries_json.validate_python(_build_deliveries(status))), version)
+
+
+_deliveries_json = TypeAdapter(list[DigitalOrderResponse])
+
+
+def _build_deliveries(status: str) -> list[dict]:
     supabase = get_supabase()
 
     # Migration 0051 feature-detection, same posture as transactions.py's
