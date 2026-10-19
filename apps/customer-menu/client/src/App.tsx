@@ -301,7 +301,10 @@ export default function App() {
         seen.set(p.category, { id: p.category, label: p.category, jp: categoryJp(p.category), icon: categoryIcon(p.category) });
       }
     }
-    return [{ id: 'All', label: 'All', jp: '全て', icon: Utensils }, ...seen.values()];
+    // Add-ons (sauce cups, extra chasu) go after the dishes instead of leading the A-Z list.
+    const isAddon = (id: string) => /^add[\s-]?ons?$/i.test(id.trim());
+    const ordered = [...seen.values()].sort((a, b) => Number(isAddon(a.id)) - Number(isAddon(b.id)));
+    return [{ id: 'All', label: 'All', jp: '全て', icon: Utensils }, ...ordered];
   }, [products]);
 
   const sections = useMemo(() => {

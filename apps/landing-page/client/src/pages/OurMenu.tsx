@@ -5,7 +5,7 @@ import SiteNav from '@/components/SiteNav';
 import SiteFooter from '@/components/SiteFooter';
 import FoodPhoto from '@/components/FoodPhoto';
 import { fetchMenu, type ApiProduct } from '@/lib/api';
-import { priceLabel, productPhoto } from '@/lib/menu';
+import { isBrowsable, priceLabel, productPhoto } from '@/lib/menu';
 import { usePageMeta } from '@/lib/seo';
 
 export default function OurMenu({ initialData }: { initialData?: { products: ApiProduct[] } } = {}) {
@@ -13,14 +13,14 @@ export default function OurMenu({ initialData }: { initialData?: { products: Api
   usePageMeta('/our-menu');
   const search = useSearch();
   const requested = new URLSearchParams(search).get('cat') || 'All';
-  const [products, setProducts] = useState<ApiProduct[]>(initialData?.products.filter(product => product.active) ?? []);
+  const [products, setProducts] = useState<ApiProduct[]>(initialData?.products.filter(isBrowsable) ?? []);
   const [loading, setLoading] = useState(!initialData);
   const [error, setError] = useState(false);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let active = true;
     setLoading(true); setError(false);
-    fetchMenu().then(data => { if (active) setProducts(data.filter(product => product.active)); }).catch(() => { if (active) setError(true); }).finally(() => { if (active) setLoading(false); });
+    fetchMenu().then(data => { if (active) setProducts(data.filter(isBrowsable)); }).catch(() => { if (active) setError(true); }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [attempt]);
   const categories = [...new Set(products.map(product => product.category).filter(Boolean))].sort((a, b) => a.localeCompare(b));

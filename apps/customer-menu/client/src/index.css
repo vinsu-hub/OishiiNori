@@ -230,6 +230,8 @@
 .item-main:disabled { opacity: .5; cursor: not-allowed; }
 .item-index { color:#b5aa9e; font-size:11px; letter-spacing:.08em; }
 .item-thumb { width:42px; height:42px; border-radius:50%; object-fit:cover; }
+/* Transparent cut-out photos (.webp) sit on the same dark ground as the older jpg shots. */
+.item-thumb[src$=".webp"], .modal-art img[src$=".webp"] { background:#24241f; object-fit:contain; }
 .item-copy { min-width:0; }
 .item-title-row { display:flex; align-items:center; gap:9px; }
 .item-copy h4 { margin:0; color:#2c2723; font-family:"Noto Serif JP",serif; font-size:17px; letter-spacing:-.04em; font-weight:600; }

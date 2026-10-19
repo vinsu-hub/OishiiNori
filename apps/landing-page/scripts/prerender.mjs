@@ -28,6 +28,8 @@ const SHOP_ADDRESS = {
 };
 const SHOP_GEO = { lat: 14.278476, lng: 121.4158777 };
 const SITE_URL = 'https://www.oishiinori.com';
+// Same rule as isAddonCategory in src/lib/menu.ts: add-ons stay off /our-menu.
+const ADDON_CATEGORY = /^add[\s-]?ons?$/i;
 const MAPS_URL = 'https://maps.app.goo.gl/9oACBZo6tUdzyabK7';
 // Blocked on the owner: fill these in and they flow into the Restaurant schema.
 // Keep them identical to the Google Business Profile (same phone format, same links).
@@ -171,7 +173,7 @@ function buildJsonLd({ hours, route, products, deliveryFees, pageMeta, dishPages
     ],
   });
   if (route === '/our-menu') {
-    const activeProducts = products.filter(product => product.active);
+    const activeProducts = products.filter(product => product.active && !ADDON_CATEGORY.test(product.category.trim()));
     const categories = [...new Set(activeProducts.map(product => product.category))];
     schemas.push(menuSchema('Oishii Nori Menu', `${SITE_URL}/our-menu`,
       categories.map(category => ({ name: category, items: activeProducts.filter(product => product.category === category) }))));
@@ -302,7 +304,7 @@ async function main() {
       { route: '/sushi', component: 'Sushi', initialData: { products } },
       { route: '/ramen', component: 'Ramen', initialData: { products } },
       { route: '/delivery', component: 'Delivery', initialData: { deliveryFees } },
-      { route: '/our-menu', component: 'OurMenu', initialData: { products } },
+      { route: '/our-menu', component: 'OurMenu', initialData: { products: products.filter(product => !ADDON_CATEGORY.test(product.category.trim())) } },
       { route: '/catering', component: 'Catering' },
       { route: '/about', component: 'About', initialData: { hours } },
       { route: '/events', component: 'Events', initialData: { events } },
