@@ -2616,6 +2616,11 @@ export function eraseTransaction(id: string, body: { override_key: string; reaso
   return request(`/transactions/${id}/erase`, { method: 'POST', body: JSON.stringify(body) });
 }
 
+/** Executive: permanently delete an online order and its kitchen ticket. */
+export function eraseOnlineOrder(id: string, body: { override_key: string; reason: string }): Promise<{ id: string; erased: boolean }> {
+  return request(`/digital-orders/${id}/erase`, { method: 'POST', body: JSON.stringify(body) });
+}
+
 // ---- Events on the website (migration 0078) ----
 
 export interface ApiEvent {

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Bike, RefreshCw, Search, ShoppingBag } from 'lucide-react';
+import { Bike, RefreshCw, Search, ShoppingBag, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { fetchOrderHistory, type OrderHistoryEntry } from '@/lib/api';
+import { eraseOnlineOrder, fetchOrderHistory, type OrderHistoryEntry } from '@/lib/api';
+import { useAuth } from '@/contexts/AuthContext';
+import { EraseOrderDialog } from '@/components/shared/EraseOrderDialog';
 import { orderHistoryDateIsoPH } from '@/lib/constants';
 import { formatCurrency, formatTimestamp12h } from '@/lib/utils';
 
@@ -29,7 +31,7 @@ function paymentLabel(order: OrderHistoryEntry): string | null {
   return order.payment_method === 'cash' ? 'Pay on delivery/pickup' : 'Proof sent';
 }
 
-function OnlineHistoryCard({ order }: { order: OrderHistoryEntry }) {
+function OnlineHistoryCard({ order, onDelete }: { order: OrderHistoryEntry; onDelete?: () => void }) {
   const delivery = order.labels.includes('Delivery');
   const status = statusLabel(order);
   const payment = paymentLabel(order);
@@ -95,6 +97,11 @@ function OnlineHistoryCard({ order }: { order: OrderHistoryEntry }) {
             </p>
           )}
         </details>
+        {onDelete && order.digital_order_id && (
+          <Button className="w-full min-h-10 gap-2 text-red-700 hover:text-red-800" variant="ghost" onClick={onDelete}>
+            <Trash2 className="h-4 w-4" aria-hidden /> Delete order (override)
+          </Button>
+        )}
       </CardContent>
     </Card>
   );
@@ -102,6 +109,9 @@ function OnlineHistoryCard({ order }: { order: OrderHistoryEntry }) {
 
 /** Online Orders → History: past website delivery/pickup orders for a day. */
 export function OnlineOrderHistory() {
+  const { user } = useAuth();
+  const isExecutive = user?.role === 'executive';
+  const [eraseTarget, setEraseTarget] = useState<OrderHistoryEntry | null>(null);
   const [date, setDate] = useState(orderHistoryDateIsoPH);
   const [orders, setOrders] = useState<OrderHistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -156,9 +166,26 @@ export function OnlineOrderHistory() {
         <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">No online orders on this date.</p>
       ) : (
         <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
-          {filtered.map((order) => <OnlineHistoryCard key={order.id} order={order} />)}
+          {filtered.map((order) => (
+            <OnlineHistoryCard key={order.id} order={order} onDelete={isExecutive ? () => setEraseTarget(order) : undefined} />
+          ))}
         </div>
       )}
+      <EraseOrderDialog
+        target={eraseTarget ? {
+          title: `Permanently delete Online #${eraseTarget.order_number ?? ''}?`,
+          description: `${formatCurrency(eraseTarget.total_due)} · ${eraseTarget.customer_name ?? ''}. The online order`
+            + (eraseTarget.transaction_id ? ' and its kitchen ticket are' : ' is')
+            + ' erased from the board, history and all reports. This can’t be undone.',
+        } : null}
+        onClose={() => setEraseTarget(null)}
+        onConfirm={async (body) => {
+          if (!eraseTarget?.digital_order_id) return;
+          await eraseOnlineOrder(eraseTarget.digital_order_id, body);
+          toast.success(`Online #${eraseTarget.order_number ?? ''} was permanently deleted`);
+          setOrders((previous) => previous.filter((row) => row.id !== eraseTarget.id));
+        }}
+      />
     </div>
   );
 }

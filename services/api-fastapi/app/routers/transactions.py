@@ -2097,7 +2097,12 @@ def erase_transaction(
     require_role(user, "executive")
     if not verify_override_key(user, body.override_key):
         raise HTTPException(status_code=403, detail="Override key is wrong, or you haven't set one yet (Settings)")
-    supabase = get_supabase()
+    return erase_transaction_core(get_supabase(), transaction_id, user, body.reason)
+
+
+def erase_transaction_core(supabase, transaction_id: str, user: CurrentUser, reason: str) -> dict:
+    """The erase itself, once the caller has checked role and override key.
+    Also used by the online-order erase (digital_menu.py)."""
     transaction = _fetch_transaction_with_items(supabase, transaction_id)
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -2114,7 +2119,7 @@ def erase_transaction(
         raise HTTPException(status_code=409, detail=getattr(exc, "message", None) or "Could not erase this order") from exc
     logger.warning("Order erased: #%s (%s) total %s by %s (%s). Reason: %s",
                    transaction.get("order_number"), transaction_id, transaction.get("total_amount"),
-                   user.full_name, user.id, body.reason)
+                   user.full_name, user.id, reason)
     return {"id": transaction_id, "erased": True}
 
 

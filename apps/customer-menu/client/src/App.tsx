@@ -3,6 +3,7 @@ import {
   ArrowRight,
   CheckCircle2,
   ChevronDown,
+  Copy,
   ChevronLeft,
   Coffee,
   Fish,
@@ -18,6 +19,7 @@ import {
   Sparkles,
   Truck,
   Users,
+  PackageSearch,
   Utensils,
   UtensilsCrossed,
   X,
@@ -41,7 +43,9 @@ import {
   fetchOrderStatus,
   fetchPaymentMethods,
   fetchRecipe,
+  lookupOrder,
   submitOrder,
+  type TrackingStage,
   QueuedOfflineError,
   uploadProofOfPayment,
 } from '@/lib/api';
@@ -50,6 +54,7 @@ import QueuedSubmissionView from '@/components/QueuedSubmissionView';
 import { isValidPhilippinePhone, PH_PHONE_HINT } from '@/lib/validators';
 import { useQueuedCompletion } from '@/hooks/useQueuedCompletion';
 import { startVisiblePolling } from '@/lib/polling';
+import { loadMyOrders, orderIdFromUrl, rememberMyOrder, setOrderInUrl } from '@/lib/myOrders';
 
 declare global {
   interface Window {
@@ -104,6 +109,9 @@ interface AddonLine {
 }
 
 const STATUS_POLL_MS = 10_000;
+// Once confirmed, the tracker refreshes less often until it's done.
+const TRACKING_POLL_MS = 20_000;
+const FINAL_STAGES: (TrackingStage | null | undefined)[] = ['completed', 'declined'];
 const SHOP_OPEN_POLL_MS = 120_000;
 
 export default function App() {
@@ -122,7 +130,7 @@ export default function App() {
   );
   const [scheduledLocal, setScheduledLocal] = useState('');
   const [scheduleError, setScheduleError] = useState('');
-  const [landingMode, setLandingMode] = useState<'choice' | 'reserve' | 'order-channel'>(() => {
+  const [landingMode, setLandingMode] = useState<'choice' | 'reserve' | 'order-channel' | 'track'>(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get('reserve') === '1') return 'reserve';
     return params.get('advance') === '1' ? 'order-channel' : 'choice';
@@ -290,14 +298,66 @@ export default function App() {
       .finally(() => setLoadingMenu(false));
   }, []);
 
+  // Track my order: keep the order reachable after a reload (address bar
+  // link + this device's recent orders) and follow it until it's done.
+  const orderId = order?.id;
+  const orderStage = order?.tracking_stage;
   useEffect(() => {
-    if (!order || order.status !== 'pending') return;
+    if (!order || order.order_channel === 'dine_in_qr') return;
+    rememberMyOrder(order);
+    setOrderInUrl(order.id);
+  }, [orderId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!orderId || order?.status === 'rejected' || FINAL_STAGES.includes(orderStage)) return;
     return startVisiblePolling(() => {
-      fetchOrderStatus(order.id)
+      fetchOrderStatus(orderId)
         .then(setOrder)
         .catch(() => {});
-    }, STATUS_POLL_MS);
-  }, [order]);
+    }, order?.status === 'pending' ? STATUS_POLL_MS : TRACKING_POLL_MS);
+  }, [orderId, orderStage, order?.status]);
+
+  const [trackBusy, setTrackBusy] = useState(false);
+  const [trackNumber, setTrackNumber] = useState('');
+  const [trackPhone, setTrackPhone] = useState('');
+
+  async function openTrackedOrder(id: string) {
+    setTrackBusy(true);
+    try {
+      const tracked = await fetchOrderStatus(id);
+      if (tracked.order_channel === 'dine_in_qr') throw new Error('Table orders are tracked by staff at your table.');
+      setOrderChannel(tracked.order_channel);
+      setOrder(tracked);
+    } catch (e) {
+      setOrderInUrl(null);
+      toast(e instanceof Error ? e.message : 'Could not open that order', 'error');
+    } finally {
+      setTrackBusy(false);
+    }
+  }
+
+  async function findOrder(e: React.FormEvent) {
+    e.preventDefault();
+    const number = parseInt(trackNumber.replace(/\D/g, ''), 10);
+    if (!Number.isFinite(number) || !trackPhone.trim()) {
+      toast('Enter your order number and the phone number you ordered with.', 'error');
+      return;
+    }
+    setTrackBusy(true);
+    try {
+      const found = await lookupOrder(number, trackPhone.trim());
+      await openTrackedOrder(found.id);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'No order found', 'error');
+      setTrackBusy(false);
+    }
+  }
+
+  // A ?order=<id> link (reload, bookmark, shared) opens the tracker directly.
+  useEffect(() => {
+    const id = orderIdFromUrl();
+    if (id && !tableNumber) void openTrackedOrder(id);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sizeIndex = useMemo(() => {
     const map = new Map<string, { product: ApiProduct; size: ApiProductSize }>();
@@ -582,6 +642,7 @@ export default function App() {
 
   function startNewOrder() {
     setOrder(null);
+    setOrderInUrl(null);
     setPaymentMethod(null);
     setSelectedOnlineMethod(null);
     setCheckoutStage('form');
@@ -598,6 +659,47 @@ export default function App() {
   if (!effectiveChannel) {
     if (landingMode === 'reserve') {
       return <ReservationView onBack={() => setLandingMode('choice')} />;
+    }
+    if (landingMode === 'track') {
+      const mine = loadMyOrders();
+      return (
+        <div className="min-h-screen flex items-center justify-center p-4">
+          <div className="item-modal" style={{ position: 'static', maxWidth: 380 }}>
+            <div className="modal-body" style={{ textAlign: 'center' }}>
+              <img src="/logo.jpg" alt="Oishii Nori" className="brand-logo" style={{ width: 64, height: 64, margin: '0 auto 14px' }} />
+              <p className="brand-kicker">TRACK MY ORDER · 注文状況</p>
+              <h2>Where's my order?</h2>
+              {mine.length > 0 && (
+                <div className="track-list">
+                  <p>Your recent orders on this phone:</p>
+                  {mine.map((o) => (
+                    <button key={o.id} className="primary-button" type="button" style={{ width: '100%', marginTop: 8 }} disabled={trackBusy} onClick={() => openTrackedOrder(o.id)}>
+                      Order #{o.order_number} · {new Date(o.created_at).toLocaleString('en-PH', { weekday: 'short', hour: 'numeric', minute: '2-digit' })} <ArrowRight size={16} />
+                    </button>
+                  ))}
+                </div>
+              )}
+              <form className="track-form" onSubmit={findOrder}>
+                <p>{mine.length > 0 ? 'Ordered on another phone?' : 'Enter the order number from your ticket and the phone number you ordered with.'}</p>
+                <label>
+                  Order number
+                  <input inputMode="numeric" placeholder="e.g. 73" value={trackNumber} onChange={(e) => setTrackNumber(e.target.value)} />
+                </label>
+                <label>
+                  Phone number
+                  <input type="tel" inputMode="tel" placeholder="09XX XXX XXXX" value={trackPhone} onChange={(e) => setTrackPhone(e.target.value)} />
+                </label>
+                <button className="primary-button" type="submit" style={{ width: '100%', marginTop: 4 }} disabled={trackBusy}>
+                  {trackBusy ? <Loader2 size={16} className="animate-spin" /> : <PackageSearch size={16} />} Find my order
+                </button>
+              </form>
+              <button className="ghost-button" type="button" style={{ width: '100%', marginTop: 10 }} onClick={() => setLandingMode('choice')}>
+                Back
+              </button>
+            </div>
+          </div>
+        </div>
+      );
     }
     if (landingMode === 'order-channel') {
       return (
@@ -674,6 +776,19 @@ export default function App() {
               onClick={() => setLandingMode('reserve')}
             >
               Reserve a Table <ArrowRight size={16} />
+            </button>
+            <button
+              className="ghost-button"
+              type="button"
+              style={{ width: '100%', marginTop: 10 }}
+              onClick={() => {
+                const mine = loadMyOrders();
+                if (mine.length === 1) void openTrackedOrder(mine[0].id);
+                else setLandingMode('track');
+              }}
+              disabled={trackBusy}
+            >
+              <PackageSearch size={16} /> Track my order
             </button>
           </div>
         </div>
@@ -1610,6 +1725,62 @@ function ItemModal({
   );
 }
 
+const TRACK_STEPS: { key: TrackingStage; label: string; pickupLabel?: string }[] = [
+  { key: 'in_queue', label: 'In queue' },
+  { key: 'preparing', label: 'Preparing' },
+  { key: 'out_for_delivery', label: 'Out for delivery', pickupLabel: 'Ready for pickup' },
+  { key: 'completed', label: 'Completed' },
+];
+
+function OrderTracker({ order }: { order: DigitalOrderStatus }) {
+  const pickup = order.order_channel === 'pickup';
+  const stage = order.tracking_stage === 'ready_for_pickup' ? 'out_for_delivery' : order.tracking_stage ?? 'in_queue';
+  const current = Math.max(0, TRACK_STEPS.findIndex((s) => s.key === stage));
+  const message: Record<string, string> = {
+    in_queue: order.scheduled_for ? "Confirmed! We'll start it before your scheduled time." : "Confirmed! You're in the kitchen queue.",
+    preparing: 'Our kitchen is preparing your order.',
+    out_for_delivery: 'Your order is on its way with our rider.',
+    ready_for_pickup: 'Your order is ready -- see you at the counter!',
+    completed: pickup ? 'Picked up. Enjoy your meal!' : 'Delivered. Enjoy your meal!',
+  };
+  return (
+    <div className="order-tracker" role="status" aria-live="polite">
+      <ol>
+        {TRACK_STEPS.map((step, index) => (
+          <li key={step.key} className={index < current ? 'done' : index === current ? 'current' : ''}>
+            <span className="tracker-dot" aria-hidden="true">{index < current || stage === 'completed' ? '✓' : index + 1}</span>
+            <span>{pickup && step.pickupLabel ? step.pickupLabel : step.label}</span>
+          </li>
+        ))}
+      </ol>
+      <p>{message[order.tracking_stage ?? 'in_queue']}</p>
+      {order.pos_order_number != null && <p className="tracker-ticket">Kitchen ticket #{order.pos_order_number}</p>}
+    </div>
+  );
+}
+
+function TrackLinkNote({ orderId }: { orderId: string }) {
+  const [copied, setCopied] = useState(false);
+  const link = `${window.location.origin}${window.location.pathname}?order=${orderId}`;
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      window.prompt('Copy your order link:', link);
+    }
+  }
+  return (
+    <div className="track-link-note">
+      <p>Bookmark this page or save the link to check your order anytime. You can also tap <strong>Track my order</strong> on our ordering page.</p>
+      <button className="ghost-button" type="button" onClick={copy}>
+        <Copy size={14} /> {copied ? 'Link copied!' : 'Copy order link'}
+      </button>
+    </div>
+  );
+}
+
 function OrderStatusView({
   order,
   onNewOrder,
@@ -1648,6 +1819,8 @@ function OrderStatusView({
             </div>
             <span className="receipt-status">{statusLabel}</span>
           </div>
+
+          {order.status === 'approved' && order.order_channel !== 'dine_in_qr' && <OrderTracker order={order} />}
 
           <div className="receipt-items">
             {order.items.map((item) => {
@@ -1701,9 +1874,10 @@ function OrderStatusView({
           {order.status === 'pending' && (
             <p className="review-confirmation">Sit tight -- staff are confirming your order and payment. This updates automatically.</p>
           )}
-          {order.status === 'approved' && (
+          {order.status === 'approved' && order.order_channel === 'dine_in_qr' && (
             <p className="review-confirmation">Thank you! Your order is being prepared.</p>
           )}
+          {order.order_channel !== 'dine_in_qr' && order.status !== 'rejected' && <TrackLinkNote orderId={order.id} />}
           {order.status === 'rejected' && (
             <>
               <p className="review-confirmation" style={{ color: '#a51f26' }}>

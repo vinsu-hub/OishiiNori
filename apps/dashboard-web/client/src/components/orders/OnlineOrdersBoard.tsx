@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Banknote, Bike, CalendarClock, Gift, PackageCheck, ShoppingBag } from 'lucide-react';
+import { Banknote, Bike, CalendarClock, Gift, PackageCheck, ShoppingBag, Trash2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -22,6 +22,7 @@ import {
   fetchBusinessSettings,
   fetchDigitalBoard,
   completeOnlineOrder,
+  eraseOnlineOrder,
   fetchTransaction,
   rejectDigitalOrder,
 } from '@/lib/api';
@@ -36,6 +37,7 @@ import {
   type ReceiptBusiness,
   type ReceiptData,
 } from '@/components/pos/Receipt';
+import { EraseOrderDialog } from '@/components/shared/EraseOrderDialog';
 
 const STAGES: { key: DigitalBoardStage; label: string }[] = [
   { key: 'pending', label: 'Pending' },
@@ -91,6 +93,9 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
   const [receipt, setReceipt] = useState<ReceiptData | null>(null);
   const [business, setBusiness] = useState<ReceiptBusiness | null>(null);
   const [completeTarget, setCompleteTarget] = useState<ApiDigitalOrder | null>(null);
+  // Executive override: permanently delete test or duplicate orders.
+  const isExecutive = user?.role === 'executive';
+  const [eraseTarget, setEraseTarget] = useState<ApiDigitalOrder | null>(null);
   const [cashReceived, setCashReceived] = useState('');
 
   useEffect(() => {
@@ -342,6 +347,15 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
                         : <><PackageCheck className="h-4 w-4" aria-hidden /> Complete order</>}
                     </Button>
                   )}
+                  {isExecutive && (
+                    <Button
+                      className="w-full min-h-10 gap-2 text-red-700 hover:text-red-800"
+                      variant="ghost"
+                      onClick={() => setEraseTarget(order)}
+                    >
+                      <Trash2 className="h-4 w-4" aria-hidden /> Delete order (override)
+                    </Button>
+                  )}
                 </CardContent>
               </Card>
             );
@@ -508,6 +522,24 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
           )}
         </DialogContent>
       </Dialog>
+
+      <EraseOrderDialog
+        target={eraseTarget ? {
+          title: `Permanently delete ${orderNumber(eraseTarget)}?`,
+          description: `${formatCurrency(orderTotal(eraseTarget))} · ${eraseTarget.delivery?.customer_name ?? ''}. The online order`
+            + (eraseTarget.transaction_id ? ' and its kitchen ticket are' : ' is')
+            + ' erased from the board, history and all reports'
+            + (eraseTarget.transaction_id ? ', and its stock is returned' : '') + '. This can’t be undone.',
+        } : null}
+        onClose={() => setEraseTarget(null)}
+        onConfirm={async (body) => {
+          if (!eraseTarget) return;
+          await eraseOnlineOrder(eraseTarget.id, body);
+          toast.success(`${orderNumber(eraseTarget)} was permanently deleted`);
+          setOrders((previous) => previous.filter((row) => row.id !== eraseTarget.id));
+          load();
+        }}
+      />
 
       <ReceiptDialog
         receipt={receipt}

@@ -610,6 +610,14 @@ class DigitalOrderStatusResponse(BaseModel):
     addons: list[DigitalOrderAddonResponse] = Field(default_factory=list)
     delivery: DeliveryDetailOut | None = None
     scheduled_for: datetime | None = None
+    # Customer-facing progress (see digital_menu.tracking_stage) and the
+    # kitchen ticket number once the order is in the kitchen.
+    tracking_stage: str | None = None
+    pos_order_number: int | None = None
+
+
+class OrderLookupOut(BaseModel):
+    id: str
 
 
 class RejectDigitalOrderRequest(BaseModel):

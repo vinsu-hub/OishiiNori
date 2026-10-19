@@ -176,7 +176,18 @@ export interface DigitalOrderStatusDelivery {
   landmark: string | null;
   barangay: string | null;
   delivery_fee: number | null;
+  delivered_at?: string | null;
 }
+
+/** Customer-facing progress from GET /public/orders/{id}. */
+export type TrackingStage =
+  | 'waiting'
+  | 'in_queue'
+  | 'preparing'
+  | 'out_for_delivery'
+  | 'ready_for_pickup'
+  | 'completed'
+  | 'declined';
 
 export interface DigitalOrderStatus {
   id: string;
@@ -193,6 +204,8 @@ export interface DigitalOrderStatus {
   addons: DigitalOrderStatusAddon[];
   delivery: DigitalOrderStatusDelivery | null;
   scheduled_for?: string | null;
+  tracking_stage?: TrackingStage | null;
+  pos_order_number?: number | null;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -271,6 +284,12 @@ export async function submitOrder(payload: SubmitOrderPayload): Promise<DigitalO
 
 export function fetchOrderStatus(orderId: string): Promise<DigitalOrderStatus> {
   return request(`/public/orders/${orderId}`);
+}
+
+/** "Track my order" when the link is lost: order number + phone on the order. */
+export function lookupOrder(orderNumber: number, phone: string): Promise<{ id: string }> {
+  const params = new URLSearchParams({ order_number: String(orderNumber), phone });
+  return request(`/public/orders/lookup?${params}`);
 }
 
 // No session on this device (see file header) -- unlike dashboard-web's

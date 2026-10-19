@@ -439,6 +439,24 @@
   .tv-content, .tv-display::before, .tv-serving .tv-order-number.is-newly-ready { animation:none; }
 }
 
+.order-tracker { margin:16px 0 4px; padding:14px; border:1px solid #f0c9c3; background:#fff4f1; border-radius:12px; }
+.order-tracker ol { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(4, 1fr); gap:6px; }
+.order-tracker li { display:flex; flex-direction:column; align-items:center; gap:6px; text-align:center; font-size:11px; line-height:1.25; color:#a49b90; position:relative; }
+.order-tracker li:not(:last-child)::after { content:""; position:absolute; top:13px; left:calc(50% + 16px); right:calc(-50% + 16px); height:2px; background:#ecdcd6; }
+.order-tracker li.done:not(:last-child)::after { background:#c92b2b; }
+.order-tracker li.done, .order-tracker li.current { color:#3b3632; font-weight:700; }
+.tracker-dot { width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; background:#fff; border:2px solid #ecdcd6; color:#a49b90; }
+.order-tracker li.done .tracker-dot { background:#c92b2b; border-color:#c92b2b; color:#fff; }
+.order-tracker li.current .tracker-dot { border-color:#c92b2b; color:#c92b2b; box-shadow:0 0 0 4px rgba(201,43,43,.12); }
+.order-tracker p { margin:12px 0 0; text-align:center; font-size:14px; color:#3b3632; }
+.order-tracker .tracker-ticket { margin-top:4px; font-size:12px; color:#9a4b45; font-weight:700; letter-spacing:.04em; }
+.track-link-note { margin-top:14px; padding-top:12px; border-top:1px dashed #d9cfc3; font-size:13px; color:#5c554d; }
+.track-link-note p { margin:0 0 8px; }
+.track-list { margin-top:8px; text-align:left; }
+.track-list p, .track-form p { margin:14px 0 4px; font-size:13px; color:#5c554d; }
+.track-form { display:grid; gap:10px; margin-top:6px; text-align:left; }
+.track-form label { display:grid; gap:4px; font-size:12px; font-weight:700; color:#5c554d; }
+.track-form input { min-height:44px; padding:0 12px; border:1px solid #d9cfc3; border-radius:10px; background:#fff; font-size:16px; }
 .order-receipt { margin-top:18px; padding:18px 16px; border:1px solid #d9cfc3; background:#fffdf8; box-shadow:0 10px 24px rgba(76,54,37,.08); position:relative; }
 .order-receipt::before, .order-receipt::after { content:""; position:absolute; left:0; right:0; height:5px; background:linear-gradient(135deg, transparent 0 8%, #fffdf8 8% 16%, transparent 16% 24%) repeat-x; background-size:18px 5px; }
 .order-receipt::before { top:-5px; transform:rotate(180deg); }

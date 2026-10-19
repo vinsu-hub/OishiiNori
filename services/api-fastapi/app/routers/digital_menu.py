@@ -19,6 +19,8 @@ concepts, not wired into recipe/ingredient deduction -- see migration
 """
 
 import json
+import logging
+import re
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -28,7 +30,7 @@ from pydantic import TypeAdapter
 from postgrest.exceptions import APIError
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 
-from app.auth import CurrentUser, get_current_user
+from app.auth import CurrentUser, get_current_user, require_role, verify_override_key
 from app.deps import get_supabase
 from app.ph_time import ph_day_bounds_utc, today_ph
 from app.idempotency import check_idempotency_key, record_idempotency_key
@@ -38,8 +40,8 @@ from app.routers.products import _list_products_data
 from app.routers.recipes import _get_recipe_data
 from app.routers.reservations import ADVANCE_ORDER_LEAD_MINUTES
 from app.routers.transactions import (
-    _create_transaction_row, _get_vat_rate, close_transaction, live_cache_get, live_cache_put,
-    live_cache_version, settle_payment,
+    EraseTransactionRequest, _create_transaction_row, _get_vat_rate, close_transaction, erase_transaction_core,
+    live_cache_get, live_cache_put, live_cache_version, settle_payment,
 )
 from app.schemas import (
     BoatDepositReturnRequest,
@@ -48,6 +50,7 @@ from app.schemas import (
     DigitalOrderResponse,
     DigitalOrderStatusResponse,
     FirstOrderPromoOut,
+    OrderLookupOut,
     QueueDisplayOut,
     MenuAddonOut,
     ProductOut,
@@ -58,6 +61,7 @@ from app.schemas import (
 )
 
 router = APIRouter(tags=["digital-menu"])
+logger = logging.getLogger(__name__)
 
 
 def _fetch_digital_order(supabase, order_id: str) -> dict | None:
@@ -250,7 +254,7 @@ def submit_digital_order(body: CreateDigitalOrderRequest, request: Request):
     enforce_rate_limit(supabase, f"order-submit:{client_ip(request)}", window_seconds=60, limit=20)
     existing_id = check_idempotency_key(supabase, body.idempotency_key, "POST /public/orders")
     if existing_id:
-        return _fetch_digital_order(supabase, existing_id)
+        return _customer_order(supabase, existing_id)
 
     if not body.items:
         raise HTTPException(status_code=400, detail="Order must have at least one item")
@@ -445,7 +449,7 @@ def submit_digital_order(body: CreateDigitalOrderRequest, request: Request):
         _claim_first_order_promo(supabase, order["id"], subtotal)
 
     record_idempotency_key(supabase, body.idempotency_key, "POST /public/orders", order["id"])
-    return _fetch_digital_order(supabase, order["id"])
+    return _customer_order(supabase, order["id"])
 
 
 MAX_PENDING_ORDERS_PER_PHONE = 3
@@ -536,17 +540,81 @@ async def upload_proof_of_payment(order_id: str, request: Request, file: UploadF
     public_url = supabase.storage.from_(PROOF_STORAGE_BUCKET).get_public_url(storage_path)
 
     supabase.table("digital_orders").update({"payment_proof_url": public_url}).eq("id", order_id).execute()
-    return _fetch_digital_order(supabase, order_id)
+    return _customer_order(supabase, order_id)
+
+
+ORDER_LOOKUP_DAYS = 3
+
+
+@router.get("/public/orders/lookup", response_model=OrderLookupOut)
+def public_order_lookup(order_number: int, phone: str, request: Request):
+    """"Track my order" for a customer who lost the link: the order number
+    plus the phone on the order, for orders from the last few days."""
+    local_rate_limit(f"order-lookup:{client_ip(request)}", limit=10, window_seconds=60)
+    supabase = get_supabase()
+    enforce_rate_limit(supabase, f"order-lookup:{client_ip(request)}", window_seconds=600, limit=20)
+    not_found = HTTPException(status_code=404, detail="No order found with that number and phone")
+    digits = re.sub(r"\D", "", phone)[-10:]
+    if len(digits) < 10:
+        raise not_found
+    since = (datetime.now(timezone.utc) - timedelta(days=ORDER_LOOKUP_DAYS)).isoformat()
+    rows = (supabase.table("digital_orders").select("id").eq("order_number", order_number)
+            .neq("order_channel", "dine_in_qr").gte("created_at", since).limit(1).execute().data)
+    if not rows:
+        raise not_found
+    delivery = (supabase.table("deliveries").select("customer_phone")
+                .eq("digital_order_id", rows[0]["id"]).limit(1).execute().data)
+    if not delivery or re.sub(r"\D", "", delivery[0]["customer_phone"] or "")[-10:] != digits:
+        raise not_found
+    return {"id": rows[0]["id"]}
 
 
 @router.get("/public/orders/{order_id}", response_model=DigitalOrderStatusResponse)
 def public_order_status(order_id: str, request: Request):
-    # The customer's page polls this every 10 s while pending.
+    # The customer's page polls this while the order is in progress.
     local_rate_limit(f"order-status:{client_ip(request)}", limit=30, window_seconds=60)
-    order = _fetch_digital_order(get_supabase(), order_id)
+    order = _customer_order(get_supabase(), order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     return order
+
+
+def _customer_order(supabase, order_id: str) -> dict | None:
+    """The order as its customer sees it: progress added, staff-only delivery
+    details (rider payout, rider id) removed."""
+    order = _fetch_digital_order(supabase, order_id)
+    if not order:
+        return None
+    tx = None
+    if order.get("transaction_id"):
+        rows = (supabase.table("transactions").select("order_number, status, kitchen_status")
+                .eq("id", order["transaction_id"]).limit(1).execute().data)
+        tx = rows[0] if rows else None
+    order["tracking_stage"] = tracking_stage(order, tx)
+    order["pos_order_number"] = (tx or {}).get("order_number")
+    if order.get("delivery"):
+        order["delivery"] = {**order["delivery"], "rider_payout": None, "rider_id": None}
+    return order
+
+
+def tracking_stage(order: dict, tx: dict | None) -> str:
+    """Customer-facing progress: waiting → in_queue → preparing →
+    out_for_delivery / ready_for_pickup → completed, or declined."""
+    if order["status"] == "pending":
+        return "waiting"
+    if order["status"] != "approved" or (tx or {}).get("status") == "voided":
+        return "declined"
+    if tx is None:
+        return "in_queue"  # confirmed advance order, not in the kitchen yet
+    delivery = order.get("order_channel") == "delivery"
+    if tx.get("status") == "closed" or (delivery and (order.get("delivery") or {}).get("delivered_at")):
+        return "completed"
+    kitchen = tx.get("kitchen_status")
+    if kitchen == "preparing":
+        return "preparing"
+    if delivery:
+        return "out_for_delivery" if kitchen == "completed" else ("preparing" if kitchen == "ready" else "in_queue")
+    return "ready_for_pickup" if kitchen in ("ready", "completed") else "in_queue"
 
 
 # ---------------------------------------------------------------------------
@@ -695,6 +763,41 @@ def complete_digital_order(order_id: str, user: CurrentUser = Depends(get_curren
             if exc.status_code != 409:  # 409: closed meanwhile
                 raise
     return {"id": order_id, "stage": "completed"}
+
+
+@router.post("/digital-orders/{order_id}/erase")
+def erase_digital_order(order_id: str, body: EraseTransactionRequest, user: CurrentUser = Depends(get_current_user)):
+    """Executive-only permanent delete of an online order (tests, duplicates),
+    guarded by the caller's override key. Its kitchen ticket is erased first
+    (stock returned); items, add-ons, delivery and the promo claim cascade."""
+    require_role(user, "executive")
+    if not verify_override_key(user, body.override_key):
+        raise HTTPException(status_code=403, detail="Override key is wrong, or you haven't set one yet (Settings)")
+    supabase = get_supabase()
+    rows = (supabase.table("digital_orders").select("id, order_number, transaction_id")
+            .eq("id", order_id).limit(1).execute().data)
+    if not rows:
+        raise HTTPException(status_code=404, detail="Online order not found")
+    order = rows[0]
+    deposits = (supabase.table("sushi_boat_deposits").select("id, collected_at, handoff_at, returned_at")
+                .eq("digital_order_id", order_id).execute().data or [])
+    if any(d.get("collected_at") or d.get("handoff_at") or d.get("returned_at") for d in deposits):
+        raise HTTPException(status_code=409, detail="A Sushi Boat deposit on this order was already handled, so it can't be deleted")
+    if order.get("transaction_id"):
+        erase_transaction_core(supabase, order["transaction_id"], user, body.reason)
+    if deposits:
+        supabase.table("sushi_boat_deposits").delete().eq("digital_order_id", order_id).execute()
+    supabase.table("digital_orders").delete().eq("id", order_id).execute()
+    try:
+        bucket = supabase.storage.from_(PROOF_STORAGE_BUCKET)
+        files = bucket.list(order_id) or []
+        if files:
+            bucket.remove([f"{order_id}/{f['name']}" for f in files])
+    except Exception:  # noqa: BLE001 -- a leftover proof image isn't worth failing the delete
+        pass
+    logger.warning("Online order erased: Online #%s (%s) by %s (%s). Reason: %s",
+                   order.get("order_number"), order_id, user.full_name, user.id, body.reason)
+    return {"id": order_id, "erased": True}
 
 
 def _list_digital_orders(status: str | None, limit: int) -> list[dict]:
