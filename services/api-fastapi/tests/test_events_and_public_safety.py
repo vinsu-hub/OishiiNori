@@ -105,3 +105,15 @@ class PublicSafetyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PublicMenuTests(unittest.TestCase):
+    def test_pos_only_categories_hidden(self):
+        products = [{"name": "Gyudon", "category": "Donburi"}, {"name": "Photo", "category": "Dine"},
+                    {"name": "Bowl", "category": "Packaging "}]
+        digital_menu._public_cache.clear()
+        with patch.object(digital_menu, "_list_products_data", return_value=products), \
+                patch.object(digital_menu, "get_supabase"):
+            shown = digital_menu.public_menu(MagicMock(headers={}))
+        digital_menu._public_cache.clear()
+        self.assertEqual([p["name"] for p in shown], ["Gyudon"])

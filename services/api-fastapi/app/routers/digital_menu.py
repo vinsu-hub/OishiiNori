@@ -118,15 +118,19 @@ def _cached_public(key: str, build):
     return _public_cache[key]
 
 
+# POS-only categories: cash-register line items, not customer-facing dishes.
+# "Packaging" is sold containers; "Dine" is in-store services (the ₱100 Photo).
+POS_ONLY_CATEGORIES = {"packaging", "dine"}
+
+
 @router.get("/public/menu", response_model=list[ProductOut])
 def public_menu(response: Response):
-    # POS packaging SKUs are cash-register line items, not customer-facing
-    # dishes. Keep the shared product catalog for the POS but hide these
-    # sales-only containers from the online ordering menu.
+    # Keep the shared product catalog for the POS but hide POS-only items
+    # from the online ordering menu and the website.
     public_cache(response, MENU_CACHE_SECONDS)
     return _cached_public("menu", lambda: [
         product for product in _list_products_data(get_supabase(), active_only=True, department=None)
-        if product["category"].casefold() != "packaging"
+        if product["category"].strip().casefold() not in POS_ONLY_CATEGORIES
     ])
 
 
