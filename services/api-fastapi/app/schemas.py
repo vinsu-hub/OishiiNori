@@ -1359,6 +1359,9 @@ class ChangeOwnPasswordRequest(BaseModel):
     # Required for a normal change from Settings; not needed for the forced
     # first-login change (the user has just signed in with the temp password).
     current_password: str | None = Field(default=None, max_length=72)
+    # First-login only: the new staff member's own name (placeholder accounts
+    # like the driver sign-up account are created as "New Driver").
+    full_name: str | None = Field(default=None, max_length=120)
 
 
 class SetPinRequest(BaseModel):

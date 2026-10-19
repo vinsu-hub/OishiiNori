@@ -9,7 +9,7 @@ interface AuthContextType {
   logout: () => void;
   loading: boolean;
   /** Call after POST /me/change-password succeeds. */
-  markPasswordChanged: () => void;
+  markPasswordChanged: (name?: string) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -109,7 +109,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         login,
         logout,
         loading,
-        markPasswordChanged: () => setUser((u) => (u ? { ...u, mustChangePassword: false } : u)),
+        markPasswordChanged: (name?: string) => setUser((u) => (u ? { ...u, mustChangePassword: false, name: name || u.name } : u)),
       }}
     >
       {children}

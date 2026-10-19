@@ -1419,10 +1419,10 @@ export function resetEmployeePassword(employeeId: string): Promise<{ temporary_p
 
 /** currentPassword is required for a normal change from Settings; the forced
  * first-login change (still on a temporary password) omits it. */
-export function changeOwnPassword(newPassword: string, currentPassword?: string): Promise<{ status: string }> {
+export function changeOwnPassword(newPassword: string, currentPassword?: string, fullName?: string): Promise<{ status: string }> {
   return request('/me/change-password', {
     method: 'POST',
-    body: JSON.stringify({ new_password: newPassword, current_password: currentPassword ?? null }),
+    body: JSON.stringify({ new_password: newPassword, current_password: currentPassword ?? null, full_name: fullName ?? null }),
   });
 }
 

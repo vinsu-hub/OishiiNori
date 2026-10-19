@@ -9,27 +9,33 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 const MIN_LENGTH = 8;
+// Shared sign-up accounts (e.g. driver@oishiinori.com) start with this name.
+const PLACEHOLDER_NAMES = new Set(['new driver', 'new rider', 'new staff']);
 
 /** Shown instead of every dashboard page while the signed-in account is
  * still on its one-time temporary password (profiles.must_change_password). */
 export function ChangePasswordScreen() {
   const { user, logout, markPasswordChanged } = useAuth();
+  const placeholderName = PLACEHOLDER_NAMES.has((user?.name ?? '').trim().toLowerCase());
+  const [fullName, setFullName] = useState(placeholderName ? '' : user?.name ?? '');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [saving, setSaving] = useState(false);
 
   const tooShort = password.length > 0 && password.length < MIN_LENGTH;
   const mismatch = confirm.length > 0 && confirm !== password;
-  const canSubmit = password.length >= MIN_LENGTH && confirm === password && !saving;
+  const nameOk = fullName.trim().split(/\s+/).join(' ').length >= 2;
+  const canSubmit = nameOk && password.length >= MIN_LENGTH && confirm === password && !saving;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
     setSaving(true);
     try {
-      await changeOwnPassword(password);
-      toast.success('Password updated -- use it next time you sign in.');
-      markPasswordChanged();
+      const name = fullName.trim().split(/\s+/).join(' ');
+      await changeOwnPassword(password, undefined, name);
+      toast.success('All set -- use your new password next time you sign in.');
+      markPasswordChanged(name);
     } catch (err) {
       toast.error(apiErrorDetail(err, 'Could not update your password'));
     } finally {
@@ -43,14 +49,26 @@ export function ChangePasswordScreen() {
         <CardHeader>
           <KeyRound className="mx-auto mb-2 h-10 w-10 text-primary" aria-hidden="true" />
           <CardTitle className="font-corp-display text-2xl text-center">
-            Welcome{user?.name ? `, ${user.name.split(' ')[0]}` : ''}
+            Welcome{user?.name && !placeholderName ? `, ${user.name.split(' ')[0]}` : ''}
           </CardTitle>
           <CardDescription className="text-center">
-            You signed in with a temporary password. Set your own password to continue.
+            You signed in with a temporary password. {placeholderName ? 'Enter your name and set' : 'Set'} your own password to continue.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="full-name">Your full name</Label>
+              <Input
+                id="full-name"
+                autoComplete="name"
+                required
+                maxLength={120}
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="e.g. Juan Dela Cruz"
+              />
+            </div>
             <div className="space-y-2">
               <Label htmlFor="new-password">New password</Label>
               <Input

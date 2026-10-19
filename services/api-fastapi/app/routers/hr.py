@@ -910,6 +910,9 @@ def change_own_password(body: ChangeOwnPasswordRequest, user: CurrentUser = Depe
         raise HTTPException(status_code=400, detail="Choose a new password -- not the temporary one you were given")
     if new_password.strip() != new_password or len(new_password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters, with no leading or trailing spaces")
+    full_name = " ".join((body.full_name or "").split())
+    if forced and body.full_name is not None and len(full_name) < 2:
+        raise HTTPException(status_code=400, detail="Enter your full name")
 
     supabase.auth.admin.update_user_by_id(user.id, {"password": new_password})
     update: dict = {}
@@ -917,6 +920,8 @@ def change_own_password(body: ChangeOwnPasswordRequest, user: CurrentUser = Depe
         update["current_password"] = None
     if _profile_must_change_supported_check(supabase):
         update["must_change_password"] = False
+    if forced and full_name:
+        update["full_name"] = full_name
     if update:
         supabase.table("profiles").update(update).eq("id", user.id).execute()
     return {"status": "ok"}

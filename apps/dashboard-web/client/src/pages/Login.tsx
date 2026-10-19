@@ -11,7 +11,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 export default function Login() {
   const { login, isAuthenticated } = useAuth();
   const [, navigate] = useLocation();
-  const [email, setEmail] = useState('');
+  // ?login=driver@oishiinori.com: a sign-up link fills in the account.
+  const [email, setEmail] = useState(() => new URLSearchParams(window.location.search).get('login') ?? '');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
