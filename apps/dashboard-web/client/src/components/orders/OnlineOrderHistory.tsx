@@ -15,18 +15,30 @@ function statusLabel(order: OrderHistoryEntry): string {
   if (order.voided_at || order.status === 'voided') return 'Voided';
   if (order.closed_at) return 'Completed';
   if (order.delivered_at) return 'Delivered';
-  return 'In progress';
+  const delivery = order.labels.includes('Delivery');
+  if (order.kitchen_status === 'completed') return delivery ? 'With the rider' : 'Picked up';
+  if (order.kitchen_status === 'ready') return delivery ? 'Ready for rider' : 'Ready for pickup';
+  if (order.kitchen_status) return 'In the kitchen';
+  return 'Confirmed · scheduled';
+}
+
+function paymentLabel(order: OrderHistoryEntry): string | null {
+  if (order.approval_status === 'rejected') return null;
+  if (order.payment_status === 'paid') return 'Paid';
+  if (order.payment_status === 'unpaid') return 'Unpaid';
+  return order.payment_method === 'cash' ? 'Pay on delivery/pickup' : 'Proof sent';
 }
 
 function OnlineHistoryCard({ order }: { order: OrderHistoryEntry }) {
   const delivery = order.labels.includes('Delivery');
   const status = statusLabel(order);
+  const payment = paymentLabel(order);
   return (
     <Card>
       <CardContent className="space-y-2 py-4 text-sm">
         <div className="flex items-start justify-between gap-2">
           <div>
-            <p className="text-base font-bold">{order.order_number != null ? `#${order.order_number}` : 'Online order'}</p>
+            <p className="text-base font-bold">{order.order_number != null ? `Online #${order.order_number}` : 'Online order'}</p>
             <p className="text-xs text-muted-foreground">{formatTimestamp12h(order.placed_at)}</p>
           </div>
           <p className="text-lg font-bold">{formatCurrency(order.total_due)}</p>
@@ -37,9 +49,11 @@ function OnlineHistoryCard({ order }: { order: OrderHistoryEntry }) {
             {delivery ? 'Delivery' : 'Pickup'}
           </Badge>
           <Badge variant={status === 'Declined' || status === 'Voided' ? 'destructive' : 'secondary'}>{status}</Badge>
-          <Badge variant={order.payment_status === 'unpaid' ? 'destructive' : 'outline'}>
-            {order.payment_status === 'unpaid' ? 'Unpaid' : 'Paid'} · {order.payment_method ?? '—'}
-          </Badge>
+          {payment && (
+            <Badge variant={order.payment_status === 'unpaid' ? 'destructive' : 'outline'}>
+              {payment} · {order.payment_method ?? '—'}
+            </Badge>
+          )}
         </div>
         {order.customer_name && (
           <p>
