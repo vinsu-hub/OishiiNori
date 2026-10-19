@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Pencil, Printer, Trash2 } from 'lucide-react';
+import { Banknote, Bike, CalendarClock, ChefHat, CheckCircle2, Clock, Pencil, Printer, Search, ShoppingBag, Trash2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { ApiProduct, ApiTransaction, TransactionCardType, TransactionPaymentMethod, fetchAdvanceOrders, fetchBusinessSettings, fetchProducts, fetchTransaction, rescheduleAdvanceOrder, settleTransactionPayment, updateAdvanceOrderItems } from '@/lib/api';
 import { printReceipt, receiptBusinessFromSettings, type ReceiptBusiness, type ReceiptData } from '@/components/pos/Receipt';
@@ -8,6 +8,7 @@ import { printReceiptAllowed } from '@/lib/printerPrefs';
 import { advanceWindow, formatAdvanceTime, phInputTime, phLocalToIso } from '@/lib/advanceOrders';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 import { formatCurrency } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -26,6 +27,37 @@ interface EditLine {
   discount_amount: number;
   // A bundle whose rolls the kitchen already logged stays as it is.
   locked: boolean;
+}
+
+type AdvanceTab = 'upcoming' | 'kitchen' | 'done';
+
+const KITCHEN_LABEL: Record<string, { text: string; className: string }> = {
+  queued: { text: 'Waiting in kitchen', className: 'border-slate-300 bg-slate-50 text-slate-700' },
+  preparing: { text: 'Preparing', className: 'border-amber-300 bg-amber-50 text-amber-900' },
+  ready: { text: 'Ready', className: 'border-green-300 bg-green-50 text-green-800' },
+  completed: { text: 'Done', className: 'border-green-600 bg-green-600 text-white' },
+};
+
+const PH_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' });
+const PH_TIME = new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', hour: 'numeric', minute: '2-digit' });
+const PH_DATE_LABEL = new Intl.DateTimeFormat('en-PH', { timeZone: 'Asia/Manila', weekday: 'short', month: 'short', day: 'numeric' });
+
+/** "Today", "Tomorrow", "Yesterday" or "Wed, Oct 21" in Philippine time. */
+function dayLabel(iso: string, now: number): string {
+  const day = PH_DAY.format(new Date(iso));
+  if (day === PH_DAY.format(new Date(now))) return 'Today';
+  if (day === PH_DAY.format(new Date(now + 86_400_000))) return 'Tomorrow';
+  if (day === PH_DAY.format(new Date(now - 86_400_000))) return 'Yesterday';
+  return PH_DATE_LABEL.format(new Date(iso));
+}
+
+/** "in 2 h 15 min", "in 12 min", "15 min late". */
+function relativeTime(iso: string, now: number): string {
+  const minutes = Math.round((Date.parse(iso) - now) / 60_000);
+  const span = (m: number) => (m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}` : `${m} min`);
+  if (minutes > 0) return `in ${span(minutes)}`;
+  if (minutes === 0) return 'now';
+  return `${span(-minutes)} late`;
 }
 
 const PAYMENT_NAME: Record<string, string> = { cash: 'cash', gcash: 'GCash', card: 'card', bdo: 'BDO', maya: 'Maya', grab: 'Grab' };
@@ -68,6 +100,8 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
   const [editLines, setEditLines] = useState<EditLine[]>([]);
   const [savingItems, setSavingItems] = useState(false);
   const [reprintPrompt, setReprintPrompt] = useState<{ order: ApiTransaction; previousTotal: number } | null>(null);
+  const [tab, setTab] = useState<AdvanceTab | null>(null);
+  const [search, setSearch] = useState('');
 
   useEffect(() => { fetchProducts(false).then(setProducts).catch(() => {}); }, []);
   useEffect(() => { fetchBusinessSettings().then((settings) => setReceiptBusiness(receiptBusinessFromSettings(settings))).catch(() => {}); }, []);
@@ -96,10 +130,21 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
     .map((size) => ({ id: size.id, text: `${product.name} (${size.size_label}) — ${formatCurrency(size.price)}` }))), [products]);
 
   const now = Date.now();
-  const upcoming = orders.filter((row) => row.kitchen_status === 'queued' && Date.parse(row.scheduled_for!) > now + 20 * 60_000);
-  const active = orders.filter((row) => row.kitchen_status !== 'completed' && !upcoming.includes(row));
-  const completed = orders.filter((row) => row.kitchen_status === 'completed');
+  const byTime = (a: ApiTransaction, b: ApiTransaction) => Date.parse(a.scheduled_for!) - Date.parse(b.scheduled_for!);
+  const query = search.trim().toLowerCase();
+  const matches = (row: ApiTransaction) => !query || [
+    String(row.order_number ?? ''), row.pickup_customer_name ?? '', row.pickup_customer_phone ?? '',
+    row.delivery?.customer_name ?? '', row.delivery?.customer_phone ?? '', row.delivery?.address ?? '',
+    ...row.items.map((item) => names.get(item.product_size_id) ?? ''),
+  ].some((value) => value.toLowerCase().includes(query));
+  const visibleOrders = orders.filter((row) => row.status !== 'voided' && matches(row));
+  // Soonest first while there's work to do; most recent first once done.
+  const upcoming = visibleOrders.filter((row) => row.kitchen_status === 'queued' && Date.parse(row.scheduled_for!) > now + 20 * 60_000).sort(byTime);
+  const active = visibleOrders.filter((row) => row.kitchen_status !== 'completed' && !upcoming.includes(row)).sort(byTime);
+  const completed = visibleOrders.filter((row) => row.kitchen_status === 'completed').sort((a, b) => byTime(b, a));
   const canReceivePayment = user && !['kitchen', 'rider', 'stocker'].includes(user.role);
+  // Open on whatever needs attention first, until the cashier picks a tab.
+  const currentTab: AdvanceTab = tab ?? (active.length ? 'kitchen' : upcoming.length ? 'upcoming' : 'done');
 
   async function saveTime() {
     if (!edit) return;
@@ -237,36 +282,108 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
     } finally { setSettling(false); }
   }
 
-  const group = (label: string, rows: ApiTransaction[]) => rows.length > 0 && <section className="space-y-2">
-    <h3 className="font-corp-display font-semibold">{label} ({rows.length})</h3>
-    <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">{rows.map((order) => {
-      const canEditItems = order.status !== 'voided' && !!canReceivePayment;
-      const canEdit = order.kitchen_status === 'queued' && Date.parse(order.scheduled_for!) > Date.now() + 20 * 60_000
-        && !!canReceivePayment;
-      return <Card key={order.id}><CardContent className="space-y-2 py-4">
-        <div className="flex justify-between gap-2"><span className="font-bold">Order #{order.order_number ?? order.id.slice(0, 8)}</span><span className="font-semibold">{formatCurrency(order.total_amount + (order.delivery?.delivery_fee ?? 0))}</span></div>
-        <p className="text-sm font-semibold">{orderType === 'delivery' ? 'Ready for rider' : 'Pickup ready'}: {formatAdvanceTime(order.scheduled_for!)}</p>
-        <p className="text-sm">{orderType === 'takeout' ? order.pickup_customer_name : order.delivery?.customer_name} · {orderType === 'takeout' ? order.pickup_customer_phone : order.delivery?.customer_phone}</p>
-        {orderType === 'delivery' && <p className="text-sm text-muted-foreground">{order.delivery?.address}, {order.delivery?.barangay}</p>}
-        <p className="text-xs text-muted-foreground">{order.order_source.toUpperCase()} · Kitchen: {order.kitchen_status} · {order.payment_status === 'unpaid' ? orderType === 'takeout' ? 'Payment due at pickup' : 'Payment due on delivery' : `Paid by ${order.payment_method ?? 'unspecified'}`}</p>
-        <ul className="text-sm text-muted-foreground">{order.items.map((item) => <li key={item.id}>{item.quantity}× {names.get(item.product_size_id) ?? 'Item'}</li>)}</ul>
-        <div className="flex flex-wrap gap-2">
-          {printReceiptAllowed(user?.role) && <Button size="sm" variant="outline" disabled={printingId === order.id} onClick={() => void reprintOrder(order)}><Printer className="mr-1 h-4 w-4" />{printingId === order.id ? 'Preparing slip…' : 'Reprint order slip'}</Button>}
-          {canReceivePayment && order.payment_status === 'unpaid' && <Button size="sm" onClick={() => { setSettleTarget(order); setSettleMethod('cash'); setSettleCardType(null); }}>Payment received</Button>}
-          {canEditItems && <Button size="sm" variant="outline" onClick={() => openItemsEdit(order)}><Pencil className="mr-1 h-4 w-4" />Edit order</Button>}
-          {canEdit && <Button size="sm" variant="outline" onClick={() => { setEdit(order); setNewTime(phInputTime(new Date(order.scheduled_for!))); }}>Change ready time</Button>}
+  const card = (order: ApiTransaction) => {
+    const canEditItems = order.status !== 'voided' && !!canReceivePayment;
+    const canEdit = order.kitchen_status === 'queued' && Date.parse(order.scheduled_for!) > Date.now() + 20 * 60_000
+      && !!canReceivePayment;
+    const done = order.kitchen_status === 'completed';
+    const minutesAway = (Date.parse(order.scheduled_for!) - now) / 60_000;
+    // Amber: due within the hour; red: past its time and not done yet.
+    const urgency = done ? '' : minutesAway < 0 ? 'border-l-red-600' : minutesAway <= 60 ? 'border-l-amber-500' : 'border-l-transparent';
+    const kitchen = KITCHEN_LABEL[order.kitchen_status] ?? { text: order.kitchen_status, className: '' };
+    const customerName = orderType === 'takeout' ? order.pickup_customer_name : order.delivery?.customer_name;
+    const customerPhone = orderType === 'takeout' ? order.pickup_customer_phone : order.delivery?.customer_phone;
+    const unpaid = order.payment_status === 'unpaid';
+    return <Card key={order.id} className={`flex flex-col border-l-4 ${urgency} ${done ? 'opacity-80' : ''}`}>
+      <CardContent className="flex flex-1 flex-col gap-3 py-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{orderType === 'delivery' ? 'Ready for rider' : 'Pickup ready'}</p>
+            <p className="font-corp-display text-2xl font-bold leading-tight">{PH_TIME.format(new Date(order.scheduled_for!))}</p>
+            <p className={`text-xs font-semibold ${!done && minutesAway < 0 ? 'text-red-700' : 'text-muted-foreground'}`}>
+              {dayLabel(order.scheduled_for!, now)}{done ? '' : ` · ${relativeTime(order.scheduled_for!, now)}`}
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="font-bold">#{order.order_number ?? order.id.slice(0, 8)}</p>
+            <p className="text-lg font-semibold tabular-nums">{formatCurrency(order.total_amount + (order.delivery?.delivery_fee ?? 0))}</p>
+          </div>
         </div>
-      </CardContent></Card>;
-    })}</div>
-  </section>;
+        <div className="flex flex-wrap gap-1.5">
+          <Badge variant="outline" className={`gap-1 ${kitchen.className}`}>
+            {done ? <CheckCircle2 className="h-3.5 w-3.5" aria-hidden /> : <ChefHat className="h-3.5 w-3.5" aria-hidden />}{kitchen.text}
+          </Badge>
+          <Badge variant={unpaid ? 'destructive' : 'outline'} className="gap-1">
+            <Banknote className="h-3.5 w-3.5" aria-hidden />
+            {unpaid ? (orderType === 'takeout' ? 'Pay at pickup' : 'Pay on delivery') : `Paid · ${PAYMENT_NAME[order.payment_method ?? ''] ?? order.payment_method ?? '—'}`}
+          </Badge>
+          <Badge variant="secondary" className="gap-1">
+            {orderType === 'delivery' ? <Bike className="h-3.5 w-3.5" aria-hidden /> : <ShoppingBag className="h-3.5 w-3.5" aria-hidden />}
+            {order.order_source === 'online' ? 'Online' : order.order_source.toUpperCase()}
+          </Badge>
+        </div>
+        <div className="text-sm">
+          <p className="font-medium">{customerName || 'No name'}</p>
+          {customerPhone && <a className="text-muted-foreground underline-offset-2 hover:underline" href={`tel:${customerPhone}`}>{customerPhone}</a>}
+          {orderType === 'delivery' && order.delivery?.address && <p className="text-muted-foreground">{[order.delivery.address, order.delivery.barangay].filter(Boolean).join(', ')}</p>}
+        </div>
+        <ul className="space-y-0.5 rounded-md bg-muted/60 px-3 py-2 text-sm">
+          {order.items.map((item) => <li key={item.id} className="flex gap-2"><span className="font-semibold tabular-nums">{item.quantity}×</span><span>{names.get(item.product_size_id) ?? 'Item'}</span></li>)}
+        </ul>
+        <div className="mt-auto flex flex-wrap gap-2 pt-1">
+          {canReceivePayment && unpaid && <Button size="sm" className="gap-1" onClick={() => { setSettleTarget(order); setSettleMethod('cash'); setSettleCardType(null); }}><Banknote className="h-4 w-4" />Payment received</Button>}
+          {printReceiptAllowed(user?.role) && <Button size="sm" variant="outline" disabled={printingId === order.id} onClick={() => void reprintOrder(order)}><Printer className="mr-1 h-4 w-4" />{printingId === order.id ? 'Preparing…' : 'Reprint slip'}</Button>}
+          {canEditItems && !done && <Button size="sm" variant="outline" onClick={() => openItemsEdit(order)}><Pencil className="mr-1 h-4 w-4" />Edit</Button>}
+          {canEdit && <Button size="sm" variant="outline" onClick={() => { setEdit(order); setNewTime(phInputTime(new Date(order.scheduled_for!))); }}><Clock className="mr-1 h-4 w-4" />Change time</Button>}
+          {canEditItems && done && <Button size="sm" variant="ghost" onClick={() => openItemsEdit(order)}><Pencil className="mr-1 h-4 w-4" />Edit</Button>}
+        </div>
+      </CardContent>
+    </Card>;
+  };
+
+  // Day headers ("Today", "Tomorrow", …) over a grid of cards.
+  const byDay = (rows: ApiTransaction[]) => {
+    const groups: { label: string; rows: ApiTransaction[] }[] = [];
+    for (const row of rows) {
+      const label = dayLabel(row.scheduled_for!, now);
+      const last = groups[groups.length - 1];
+      if (last && last.label === label) last.rows.push(row);
+      else groups.push({ label, rows: [row] });
+    }
+    return groups.map((group) => <section key={group.label} className="space-y-2">
+      <h3 className="flex items-center gap-2 font-corp-display text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+        <CalendarClock className="h-4 w-4" aria-hidden />{group.label}<span className="font-normal normal-case">({group.rows.length})</span>
+      </h3>
+      <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">{group.rows.map(card)}</div>
+    </section>);
+  };
+
+  const tabs: { key: AdvanceTab; label: string; rows: ApiTransaction[]; empty: string }[] = [
+    { key: 'kitchen', label: 'In the kitchen', rows: active, empty: 'Nothing in the kitchen right now.' },
+    { key: 'upcoming', label: 'Upcoming', rows: upcoming, empty: 'No upcoming advance orders.' },
+    { key: 'done', label: 'Done', rows: completed, empty: 'No finished advance orders in the last 7 days.' },
+  ];
+  const shown = tabs.find((t) => t.key === currentTab)!;
 
   return <div className="space-y-4">
     {loading && <p className="text-sm text-muted-foreground">Loading advance orders…</p>}
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     {!loading && !error && orders.length === 0 && <p className="text-sm text-muted-foreground">No POS advance {orderType === 'takeout' ? 'pickup' : 'delivery'} orders in this period.</p>}
-    {group('Upcoming', upcoming)}
-    {group('Preparing or ready', active)}
-    {group('Kitchen completed', completed)}
+    {!loading && orders.length > 0 && <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label="Advance order status">
+        {tabs.map((t) => <Button key={t.key} role="tab" aria-selected={currentTab === t.key} variant={currentTab === t.key ? 'default' : 'outline'} className="min-h-10 gap-2" onClick={() => setTab(t.key)}>
+          {t.label}
+          <span className={`rounded-full px-2 text-xs ${currentTab === t.key ? 'bg-primary-foreground/20' : 'bg-muted'}`}>{t.rows.length}</span>
+        </Button>)}
+      </div>
+      <div className="relative ml-auto w-full max-w-xs">
+        <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" aria-hidden />
+        <Input className="pl-9" placeholder="Search name, phone, order #, item" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search advance orders" />
+      </div>
+    </div>}
+    {!loading && orders.length > 0 && (shown.rows.length === 0
+      ? <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">{query ? 'No orders match your search.' : shown.empty}</p>
+      : byDay(shown.rows))}
     <Dialog open={!!edit} onOpenChange={(open) => !open && !saving && setEdit(null)}>
       <DialogContent><DialogHeader><DialogTitle>Change advance ready time</DialogTitle><DialogDescription>The kitchen will receive an updated ticket. Changes are available only before preparation begins.</DialogDescription></DialogHeader>
         <div className="space-y-2"><Label htmlFor="advance-edit-time">New date and time (Philippine time)</Label><Input id="advance-edit-time" type="datetime-local" value={newTime} onChange={(e) => setNewTime(e.target.value)} /></div>

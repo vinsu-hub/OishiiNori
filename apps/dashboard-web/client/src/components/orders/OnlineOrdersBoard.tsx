@@ -26,7 +26,7 @@ import {
   fetchTransaction,
   rejectDigitalOrder,
 } from '@/lib/api';
-import { formatCurrency, formatTimestamp12h } from '@/lib/utils';
+import { formatCurrency, formatDateTime12h, formatTimestamp12h } from '@/lib/utils';
 import { POLL_INTERVAL_MS } from '@/lib/constants';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
 import { useProductCatalog } from '@/hooks/useProductCatalog';
@@ -196,6 +196,8 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
     try {
       const approved = await approveDigitalOrder(order.id);
       setReviewTarget(null);
+      // Move the card now; the board's server copy can lag a few seconds.
+      setOrders((previous) => previous.map((row) => row.id === order.id ? { ...row, status: 'approved', stage: 'in_queue' } : row));
       if (approved.transaction_id) {
         toast.success(`${orderNumber(order)} approved — sent to the kitchen`);
         // The preview opens with a Print button: printing must happen inside a tap.
@@ -220,6 +222,7 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
     try {
       await rejectDigitalOrder(order.id, declineReason.trim());
       toast.success(`${orderNumber(order)} declined`);
+      setOrders((previous) => previous.filter((row) => row.id !== order.id));
       setReviewTarget(null);
       setDeclining(false);
       setDeclineReason('');
@@ -239,6 +242,7 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
         ? `${orderNumber(order)} — ${formatCurrency(orderTotal(order))} cash logged, order completed`
         : `${orderNumber(order)} completed`);
       setCompleteTarget(null);
+      setOrders((previous) => previous.map((row) => row.id === order.id ? { ...row, stage: 'completed', payment_status: 'paid' } : row));
       load();
     } catch (e) {
       toast.error(apiErrorDetail(e, 'Could not complete the order'));
@@ -301,7 +305,7 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
                     </Badge>
                     {order.scheduled_for && (
                       <Badge variant="secondary" className="gap-1">
-                        <CalendarClock className="h-3.5 w-3.5" aria-hidden /> {formatTimestamp12h(order.scheduled_for)}
+                        <CalendarClock className="h-3.5 w-3.5" aria-hidden /> {formatDateTime12h(order.scheduled_for)}
                       </Badge>
                     )}
                     {promo && (

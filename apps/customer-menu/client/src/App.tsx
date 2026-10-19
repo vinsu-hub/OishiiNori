@@ -1820,6 +1820,13 @@ function OrderStatusView({
             <span className="receipt-status">{statusLabel}</span>
           </div>
 
+          {order.scheduled_for && (
+            <p className="review-confirmation" style={{ fontWeight: 700 }}>
+              Scheduled {order.order_channel === 'delivery' ? 'delivery' : 'pickup'}:{' '}
+              {new Date(order.scheduled_for).toLocaleString('en-PH', { timeZone: 'Asia/Manila', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+            </p>
+          )}
+
           {order.status === 'approved' && order.order_channel !== 'dine_in_qr' && <OrderTracker order={order} />}
 
           <div className="receipt-items">
