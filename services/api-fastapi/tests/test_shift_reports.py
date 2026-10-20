@@ -89,6 +89,24 @@ class ShiftReportTests(unittest.TestCase):
         self.assertEqual(report["cash_drawer"]["expected_cash"], 1507)
         self.assertEqual(report["cash_drawer"]["difference"], 0)
         self.assertEqual(len(report["entries"]), 4)
+        self.assertEqual((report["sales"]["grab_settlement"], report["sales"]["grab_orders"]), (0, 0))
+
+    def test_grab_settlement_is_not_in_gross_sales(self):
+        during = "2026-10-10T01:00:00+00:00"
+        def sale(key, amount, method, discount=0, tax=0):
+            return {"id": key, "opened_at": during, "paid_at": None, "total_amount": amount,
+                    "discount_amount": discount, "tax_amount": tax, "payment_method": method,
+                    "card_type": None, "payment_status": "paid"}
+        db = DB(business_settings=[], transactions=[sale("cash", 500, "cash", tax=50), sale("grab", 800, "grab", discount=80, tax=80)],
+                digital_orders=[], deliveries=[], cash_expenses=[], shift_cash_movements=[])
+        shift = {"id": "shift", "shift_number": 43, "business_date": "2026-10-10",
+                 "opened_at": "2026-10-09T16:00:00+00:00", "opened_by": "ana", "starting_cash": 100}
+        report = build_shift_report(db, shift, datetime(2026, 10, 10, 8, tzinfo=timezone.utc), 600)
+        sales = report["sales"]
+        self.assertEqual((sales["gross"], sales["discounts"], sales["net"], sales["taxes"]), (500, 0, 500, 50))
+        self.assertEqual((sales["grab_settlement"], sales["grab_orders"], sales["order_count"]), (800, 1, 2))
+        self.assertEqual(report["payments"], {"Cash": 500.0, "Grab": 800.0})
+        self.assertEqual(report["cash_drawer"]["expected_cash"], 600)
 
 
 if __name__ == "__main__": unittest.main()

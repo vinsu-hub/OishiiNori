@@ -116,6 +116,10 @@ def build_shift_report(db, shift: dict, closed_at: datetime, counted_cash: float
     gross = Decimal("0")
     discounts = Decimal("0")
     taxes = Decimal("0")
+    # Grab orders are paid through Grab, which settles with the shop later:
+    # shown on their own line, not in gross/net sales (client's request).
+    grab_total = Decimal("0")
+    grab_orders = 0
     # Delivery fees belong to the dedicated rider: kept from the customer's
     # cash, or handed over from the drawer when the customer paid online.
     rider_fees_cash = Decimal("0")
@@ -138,6 +142,10 @@ def build_shift_report(db, shift: dict, closed_at: datetime, counted_cash: float
             rider_fees_cash += fee
         else:
             rider_fees_deductible += fee
+        if method == "Grab":
+            grab_total += received
+            grab_orders += 1
+            continue
         gross += received + money(sale["discount_amount"])
         discounts += money(sale["discount_amount"])
         taxes += money(sale["tax_amount"])
@@ -173,6 +181,7 @@ def build_shift_report(db, shift: dict, closed_at: datetime, counted_cash: float
         "sales": {"gross": float(gross), "discounts": float(discounts),
                   "cash_refunds": float(refunds), "net": float(gross - discounts - refunds),
                   "taxes": float(taxes), "order_count": len(sales),
+                  "grab_settlement": float(grab_total), "grab_orders": grab_orders,
                   "delivery_fees": float(rider_fees_cash + rider_fees_deductible)},
         "cash_drawer": {"starting_cash": float(starting), "cash_payments": float(cash_payments),
                         "cash_refunds": float(refunds), "paid_in": float(paid_in),

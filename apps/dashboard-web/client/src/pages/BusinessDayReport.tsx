@@ -354,7 +354,7 @@ export default function BusinessDayReport() {
                                     <p>Expected drawer cash: {formatCurrency(shiftById[d.id].cash_drawer.expected_cash)}</p>
                                     <p className="font-bold">Actual counted cash: {shiftById[d.id].cash_drawer.actual_cash != null ? formatCurrency(shiftById[d.id].cash_drawer.actual_cash!) : 'Awaiting executive count'}</p>
                                     <p>Drawer difference: {shiftById[d.id].cash_drawer.difference != null ? formatCurrency(shiftById[d.id].cash_drawer.difference!) : '--'}</p>
-                                    {Object.entries(shiftById[d.id].payments).map(([method, value]) => <p key={method}>{method === 'Grab' ? 'Grab settlement' : method}: {formatCurrency(value)}</p>)}
+                                    {Object.entries(shiftById[d.id].payments).map(([method, value]) => <p key={method}>{method === 'Grab' ? (shiftById[d.id].sales.grab_settlement != null ? 'Grab settlement (not in gross sales)' : 'Grab settlement') : method}: {formatCurrency(value)}</p>)}
                                   </div>
                                   <p className="mt-2 text-xs text-muted-foreground">Grab settlement and other digital payments are outside the cash drawer.</p>
                                 </>}

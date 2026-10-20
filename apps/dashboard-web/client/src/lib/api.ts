@@ -2229,7 +2229,8 @@ export interface ShiftReport {
   store_name: string;
   register_name: string;
   payments: Record<string, number>;
-  sales: { gross: number; discounts: number; cash_refunds: number; net: number; taxes: number; order_count: number };
+  /** grab_settlement / grab_orders: Grab orders, kept out of gross and net sales (reports closed from 2026-10-21; absent before). */
+  sales: { gross: number; discounts: number; cash_refunds: number; net: number; taxes: number; order_count: number; grab_settlement?: number; grab_orders?: number };
   cash_drawer: { starting_cash: number; cash_payments: number; cash_refunds: number; paid_in: number; paid_out: number; operating_expenses: number; owner_transfers: number; rider_fees_cash?: number; rider_fees_deductible?: number; expected_cash: number; actual_cash: number | null; difference: number | null };
   entries: ShiftMovement[];
   /** Closed by an End-of-Day override; an executive still has to enter the counted cash. */
