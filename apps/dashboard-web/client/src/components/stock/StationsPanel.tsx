@@ -53,18 +53,22 @@ const STATIONS = STOCK_STATIONS;
 const NO_SECTION = 'Other items';
 
 /** Groups items (already in sheet order) into their sections, keeping the
- * order each section first appears in. */
-export function groupBySection<T extends { category: string | null }>(items: T[]): { section: string; items: T[] }[] {
+ * order each section first appears in. Section is the item's category unless
+ * sectionOf says otherwise (EOD Stock Count groups ingredients by sheet_section). */
+export function groupBySection<T>(
+  items: T[],
+  sectionOf: (item: T) => string | null | undefined = (item) => (item as { category?: string | null }).category,
+): { section: string; items: T[] }[] {
   const groups = new Map<string, T[]>();
   for (const item of items) {
-    const section = item.category?.trim() || NO_SECTION;
+    const section = sectionOf(item)?.trim() || NO_SECTION;
     if (!groups.has(section)) groups.set(section, []);
     groups.get(section)!.push(item);
   }
   return Array.from(groups, ([section, rows]) => ({ section, items: rows }));
 }
 
-function sectionAnchor(station: string, section: string) {
+export function sectionAnchor(station: string, section: string) {
   return `stock-${station}-${section.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
 }
 

@@ -729,6 +729,11 @@ class IngredientOut(BaseModel):
     # delivery/trans_in movement is logged with a unit_cost_snapshot. Null
     # until the first such movement is ever logged for this ingredient.
     unit_cost: float | None = None
+    # Placement on the client's stock sheet (migration 0080) -- the EOD
+    # Stock Count page groups and orders by these.
+    station: str | None = None
+    sheet_section: str | None = None
+    sort_order: int | None = None
 
 
 class IngredientCreate(BaseModel):
@@ -763,6 +768,9 @@ class IngredientUpdate(BaseModel):
     shelf_life_note: str | None = None
     used_in_note: str | None = None
     unit_cost: float | None = None
+    station: str | None = None
+    sheet_section: str | None = None
+    sort_order: int | None = None
 
 
 class ExpiringIngredient(BaseModel):

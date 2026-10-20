@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from postgrest.exceptions import APIError
 
 from app.auth import CurrentUser, get_current_user, require_role
 from app.deps import get_supabase
@@ -47,16 +48,23 @@ def get_low_stock_ingredients(supabase) -> list[LowStockIngredient]:
 @router.get("/inventory", response_model=list[IngredientOut])
 def list_inventory(user: CurrentUser = Depends(get_current_user)):
     supabase = get_supabase()
-    result = (
-        supabase.table("ingredients")
-        .select(
-            "id, name, category, base_unit, suggested_reorder_unit, cost_volatility, "
-            "cost_volatility_tier, shelf_life_note, used_in_note, current_stock, "
-            "reorder_threshold, needs_review, unit_cost"
-        )
-        .order("name")
-        .execute()
+    columns = (
+        "id, name, category, base_unit, suggested_reorder_unit, cost_volatility, "
+        "cost_volatility_tier, shelf_life_note, used_in_note, current_stock, "
+        "reorder_threshold, needs_review, unit_cost"
     )
+
+    def run(select: str, sheet_order: bool):
+        query = supabase.table("ingredients").select(select)
+        if sheet_order:
+            query = query.order("sort_order", nullsfirst=False)
+        return query.order("name").execute()
+
+    try:
+        result = run(columns + ", station, sheet_section, sort_order", True)
+    except APIError:
+        # Migration 0080 (sheet placement) not run yet: alphabetical, as before.
+        result = run(columns, False)
     return result.data
 
 

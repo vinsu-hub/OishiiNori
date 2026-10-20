@@ -1,4 +1,5 @@
-"""Stock -> Recipes & Costs coverage, and Station Items' sheet order (0079)."""
+"""Stock -> Recipes & Costs coverage, and the sheet order of Station Items (0079)
+and of ingredients on EOD Stock Count (0080)."""
 
 import unittest
 from unittest.mock import MagicMock, patch
@@ -8,7 +9,7 @@ from postgrest.exceptions import APIError
 
 from app.auth import CurrentUser, get_current_user
 from app.main import app
-from app.routers import recipes, stock_items
+from app.routers import inventory, recipes, stock_items
 
 
 def _chain(data):
@@ -99,6 +100,35 @@ class SheetOrderTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()[0]["sort_order"], None)
         self.assertEqual(len(calls), 2)
+
+    def _inventory(self, fail_on_sheet_columns):
+        row = {"id": "g1", "name": "Angus beef", "category": "Ramen", "base_unit": "g", "current_stock": 10,
+               "reorder_threshold": 0, "needs_review": False, "unit_cost": None}
+        q = _chain([])
+
+        def execute():
+            if fail_on_sheet_columns and "sort_order" in q.select.call_args[0][0]:
+                raise APIError({"message": "column ingredients.sort_order does not exist", "code": "42703"})
+            extra = {} if fail_on_sheet_columns else {"station": "ramen_hot_line", "sheet_section": "Proteins",
+                                                      "sort_order": 21}
+            return MagicMock(data=[{**row, **extra}])
+        q.execute.side_effect = execute
+        db = MagicMock()
+        db.table.return_value = q
+        with patch.object(inventory, "get_supabase", return_value=db):
+            response = TestClient(app).get("/inventory")
+        self.assertEqual(response.status_code, 200)
+        return q, response.json()[0]
+
+    def test_ingredients_come_in_sheet_order(self):
+        q, body = self._inventory(False)
+        self.assertEqual(q.order.call_args_list[0].args, ("sort_order",))
+        self.assertEqual((body["station"], body["sheet_section"], body["sort_order"]),
+                         ("ramen_hot_line", "Proteins", 21))
+
+    def test_ingredients_fall_back_before_migration(self):
+        _, body = self._inventory(True)
+        self.assertIsNone(body["station"])
 
 
 if __name__ == "__main__":

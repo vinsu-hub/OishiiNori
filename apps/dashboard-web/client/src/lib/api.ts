@@ -944,6 +944,10 @@ export interface ApiIngredient {
   reorder_threshold: number;
   needs_review: boolean;
   unit_cost: number | null;
+  // Placement on the client's stock sheet (migration 0080); absent before it runs.
+  station?: string | null;
+  sheet_section?: string | null;
+  sort_order?: number | null;
 }
 
 export function fetchInventory(): Promise<ApiIngredient[]> {

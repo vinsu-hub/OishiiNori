@@ -208,7 +208,9 @@ const HELP_GROUPS: HelpGroup[] = [
             </p>
             <p className="mt-1">
               <strong>EOD Stock Count (VS)</strong> (manager/executive) — the end-of-day physical verification sheet,
-              for spot-checking the computed running totals against what's actually on the shelf.
+              for spot-checking the computed running totals against what's actually on the shelf. Laid out like the
+              stock sheet: a tab per station (Ramen, Maki, Drip Tea, Tako), its sections in sheet order, and a search
+              that finds an ingredient on any tab.
             </p>
           </>
         ),
