@@ -109,6 +109,18 @@ const HELP_GROUPS: HelpGroup[] = [
         ),
       },
       {
+        question: 'What is the CEO override on Advance Orders?',
+        answer: (
+          <p>
+            Executives see a red <strong>CEO override</strong> button on every advance order. It can force-complete an
+            order at any stage (recording how it was paid if it was unpaid), change its time even after the kitchen
+            started, edit items on a finished order without sending it back to the kitchen, fix the customer's name,
+            phone or address, cancel it (void, kept in reports), or delete it permanently. Every action asks for a
+            reason and your own override key from <strong>Settings</strong>.
+          </p>
+        ),
+      },
+      {
         question: "What's on Business Day Report?",
         answer: (
           <p>

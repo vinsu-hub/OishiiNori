@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Banknote, Bike, CalendarClock, ChefHat, CheckCircle2, Clock, Pencil, Printer, Search, ShoppingBag, Trash2 } from 'lucide-react';
+import { Banknote, Bike, CalendarClock, ChefHat, CheckCircle2, Clock, Pencil, Printer, Search, ShieldAlert, ShoppingBag, Trash2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { ApiProduct, ApiTransaction, TransactionCardType, TransactionPaymentMethod, fetchAdvanceOrders, fetchBusinessSettings, fetchProducts, fetchTransaction, rescheduleAdvanceOrder, settleTransactionPayment, updateAdvanceOrderItems } from '@/lib/api';
+import { AdvanceOverrideAuth, ApiProduct, ApiTransaction, TransactionCardType, TransactionPaymentMethod, fetchAdvanceOrders, fetchBusinessSettings, fetchProducts, fetchTransaction, rescheduleAdvanceOrder, settleTransactionPayment, updateAdvanceOrderItems } from '@/lib/api';
 import { printReceipt, receiptBusinessFromSettings, type ReceiptBusiness, type ReceiptData } from '@/components/pos/Receipt';
 import { printReceiptAllowed } from '@/lib/printerPrefs';
 import { advanceWindow, formatAdvanceTime, phInputTime, phLocalToIso } from '@/lib/advanceOrders';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
+import { AdvanceOverrideDialog } from '@/components/pos/AdvanceOverrideDialog';
 import { formatCurrency } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -102,6 +103,11 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
   const [reprintPrompt, setReprintPrompt] = useState<{ order: ApiTransaction; previousTotal: number } | null>(null);
   const [tab, setTab] = useState<AdvanceTab | null>(null);
   const [search, setSearch] = useState('');
+  // CEO override (executives): the order being overridden, and the key +
+  // reason an override item edit is sent with.
+  const [overrideTarget, setOverrideTarget] = useState<ApiTransaction | null>(null);
+  const [itemsOverride, setItemsOverride] = useState<AdvanceOverrideAuth | null>(null);
+  const isExecutive = user?.role === 'executive';
 
   useEffect(() => { fetchProducts(false).then(setProducts).catch(() => {}); }, []);
   useEffect(() => { fetchBusinessSettings().then((settings) => setReceiptBusiness(receiptBusinessFromSettings(settings))).catch(() => {}); }, []);
@@ -166,7 +172,8 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
     } finally { setSaving(false); }
   }
 
-  function openItemsEdit(order: ApiTransaction) {
+  function openItemsEdit(order: ApiTransaction, override: AdvanceOverrideAuth | null = null) {
+    setItemsOverride(override);
     setItemsEdit(order);
     setEditLines(linesFromOrder(order));
   }
@@ -201,7 +208,7 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
       const changed = await updateAdvanceOrderItems(itemsEdit.id, editLines.map((line) => ({
         product_size_id: line.product_size_id, quantity: line.quantity, held_ingredients: line.held_ingredients,
         addons: line.addons.map(({ addon_id, quantity }) => ({ addon_id, quantity })), discount_type_id: line.discount_type_id,
-      })), itemsEdit.advance_schedule_revision);
+      })), itemsEdit.advance_schedule_revision, itemsOverride ?? undefined);
       setOrders((previous) => previous.map((row) => row.id === changed.id ? changed : row));
       setItemsEdit(null);
       toast.success(`Order #${changed.order_number ?? changed.id.slice(0, 8)} updated; the kitchen will get an updated ticket.`);
@@ -336,6 +343,7 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
           {canEditItems && !done && <Button size="sm" variant="outline" onClick={() => openItemsEdit(order)}><Pencil className="mr-1 h-4 w-4" />Edit</Button>}
           {canEdit && <Button size="sm" variant="outline" onClick={() => { setEdit(order); setNewTime(phInputTime(new Date(order.scheduled_for!))); }}><Clock className="mr-1 h-4 w-4" />Change time</Button>}
           {canEditItems && done && <Button size="sm" variant="ghost" onClick={() => openItemsEdit(order)}><Pencil className="mr-1 h-4 w-4" />Edit</Button>}
+          {isExecutive && <Button size="sm" variant="outline" className="gap-1 border-red-300 text-red-700 hover:bg-red-50 hover:text-red-800" onClick={() => setOverrideTarget(order)}><ShieldAlert className="h-4 w-4" aria-hidden />CEO override</Button>}
         </div>
       </CardContent>
     </Card>;
@@ -393,7 +401,8 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
     <Dialog open={!!itemsEdit} onOpenChange={(open) => !open && !savingItems && setItemsEdit(null)}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader><DialogTitle>Edit order #{itemsEdit?.order_number}</DialogTitle><DialogDescription>Add, remove or replace items. The kitchen gets an updated ticket.</DialogDescription></DialogHeader>
-        {itemsEdit && itemsEdit.kitchen_status !== 'queued' && <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900">The kitchen has already {itemsEdit.kitchen_status === 'completed' ? 'completed' : itemsEdit.kitchen_status === 'ready' ? 'readied' : 'started'} this order. Saving sends it back to the kitchen queue with the updated items.</p>}
+        {itemsEdit && itemsOverride && <p className="rounded-md border border-red-300 bg-red-50 p-2 text-sm text-red-900">CEO override{itemsEdit.kitchen_status === 'completed' ? ': this order is done and stays done — it is not sent back to the kitchen.' : '.'}</p>}
+        {itemsEdit && itemsEdit.kitchen_status !== 'queued' && !(itemsOverride && itemsEdit.kitchen_status === 'completed') && <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900">The kitchen has already {itemsEdit.kitchen_status === 'completed' ? 'completed' : itemsEdit.kitchen_status === 'ready' ? 'readied' : 'started'} this order. Saving sends it back to the kitchen queue with the updated items.</p>}
         <div className="space-y-2">
           {editLines.map((line) => line.locked ? <div key={line.key} className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/50 p-2 text-sm">
             <span className="flex-1">{line.quantity}× {names.get(line.product_size_id) ?? 'Bundle'}</span>
@@ -426,6 +435,16 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
         <DialogFooter><Button variant="outline" onClick={() => setItemsEdit(null)} disabled={savingItems}>Cancel</Button><Button onClick={() => void saveItems()} disabled={savingItems || !editChanged || !editLines.length}>{savingItems ? 'Saving…' : 'Save changes'}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
+    <AdvanceOverrideDialog
+      order={overrideTarget}
+      onClose={() => setOverrideTarget(null)}
+      onUpdated={(changed, reprint) => {
+        setOrders((previous) => previous.map((row) => row.id === changed.id ? changed : row));
+        if (reprint) setReprintPrompt({ order: changed, previousTotal: changed.total_amount + (changed.delivery?.delivery_fee ?? 0) });
+      }}
+      onErased={(id) => setOrders((previous) => previous.filter((row) => row.id !== id))}
+      onEditItems={(order, auth) => openItemsEdit(order, auth)}
+    />
     <Dialog open={!!reprintPrompt} onOpenChange={(open) => !open && setReprintPrompt(null)}>
       <DialogContent><DialogHeader><DialogTitle>Reprint receipt?</DialogTitle><DialogDescription>Order #{reprintPrompt?.order.order_number} was changed. Print the new receipt for the customer.</DialogDescription></DialogHeader>
         {reprintPrompt && <div className="space-y-1 rounded-md bg-muted px-4 py-3 text-center">

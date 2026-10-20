@@ -675,10 +675,45 @@ export function rescheduleAdvanceOrder(id: string, scheduledFor: string, expecte
   });
 }
 
-export function updateAdvanceOrderItems(id: string, items: CreateTransactionItem[], expectedRevision: number): Promise<ApiTransaction> {
+export function updateAdvanceOrderItems(
+  id: string, items: CreateTransactionItem[], expectedRevision: number, override?: AdvanceOverrideAuth,
+): Promise<ApiTransaction> {
   return request(`/transactions/${id}/advance-items`, {
-    method: 'PUT', body: JSON.stringify({ items, expected_revision: expectedRevision }),
+    method: 'PUT', body: JSON.stringify({ items, expected_revision: expectedRevision, ...override }),
   });
+}
+
+/** CEO override on Advance Orders: the executive's own override key + a reason. */
+export interface AdvanceOverrideAuth {
+  override_key: string;
+  reason: string;
+}
+
+export function overrideCompleteAdvance(
+  id: string, body: AdvanceOverrideAuth & { payment_method?: TransactionPaymentMethod; card_type?: TransactionCardType | null },
+): Promise<ApiTransaction> {
+  return request(`/transactions/${id}/advance-override/complete`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function overrideVoidAdvance(id: string, body: AdvanceOverrideAuth): Promise<ApiTransaction> {
+  return request(`/transactions/${id}/advance-override/void`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function overrideEraseAdvance(id: string, body: AdvanceOverrideAuth): Promise<{ id: string; erased: boolean }> {
+  return request(`/transactions/${id}/advance-override/erase`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function overrideRescheduleAdvance(
+  id: string, body: AdvanceOverrideAuth & { scheduled_for: string; expected_revision: number },
+): Promise<ApiTransaction> {
+  return request(`/transactions/${id}/advance-override/schedule`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
+export function overrideAdvanceCustomer(
+  id: string,
+  body: AdvanceOverrideAuth & { name: string; phone: string; address?: string | null; barangay?: string | null; landmark?: string | null },
+): Promise<ApiTransaction> {
+  return request(`/transactions/${id}/advance-override/customer`, { method: 'PATCH', body: JSON.stringify(body) });
 }
 
 export function fetchTransaction(id: string): Promise<ApiTransaction> {

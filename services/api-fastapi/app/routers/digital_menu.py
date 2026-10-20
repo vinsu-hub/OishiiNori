@@ -773,7 +773,12 @@ def erase_digital_order(order_id: str, body: EraseTransactionRequest, user: Curr
     require_role(user, "executive")
     if not verify_override_key(user, body.override_key):
         raise HTTPException(status_code=403, detail="Override key is wrong, or you haven't set one yet (Settings)")
-    supabase = get_supabase()
+    return erase_digital_order_core(get_supabase(), order_id, user, body.reason)
+
+
+def erase_digital_order_core(supabase, order_id: str, user: CurrentUser, reason: str) -> dict:
+    """The online-order erase once role and override key are checked. Also
+    used by the Advance Orders CEO override (transactions.py)."""
     rows = (supabase.table("digital_orders").select("id, order_number, transaction_id")
             .eq("id", order_id).limit(1).execute().data)
     if not rows:
@@ -784,7 +789,7 @@ def erase_digital_order(order_id: str, body: EraseTransactionRequest, user: Curr
     if any(d.get("collected_at") or d.get("handoff_at") or d.get("returned_at") for d in deposits):
         raise HTTPException(status_code=409, detail="A Sushi Boat deposit on this order was already handled, so it can't be deleted")
     if order.get("transaction_id"):
-        erase_transaction_core(supabase, order["transaction_id"], user, body.reason)
+        erase_transaction_core(supabase, order["transaction_id"], user, reason)
     if deposits:
         supabase.table("sushi_boat_deposits").delete().eq("digital_order_id", order_id).execute()
     supabase.table("digital_orders").delete().eq("id", order_id).execute()
@@ -796,7 +801,7 @@ def erase_digital_order(order_id: str, body: EraseTransactionRequest, user: Curr
     except Exception:  # noqa: BLE001 -- a leftover proof image isn't worth failing the delete
         pass
     logger.warning("Online order erased: Online #%s (%s) by %s (%s). Reason: %s",
-                   order.get("order_number"), order_id, user.full_name, user.id, body.reason)
+                   order.get("order_number"), order_id, user.full_name, user.id, reason)
     return {"id": order_id, "erased": True}
 
 

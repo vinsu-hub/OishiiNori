@@ -406,6 +406,9 @@ class RescheduleAdvanceOrderRequest(BaseModel):
 class UpdateAdvanceItemsRequest(BaseModel):
     items: list[TransactionItemCreate] = Field(min_length=1)
     expected_revision: int = Field(ge=0)
+    # CEO override (executive + override key): a done order stays done.
+    override_key: str | None = Field(default=None, max_length=200)
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class SwitchTableRequest(BaseModel):

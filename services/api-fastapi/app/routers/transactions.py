@@ -1,4 +1,5 @@
 import logging
+import re
 import threading
 import time
 import uuid
@@ -33,6 +34,8 @@ from app.schemas import (
     TransactionItemCreate,
     UpdateAdvanceItemsRequest,
     SettlePaymentRequest,
+    TransactionCardType,
+    TransactionPaymentMethod,
     SwitchTableRequest,
     TransactionResponse,
     VoidTransactionRequest,
@@ -1653,6 +1656,9 @@ def update_advance_items(
     (the request must repeat them unchanged)."""
     if user.role in ("kitchen", "rider", "stocker"):
         raise HTTPException(status_code=403, detail="Only front-of-house staff can edit orders")
+    override = body.override_key is not None
+    if override:
+        _require_override(user, body.override_key, body.reason)
     supabase = get_supabase()
     if not _advance_supported_check(supabase):
         raise HTTPException(status_code=501, detail="Advance orders need database migration 0068")
@@ -1702,12 +1708,14 @@ def update_advance_items(
                 order_discount, force_vat_exempt)
 
     now_iso = datetime.now(timezone.utc).isoformat()
+    claim = {"advance_schedule_revision": revision + 1,
+             "advance_schedule_updated_at": now_iso,
+             "advance_schedule_updated_by": user.id}
+    # A CEO override edit of a finished order doesn't send it back to the kitchen.
+    if not (override and transaction.get("kitchen_status") == "completed"):
+        claim.update({"kitchen_status": "queued", "kitchen_status_updated_at": now_iso})
     claimed = (supabase.table("transactions")
-               .update({"advance_schedule_revision": revision + 1,
-                        "advance_schedule_updated_at": now_iso,
-                        "advance_schedule_updated_by": user.id,
-                        "kitchen_status": "queued",
-                        "kitchen_status_updated_at": now_iso})
+               .update(claim)
                .eq("id", transaction_id).eq("advance_schedule_revision", revision)
                .neq("status", "voided").execute())
     if not claimed.data:
@@ -1728,6 +1736,173 @@ def update_advance_items(
         discounted_item_index, discount, selected_discount_type_id, vat_exempt,
         transaction.get("order_type"), transaction.get("guest_count"), kept_subtotal=kept_subtotal,
     )
+    if override:
+        _log_override("edit items", transaction, user, body.reason)
+    return get_transaction(transaction_id, user)
+
+
+# --- CEO override on Advance Orders -----------------------------------------
+# Executive + their own override key (0076) + a reason, for every action.
+# These skip the cashier limits (preparation window, queued-only void).
+
+class AdvanceOverrideRequest(BaseModel):
+    override_key: str = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class AdvanceOverrideCompleteRequest(AdvanceOverrideRequest):
+    payment_method: TransactionPaymentMethod | None = None
+    card_type: TransactionCardType | None = None
+
+
+class AdvanceOverrideScheduleRequest(AdvanceOverrideRequest):
+    scheduled_for: datetime
+    expected_revision: int = Field(ge=0)
+
+
+class AdvanceOverrideCustomerRequest(AdvanceOverrideRequest):
+    name: str = Field(min_length=1, max_length=120)
+    phone: str = Field(min_length=1, max_length=40)
+    address: str | None = Field(default=None, max_length=300)
+    barangay: str | None = Field(default=None, max_length=120)
+    landmark: str | None = Field(default=None, max_length=300)
+
+
+def _require_override(user: CurrentUser, key: str | None, reason: str | None) -> None:
+    require_role(user, "executive")
+    if not (reason or "").strip():
+        raise HTTPException(status_code=400, detail="Give a reason for the override")
+    if not verify_override_key(user, key or ""):
+        raise HTTPException(status_code=403, detail="Override key is wrong, or you haven't set one yet (Settings)")
+
+
+def _log_override(action: str, transaction: dict, user: CurrentUser, reason: str | None) -> None:
+    logger.warning("Advance override %s: #%s (%s) by %s (%s). Reason: %s", action,
+                   transaction.get("order_number"), transaction["id"], user.full_name, user.id, (reason or "").strip())
+
+
+def _override_target(supabase, transaction_id: str, user: CurrentUser, body: AdvanceOverrideRequest) -> dict:
+    _require_override(user, body.override_key, body.reason)
+    if not _advance_supported_check(supabase):
+        raise HTTPException(status_code=501, detail="Advance orders need database migration 0068")
+    transaction = _fetch_transaction_with_items(supabase, transaction_id)
+    if not transaction or not transaction.get("scheduled_for"):
+        raise HTTPException(status_code=404, detail="Advance order not found")
+    return transaction
+
+
+def _bump_revision(supabase, transaction: dict, user: CurrentUser, extra: dict | None = None) -> None:
+    supabase.table("transactions").update({
+        "advance_schedule_revision": (transaction.get("advance_schedule_revision") or 0) + 1,
+        "advance_schedule_updated_at": datetime.now(timezone.utc).isoformat(),
+        "advance_schedule_updated_by": user.id,
+        **(extra or {}),
+    }).eq("id", transaction["id"]).execute()
+
+
+@router.post("/transactions/{transaction_id}/advance-override/complete", response_model=TransactionResponse)
+def override_complete_advance(transaction_id: str, body: AdvanceOverrideCompleteRequest,
+                              user: CurrentUser = Depends(get_current_user)):
+    """Force complete: records the payment if it's still unpaid, marks a
+    delivery delivered, and closes the order -- at any stage, even before
+    its kitchen window opens."""
+    supabase = get_supabase()
+    transaction = _override_target(supabase, transaction_id, user, body)
+    if transaction["status"] == "voided":
+        raise HTTPException(status_code=409, detail="This order was voided")
+    if transaction.get("payment_status") == "unpaid":
+        if not body.payment_method:
+            raise HTTPException(status_code=400, detail="Choose how it was paid")
+        settle_payment(transaction_id, SettlePaymentRequest(payment_method=body.payment_method, card_type=body.card_type), user)
+    if transaction.get("order_type") == "delivery":
+        delivery = delivery_row_for_transaction(supabase, transaction_id)
+        if delivery and not delivery.get("delivered_at"):
+            supabase.table("deliveries").update({"delivered_at": datetime.now(timezone.utc).isoformat()}).eq(
+                "id", delivery["id"]).execute()
+    if transaction["status"] == "open":
+        close_transaction(transaction_id, user)
+    elif transaction.get("kitchen_status") != "completed":
+        now_iso = datetime.now(timezone.utc).isoformat()
+        supabase.table("transactions").update({"kitchen_status": "completed", "kitchen_status_updated_at": now_iso}).eq(
+            "id", transaction_id).execute()
+    _bump_revision(supabase, transaction, user)
+    _log_override("complete", transaction, user, body.reason)
+    return get_transaction(transaction_id, user)
+
+
+@router.post("/transactions/{transaction_id}/advance-override/void", response_model=TransactionResponse)
+def override_void_advance(transaction_id: str, body: AdvanceOverrideRequest,
+                          user: CurrentUser = Depends(get_current_user)):
+    """Cancel at any kitchen stage. Stock is returned; the order stays in
+    reports as voided with the reason."""
+    supabase = get_supabase()
+    transaction = _override_target(supabase, transaction_id, user, body)
+    if transaction["status"] == "voided":
+        raise HTTPException(status_code=400, detail="This order is already voided")
+    updated_row, items = void_transaction_core(supabase, transaction, user.id, f"CEO override: {body.reason.strip()}")
+    _log_override("void", transaction, user, body.reason)
+    return TransactionResponse(**updated_row, items=items)
+
+
+@router.post("/transactions/{transaction_id}/advance-override/erase")
+def override_erase_advance(transaction_id: str, body: AdvanceOverrideRequest,
+                           user: CurrentUser = Depends(get_current_user)):
+    """Permanent delete. A ticket from the website takes its online order
+    (proof image, deposit) with it."""
+    from app.routers.digital_menu import erase_digital_order_core  # digital_menu imports this module
+
+    supabase = get_supabase()
+    transaction = _override_target(supabase, transaction_id, user, body)
+    linked = (supabase.table("digital_orders").select("id").eq("transaction_id", transaction_id)
+              .limit(1).execute().data)
+    if linked:
+        erase_digital_order_core(supabase, linked[0]["id"], user, body.reason)
+    else:
+        erase_transaction_core(supabase, transaction_id, user, body.reason)
+    _log_override("erase", transaction, user, body.reason)
+    return {"id": transaction_id, "erased": True}
+
+
+@router.patch("/transactions/{transaction_id}/advance-override/schedule", response_model=TransactionResponse)
+def override_reschedule_advance(transaction_id: str, body: AdvanceOverrideScheduleRequest,
+                                user: CurrentUser = Depends(get_current_user)):
+    """Change the ready time at any stage, to any time. The kitchen status
+    stays; the revision bump prints an updated ticket."""
+    supabase = get_supabase()
+    transaction = _override_target(supabase, transaction_id, user, body)
+    if transaction["status"] == "voided":
+        raise HTTPException(status_code=400, detail="This order was voided")
+    if (transaction.get("advance_schedule_revision") or 0) != body.expected_revision:
+        raise HTTPException(status_code=409, detail="Order changed; refresh and try again")
+    due = body.scheduled_for if body.scheduled_for.tzinfo else body.scheduled_for.replace(tzinfo=timezone.utc)
+    _bump_revision(supabase, transaction, user, {"scheduled_for": due.astimezone(timezone.utc).isoformat()})
+    _log_override("reschedule", transaction, user, body.reason)
+    return get_transaction(transaction_id, user)
+
+
+@router.patch("/transactions/{transaction_id}/advance-override/customer", response_model=TransactionResponse)
+def override_advance_customer(transaction_id: str, body: AdvanceOverrideCustomerRequest,
+                              user: CurrentUser = Depends(get_current_user)):
+    """Fix the customer's name, phone and (for a delivery) address."""
+    supabase = get_supabase()
+    transaction = _override_target(supabase, transaction_id, user, body)
+    name, phone = body.name.strip(), body.phone.strip()
+    if not name or len(re.sub(r"\D", "", phone)) < 7:
+        raise HTTPException(status_code=400, detail="Enter the customer's name and a valid phone number")
+    if transaction.get("order_type") == "delivery":
+        delivery = delivery_row_for_transaction(supabase, transaction_id)
+        if not delivery:
+            raise HTTPException(status_code=404, detail="This order's delivery details were not found")
+        patch = {"customer_name": name, "customer_phone": phone}
+        for field in ("address", "barangay", "landmark"):
+            value = getattr(body, field)
+            if value is not None:
+                patch[field] = value.strip() or None
+        supabase.table("deliveries").update(patch).eq("id", delivery["id"]).execute()
+        _bump_revision(supabase, transaction, user)
+    else:
+        _bump_revision(supabase, transaction, user, {"pickup_customer_name": name, "pickup_customer_phone": phone})
+    _log_override("customer", transaction, user, body.reason)
     return get_transaction(transaction_id, user)
 
 
