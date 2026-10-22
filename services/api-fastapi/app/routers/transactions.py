@@ -270,14 +270,21 @@ def _advance_supported_check(supabase) -> bool:
     return _advance_supported
 
 
+_kitchen_reprint_checked_at = 0.0
+
+
 def _kitchen_reprint_supported_check(supabase) -> bool:
-    global _kitchen_reprint_supported
-    if _kitchen_reprint_supported is None:
-        try:
-            supabase.table("transactions").select("kitchen_reprint_requested_at").limit(1).execute()
-            _kitchen_reprint_supported = True
-        except APIError:
-            _kitchen_reprint_supported = False
+    """Once the column is there it stays there; "missing" is re-checked every
+    minute, so a server that started before 0081 was run picks it up."""
+    global _kitchen_reprint_supported, _kitchen_reprint_checked_at
+    if _kitchen_reprint_supported or time.monotonic() - _kitchen_reprint_checked_at < 60:
+        return bool(_kitchen_reprint_supported)
+    _kitchen_reprint_checked_at = time.monotonic()
+    try:
+        supabase.table("transactions").select("kitchen_reprint_requested_at").limit(1).execute()
+        _kitchen_reprint_supported = True
+    except APIError:
+        _kitchen_reprint_supported = False
     return _kitchen_reprint_supported
 
 
@@ -1841,22 +1848,43 @@ def override_complete_advance(transaction_id: str, body: AdvanceOverrideComplete
     transaction = _override_target(supabase, transaction_id, user, body)
     if transaction["status"] == "voided":
         raise HTTPException(status_code=409, detail="This order was voided")
-    if transaction.get("payment_status") == "unpaid":
+    now_iso = datetime.now(timezone.utc).isoformat()
+    revision = transaction.get("advance_schedule_revision") or 0
+    # Payment, close, kitchen done and the revision go in one guarded update,
+    # so the order is never left half-done (e.g. paid but still open).
+    patch = {
+        "kitchen_status": "completed", "kitchen_status_updated_at": now_iso,
+        "advance_schedule_revision": revision + 1, "advance_schedule_updated_at": now_iso,
+        "advance_schedule_updated_by": user.id,
+    }
+    if transaction["status"] == "open":
+        patch.update(status="closed", closed_at=now_iso)
+    unpaid = transaction.get("payment_status") == "unpaid"
+    if unpaid:
         if not body.payment_method:
             raise HTTPException(status_code=400, detail="Choose how it was paid")
-        settle_payment(transaction_id, SettlePaymentRequest(payment_method=body.payment_method, card_type=body.card_type), user)
+        _validate_grab_settlement(transaction.get("order_source") or "pos", body.payment_method)
+        if body.payment_method == "card" and not body.card_type:
+            raise HTTPException(status_code=400, detail="Select debit or credit")
+        if body.payment_method != "card" and body.card_type:
+            raise HTTPException(status_code=400, detail="Card type requires card payment")
+        patch.update(payment_status="paid", paid_at=now_iso, paid_by=user.id,
+                     payment_method=body.payment_method, card_type=body.card_type)
+    # The delivery is marked first and put back if the order can't be completed.
+    delivered_id = None
     if transaction.get("order_type") == "delivery":
         delivery = delivery_row_for_transaction(supabase, transaction_id)
         if delivery and not delivery.get("delivered_at"):
-            supabase.table("deliveries").update({"delivered_at": datetime.now(timezone.utc).isoformat()}).eq(
-                "id", delivery["id"]).execute()
-    if transaction["status"] == "open":
-        close_transaction(transaction_id, user)
-    elif transaction.get("kitchen_status") != "completed":
-        now_iso = datetime.now(timezone.utc).isoformat()
-        supabase.table("transactions").update({"kitchen_status": "completed", "kitchen_status_updated_at": now_iso}).eq(
-            "id", transaction_id).execute()
-    _bump_revision(supabase, transaction, user)
+            supabase.table("deliveries").update({"delivered_at": now_iso}).eq("id", delivery["id"]).execute()
+            delivered_id = delivery["id"]
+    query = (supabase.table("transactions").update(patch).eq("id", transaction_id)
+             .eq("status", transaction["status"]).eq("advance_schedule_revision", revision))
+    if unpaid:
+        query = query.eq("payment_status", "unpaid")
+    if not query.execute().data:
+        if delivered_id:
+            supabase.table("deliveries").update({"delivered_at": None}).eq("id", delivered_id).execute()
+        raise HTTPException(status_code=409, detail="Order changed; refresh and try again")
     _log_override("complete", transaction, user, body.reason)
     return get_transaction(transaction_id, user)
 

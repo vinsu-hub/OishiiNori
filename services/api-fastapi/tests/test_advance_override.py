@@ -67,13 +67,22 @@ class OverrideTests(unittest.TestCase):
 
     def test_complete_upcoming_unpaid_delivery(self):
         order = _order(payment_status="unpaid", order_type="delivery")
-        with patch.object(tx, "settle_payment") as settle, patch.object(tx, "close_transaction") as close, \
-                patch.object(tx, "delivery_row_for_transaction", return_value={"id": "d1", "delivered_at": None}):
+        with patch.object(tx, "delivery_row_for_transaction", return_value={"id": "d1", "delivered_at": None}):
             response = self._post("complete", order, {**KEY, "payment_method": "gcash"})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(settle.call_args[0][1].payment_method, "gcash")
-        close.assert_called_once()
+        # Paid, closed, kitchen done and the revision in one guarded update.
+        done = self.tables["transactions"].update.call_args[0][0]
+        self.assertEqual((done["payment_status"], done["payment_method"], done["status"], done["kitchen_status"],
+                          done["advance_schedule_revision"]), ("paid", "gcash", "closed", "completed", 3))
         self.assertIn("delivered_at", self.tables["deliveries"].update.call_args[0][0])
+
+    def test_complete_changes_nothing_if_the_order_moved_on(self):
+        self.tables["transactions"].execute.return_value = MagicMock(data=[])
+        with patch.object(tx, "delivery_row_for_transaction", return_value={"id": "d1", "delivered_at": None}):
+            response = self._post("complete", _order(order_type="delivery"), KEY)
+        self.assertEqual(response.status_code, 409)
+        # The delivery it marked is put back.
+        self.assertEqual(self.tables["deliveries"].update.call_args[0][0], {"delivered_at": None})
 
     def test_void_at_any_stage(self):
         with patch.object(tx, "void_transaction_core", return_value=({**_base_response(), "status": "voided"}, [])) as void:

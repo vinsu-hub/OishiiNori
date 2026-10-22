@@ -16,9 +16,10 @@ class KitchenReprintTests(unittest.TestCase):
         app.dependency_overrides[get_current_user] = lambda: CurrentUser(
             id="u1", role="employee", department=None, full_name="Cashier", extra_pages=[])
         self.addCleanup(app.dependency_overrides.clear)
-        patcher = patch.object(transactions, "_kitchen_reprint_supported", None)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        for name, value in (("_kitchen_reprint_supported", None), ("_kitchen_reprint_checked_at", -1e9)):
+            patcher = patch.object(transactions, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def _post(self, rows, migrated=True):
         q = MagicMock()
@@ -54,8 +55,11 @@ class KitchenReprintTests(unittest.TestCase):
             id="u2", role="rider", department=None, full_name="Rider", extra_pages=[])
         self.assertEqual(self._post([{"id": "t1", "status": "open"}])[1].status_code, 403)
 
-    def test_needs_the_migration(self):
+    def test_needs_the_migration_and_notices_when_it_is_run(self):
         self.assertEqual(self._post([], migrated=False)[1].status_code, 501)
+        # A minute later the server looks again and finds the new column.
+        transactions._kitchen_reprint_checked_at = -1e9
+        self.assertEqual(self._post([{"id": "t1", "status": "open"}])[1].status_code, 200)
 
 
 if __name__ == "__main__":
