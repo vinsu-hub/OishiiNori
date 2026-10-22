@@ -390,6 +390,8 @@ class TransactionResponse(BaseModel):
     advance_schedule_updated_at: datetime | None = None
     advance_schedule_updated_by: str | None = None
     paid_at: datetime | None = None
+    # Online Orders' "Print kitchen ticket" (migration 0081).
+    kitchen_reprint_requested_at: datetime | None = None
     items: list[TransactionItemResponse] = Field(default_factory=list)
     delivery: DeliveryDetailOut | None = None
 

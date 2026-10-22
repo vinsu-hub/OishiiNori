@@ -523,6 +523,7 @@ export interface ApiTransaction {
   pickup_customer_name: string | null;
   pickup_customer_phone: string | null;
   advance_schedule_revision: number;
+  kitchen_reprint_requested_at?: string | null;
   advance_schedule_updated_at: string | null;
   advance_schedule_updated_by: string | null;
   items: ApiTransactionItem[];
@@ -745,6 +746,11 @@ export function updateRiderPayout(transactionId: string, riderPayout: number): P
 
 export function voidTransaction(id: string, reason: string): Promise<ApiTransaction> {
   return request(`/transactions/${id}/void`, { method: 'POST', body: JSON.stringify({ reason }) });
+}
+
+/** Online Orders' "Print kitchen ticket": the kitchen tablet prints a REPRINT copy on its next poll. */
+export function requestKitchenReprint(id: string): Promise<{ id: string; kitchen_reprint_requested_at: string }> {
+  return request(`/transactions/${id}/kitchen-reprint`, { method: 'POST' });
 }
 
 export function updateKitchenStatus(id: string, kitchen_status: KitchenStatus): Promise<ApiTransaction> {

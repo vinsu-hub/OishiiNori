@@ -243,6 +243,7 @@ _transaction_card_vat_supported: bool | None = None
 _deliveries_transaction_id_supported: bool | None = None
 _payment_status_supported: bool | None = None
 _advance_supported: bool | None = None
+_kitchen_reprint_supported: bool | None = None
 _item_discounts_supported: bool | None = None
 ADVANCE_LEAD = timedelta(minutes=20)
 
@@ -267,6 +268,17 @@ def _advance_supported_check(supabase) -> bool:
         except APIError:
             _advance_supported = False
     return _advance_supported
+
+
+def _kitchen_reprint_supported_check(supabase) -> bool:
+    global _kitchen_reprint_supported
+    if _kitchen_reprint_supported is None:
+        try:
+            supabase.table("transactions").select("kitchen_reprint_requested_at").limit(1).execute()
+            _kitchen_reprint_supported = True
+        except APIError:
+            _kitchen_reprint_supported = False
+    return _kitchen_reprint_supported
 
 
 def _validate_advance_time(value: datetime) -> datetime:
@@ -1472,6 +1484,8 @@ def list_transactions(
         columns += ", scheduled_for, pickup_customer_name, pickup_customer_phone, advance_schedule_revision, advance_schedule_updated_at, advance_schedule_updated_by"
     elif advance_order_type:
         raise HTTPException(status_code=501, detail="Advance orders need database migration 0068")
+    if _kitchen_reprint_supported_check(supabase):
+        columns += ", kitchen_reprint_requested_at"
     # Each filter is kept as a function so the one-request embedded read and
     # the general fallback below apply exactly the same ones.
     filters = []
@@ -2354,6 +2368,25 @@ def update_kitchen_status(
     updated.setdefault("card_type", None)
     updated.setdefault("force_vat_exempt", False)
     return TransactionResponse(**updated, items=transaction["items"])
+
+
+@router.post("/transactions/{transaction_id}/kitchen-reprint")
+def request_kitchen_reprint(transaction_id: str, user: CurrentUser = Depends(get_current_user)):
+    """Online Orders' "Print kitchen ticket": only the kitchen tablet is
+    paired with the kitchen printer, so this just stamps the request and the
+    tablet prints a REPRINT copy on its next Kitchen Display poll. Kitchen
+    status is left alone. Same gate as the kitchen-status buttons."""
+    supabase = get_supabase()
+    if not _kitchen_reprint_supported_check(supabase):
+        raise HTTPException(status_code=501, detail="Kitchen ticket reprint needs database migration 0081")
+    rows = supabase.table("transactions").select("id, status").eq("id", transaction_id).limit(1).execute().data
+    if not rows:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if rows[0]["status"] == "voided":
+        raise HTTPException(status_code=400, detail="This order was voided")
+    requested_at = datetime.now(timezone.utc).isoformat()
+    supabase.table("transactions").update({"kitchen_reprint_requested_at": requested_at}).eq("id", transaction_id).execute()
+    return {"id": transaction_id, "kitchen_reprint_requested_at": requested_at}
 
 
 @router.post("/transactions/{transaction_id}/fulfill", response_model=TransactionResponse)

@@ -28,6 +28,8 @@ export interface TicketOrder {
   pickup_customer_name?: string | null;
   pickup_customer_phone?: string | null;
   advance_schedule_revision?: number;
+  /** A copy asked for from Online Orders ("Print kitchen ticket"), not a new order. */
+  reprint?: boolean;
   items: TicketItem[];
   delivery?: {
     customer_name: string;
@@ -56,6 +58,7 @@ function phReadyTime(iso: string): string {
 export function buildTicketHeader(order: TicketOrder, width = PAPER_WIDTH_CHARS): string[] {
   const orderType = order.order_type;
   const lines = [center(`ORDER #${order.order_number ?? order.id.slice(0, 8)}`, width)];
+  if (order.reprint) lines.push(center('** REPRINT **', width));
   lines.push(center(orderType ? ORDER_TYPE_LABEL[orderType] ?? 'CHECK ORDER TYPE' : 'CHECK ORDER TYPE', width));
   if (order.scheduled_for) {
     lines.push(center(order.advance_schedule_revision ? 'ADVANCE - UPDATED' : 'ADVANCE ORDER', width));

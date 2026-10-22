@@ -137,6 +137,14 @@ function printedKey(order: ApiTransaction): string {
   return order.advance_schedule_revision ? `${order.id}:${order.advance_schedule_revision}` : order.id;
 }
 
+/** One key per "Print kitchen ticket" tap on Online Orders, so each prints once. */
+function reprintKey(order: ApiTransaction): string {
+  return `reprint:${order.id}:${order.kitchen_reprint_requested_at}`;
+}
+
+/** A tablet that was off doesn't print a pile of old copies when it comes back. */
+const REPRINT_MAX_AGE_MS = 60 * 60 * 1000;
+
 /** Scheduled online, POS advance, or hanged delivery orders: expected to wait,
  * so in Queued they sit in their own green group and never glow as late. */
 function isPlanned(order: ApiTransaction): boolean {
@@ -492,6 +500,19 @@ export default function KitchenDisplay() {
     [autoPrintOn, transactions, now]
   );
 
+  // Copies asked for from Online Orders: printed as REPRINT, kitchen status untouched.
+  const pendingReprints = useMemo(
+    () =>
+      autoPrintOn
+        ? transactions
+            .filter((t) => !!t.kitchen_reprint_requested_at
+              && !autoPrintedRef.current.has(reprintKey(t))
+              && now.getTime() - new Date(t.kitchen_reprint_requested_at).getTime() < REPRINT_MAX_AGE_MS)
+            .sort((a, b) => a.kitchen_reprint_requested_at!.localeCompare(b.kitchen_reprint_requested_at!))
+        : [],
+    [autoPrintOn, transactions, now]
+  );
+
   const acceptPrinted = useCallback(async (order: ApiTransaction) => {
     try {
       await updateKitchenStatus(order.id, 'preparing');
@@ -501,10 +522,11 @@ export default function KitchenDisplay() {
   }, []);
 
   useEffect(() => {
-    if (!handsFree || autoBusyRef.current || pendingAuto.length === 0 || products.length === 0) return;
+    if (!handsFree || autoBusyRef.current || (pendingAuto.length === 0 && pendingReprints.length === 0) || products.length === 0) return;
     autoBusyRef.current = true;
     (async () => {
       let changed = false;
+      let faulted = false;
       for (const order of pendingAuto) {
         const key = printedKey(order);
         if (!autoPrintedRef.current.has(key)) {
@@ -512,6 +534,7 @@ export default function KitchenDisplay() {
             await sendHandsFree(kitchenTicketEscpos(order, ticketIndex));
           } catch (e) {
             reportPrinterFault(e instanceof Error ? e.message : 'Auto-print failed');
+            faulted = true;
             break;
           }
           autoPrintedRef.current.add(key);
@@ -524,10 +547,22 @@ export default function KitchenDisplay() {
           changed = true;
         }
       }
+      for (const order of faulted ? [] : pendingReprints) {
+        try {
+          await sendHandsFree(kitchenTicketEscpos({ ...order, reprint: true }, ticketIndex));
+        } catch (e) {
+          reportPrinterFault(e instanceof Error ? e.message : 'Reprint failed');
+          break;
+        }
+        autoPrintedRef.current.add(reprintKey(order));
+        writeAutoPrinted(autoPrintedRef.current);
+        postKitchenPrinterHeartbeat({ status: 'ok', printed_order_number: order.order_number }).catch(() => {});
+        toast.success(`Reprinted ticket${order.order_number != null ? ` #${order.order_number}` : ''}`);
+      }
       autoBusyRef.current = false;
       if (changed) load();
     })();
-  }, [handsFree, sendHandsFree, pendingAuto, products.length, ticketIndex, acceptPrinted, load, reportPrinterFault]);
+  }, [handsFree, sendHandsFree, pendingAuto, pendingReprints, products.length, ticketIndex, acceptPrinted, load, reportPrinterFault]);
 
   /** Is the hands-free printer answering again? Clears the fault so auto-print resumes. */
   const recheckPrinter = useCallback(async (announce: boolean) => {
@@ -575,7 +610,16 @@ export default function KitchenDisplay() {
   /** Tap fallback: one tap prints the oldest waiting order and accepts it. */
   async function printNextPending() {
     const order = pendingAuto.find((o) => !autoPrintedRef.current.has(printedKey(o))) ?? pendingAuto[0];
-    if (!order) return;
+    if (!order) {
+      // New orders first; then copies asked for from Online Orders.
+      const copy = pendingReprints[0];
+      if (copy && printTicket({ ...copy, reprint: true })) {
+        autoPrintedRef.current.add(reprintKey(copy));
+        writeAutoPrinted(autoPrintedRef.current);
+        load();
+      }
+      return;
+    }
     const key = printedKey(order);
     if (!autoPrintedRef.current.has(key)) {
       if (!printTicket(order)) return;
@@ -836,11 +880,13 @@ export default function KitchenDisplay() {
             </div>
           </div>
         )}
-        {autoPrintOn && tapToPrint && pendingAuto.length > 0 && (
+        {autoPrintOn && tapToPrint && (pendingAuto.length > 0 || pendingReprints.length > 0) && (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border-2 border-primary bg-primary/10 p-4">
             <div>
               <p className="font-semibold">
-                {pendingAuto.length} new order{pendingAuto.length === 1 ? '' : 's'} waiting to print
+                {pendingAuto.length > 0 && `${pendingAuto.length} new order${pendingAuto.length === 1 ? '' : 's'} waiting to print`}
+                {pendingAuto.length > 0 && pendingReprints.length > 0 && ' · '}
+                {pendingReprints.length > 0 && `${pendingReprints.length} reprint${pendingReprints.length === 1 ? '' : 's'} requested`}
               </p>
               <p className="text-sm text-muted-foreground">
                 Tap once per order — or tap “Connect printer (auto-print)” once and new orders will print by themselves.
@@ -848,7 +894,7 @@ export default function KitchenDisplay() {
             </div>
             <Button size="lg" className="min-h-12" onClick={printNextPending}>
               <Printer className="w-5 h-5" aria-hidden="true" /> Print next order
-              {pendingAuto[0]?.order_number != null ? ` (#${pendingAuto[0].order_number})` : ''}
+              {(pendingAuto[0] ?? pendingReprints[0])?.order_number != null ? ` (#${(pendingAuto[0] ?? pendingReprints[0]).order_number})` : ''}
             </Button>
           </div>
         )}

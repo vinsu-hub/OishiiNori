@@ -258,7 +258,9 @@ const HELP_GROUPS: HelpGroup[] = [
             <strong>Online Orders</strong> (near the top of the sidebar) is the cashier's home for every website
             delivery and pickup order. The red circle counts orders waiting for review, and a "ding-dong" doorbell
             rings when a new one arrives (mute it with the speaker button on that page). Approve sends it to the
-            kitchen; when the rider comes back (or the customer picks up), press <strong>Cash received &amp; complete</strong>
+            kitchen, and the kitchen tablet prints its ticket by itself. Need another copy? <strong>Print kitchen
+            ticket</strong> on an In queue or Out / ready card sends one to the kitchen printer, marked REPRINT. When
+            the rider comes back (or the customer picks up), press <strong>Cash received &amp; complete</strong>
             to log the cash and finish the ticket. The <strong>History</strong> tab lists past online orders with
             their proof of payment.
           </p>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Banknote, Bike, CalendarClock, Gift, PackageCheck, ShoppingBag, Trash2 } from 'lucide-react';
+import { Banknote, Bike, CalendarClock, Gift, PackageCheck, Printer, ShoppingBag, Trash2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -23,8 +23,10 @@ import {
   fetchDigitalBoard,
   completeOnlineOrder,
   eraseOnlineOrder,
+  fetchKitchenPrinterStatus,
   fetchTransaction,
   rejectDigitalOrder,
+  requestKitchenReprint,
 } from '@/lib/api';
 import { formatCurrency, formatDateTime12h, formatTimestamp12h } from '@/lib/utils';
 import { POLL_INTERVAL_MS } from '@/lib/constants';
@@ -45,6 +47,9 @@ const STAGES: { key: DigitalBoardStage; label: string }[] = [
   { key: 'out_for_delivery', label: 'Out / ready for pickup' },
   { key: 'completed', label: 'Completed' },
 ];
+
+/** The kitchen tablet reports in on every poll; quieter than this, it's probably off. */
+const KITCHEN_TABLET_QUIET_MS = 2 * 60 * 1000;
 
 type SizeIndex = Map<string, { product: ApiProduct; size: ApiProduct['sizes'][number] }>;
 
@@ -97,6 +102,7 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
   const isExecutive = user?.role === 'executive';
   const [eraseTarget, setEraseTarget] = useState<ApiDigitalOrder | null>(null);
   const [cashReceived, setCashReceived] = useState('');
+  const [reprintingId, setReprintingId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchBusinessSettings().then((s) => setBusiness(receiptBusinessFromSettings(s))).catch(() => {});
@@ -210,6 +216,27 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
       toast.error(apiErrorDetail(e, 'Could not approve the order'));
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Only the kitchen tablet is paired with the kitchen printer, so this asks
+  // it to print a REPRINT copy on its next poll.
+  async function printKitchenTicket(order: ApiDigitalOrder) {
+    if (!order.transaction_id) return;
+    setReprintingId(order.id);
+    try {
+      await requestKitchenReprint(order.transaction_id);
+      const printer = await fetchKitchenPrinterStatus().catch(() => null);
+      const heardFrom = printer?.last_heartbeat_at ? Date.now() - new Date(printer.last_heartbeat_at).getTime() : Infinity;
+      if (heardFrom > KITCHEN_TABLET_QUIET_MS) {
+        toast.warning(`${orderNumber(order)} sent to the kitchen printer, but the kitchen tablet doesn't look online. Open Kitchen Display on it and the ticket prints.`, { duration: 10000 });
+      } else {
+        toast.success(`${orderNumber(order)} sent to the kitchen printer — prints in a few seconds`);
+      }
+    } catch (e) {
+      toast.error(apiErrorDetail(e, 'Could not send the ticket to the kitchen'));
+    } finally {
+      setReprintingId(null);
     }
   }
 
@@ -349,6 +376,16 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
                       {needsCash(order)
                         ? <><Banknote className="h-4 w-4" aria-hidden /> Cash received &amp; complete</>
                         : <><PackageCheck className="h-4 w-4" aria-hidden /> Complete order</>}
+                    </Button>
+                  )}
+                  {(order.stage === 'in_queue' || order.stage === 'out_for_delivery') && order.transaction_id && (
+                    <Button
+                      className="w-full min-h-10 gap-2"
+                      variant="outline"
+                      disabled={reprintingId === order.id}
+                      onClick={() => printKitchenTicket(order)}
+                    >
+                      <Printer className="h-4 w-4" aria-hidden /> {reprintingId === order.id ? 'Sending…' : 'Print kitchen ticket'}
                     </Button>
                   )}
                   {isExecutive && (
