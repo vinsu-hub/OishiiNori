@@ -1501,6 +1501,11 @@ def list_transactions(
             active.append("kitchen_status.neq.completed")
         if _payment_status_supported_check(supabase):
             active.append("payment_status.eq.unpaid")
+        if _kitchen_reprint_supported_check(supabase):
+            # A reprint asked for in the last hour reaches the kitchen tablet
+            # even for a finished order opened before today.
+            reprint_since = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+            active.append(f"kitchen_reprint_requested_at.gte.{reprint_since}")
         active_filter = ",".join(active)
         filters.append(lambda q: q.or_(active_filter))
     if kitchen_status and _kitchen_status_supported_check(supabase):
@@ -1805,13 +1810,25 @@ def _override_target(supabase, transaction_id: str, user: CurrentUser, body: Adv
     return transaction
 
 
-def _bump_revision(supabase, transaction: dict, user: CurrentUser, extra: dict | None = None) -> None:
-    supabase.table("transactions").update({
-        "advance_schedule_revision": (transaction.get("advance_schedule_revision") or 0) + 1,
+def _bump_revision(supabase, transaction: dict, user: CurrentUser, extra: dict | None = None,
+                   reprint: bool = False) -> None:
+    """Only from the revision we read, so a cashier's edit made meanwhile isn't
+    overwritten (409). A queued ticket reprints by itself on the new revision;
+    one the kitchen already took (preparing/ready) is sent as a REPRINT copy
+    when `reprint`, so the kitchen sees the change."""
+    revision = transaction.get("advance_schedule_revision") or 0
+    patch = {
+        "advance_schedule_revision": revision + 1,
         "advance_schedule_updated_at": datetime.now(timezone.utc).isoformat(),
         "advance_schedule_updated_by": user.id,
         **(extra or {}),
-    }).eq("id", transaction["id"]).execute()
+    }
+    if reprint and transaction.get("kitchen_status") in ("preparing", "ready") and _kitchen_reprint_supported_check(supabase):
+        patch["kitchen_reprint_requested_at"] = patch["advance_schedule_updated_at"]
+    updated = (supabase.table("transactions").update(patch).eq("id", transaction["id"])
+               .eq("advance_schedule_revision", revision).execute())
+    if not updated.data:
+        raise HTTPException(status_code=409, detail="Order changed; refresh and try again")
 
 
 @router.post("/transactions/{transaction_id}/advance-override/complete", response_model=TransactionResponse)
@@ -1888,8 +1905,10 @@ def override_reschedule_advance(transaction_id: str, body: AdvanceOverrideSchedu
         raise HTTPException(status_code=400, detail="This order was voided")
     if (transaction.get("advance_schedule_revision") or 0) != body.expected_revision:
         raise HTTPException(status_code=409, detail="Order changed; refresh and try again")
-    due = body.scheduled_for if body.scheduled_for.tzinfo else body.scheduled_for.replace(tzinfo=timezone.utc)
-    _bump_revision(supabase, transaction, user, {"scheduled_for": due.astimezone(timezone.utc).isoformat()})
+    if body.scheduled_for.tzinfo is None or body.scheduled_for.utcoffset() is None:
+        raise HTTPException(status_code=400, detail="Advance time must include a timezone")
+    _bump_revision(supabase, transaction, user, {"scheduled_for": body.scheduled_for.astimezone(timezone.utc).isoformat()},
+                   reprint=True)
     _log_override("reschedule", transaction, user, body.reason)
     return get_transaction(transaction_id, user)
 
@@ -1912,10 +1931,11 @@ def override_advance_customer(transaction_id: str, body: AdvanceOverrideCustomer
             value = getattr(body, field)
             if value is not None:
                 patch[field] = value.strip() or None
+        _bump_revision(supabase, transaction, user, reprint=True)
         supabase.table("deliveries").update(patch).eq("id", delivery["id"]).execute()
-        _bump_revision(supabase, transaction, user)
     else:
-        _bump_revision(supabase, transaction, user, {"pickup_customer_name": name, "pickup_customer_phone": phone})
+        _bump_revision(supabase, transaction, user, {"pickup_customer_name": name, "pickup_customer_phone": phone},
+                       reprint=True)
     _log_override("customer", transaction, user, body.reason)
     return get_transaction(transaction_id, user)
 
@@ -2203,8 +2223,8 @@ def void_transaction_core(supabase, transaction: dict, actor_id: str, reason: st
     whatever response shape it needs.
     """
     transaction_id = transaction["id"]
-    _restore_items_stock(supabase, transaction, actor_id)
-
+    # Mark it voided first, and only if it isn't already: two voids at the
+    # same moment would otherwise both give the stock back.
     updated = (
         supabase.table("transactions")
         .update(
@@ -2216,8 +2236,12 @@ def void_transaction_core(supabase, transaction: dict, actor_id: str, reason: st
             }
         )
         .eq("id", transaction_id)
+        .neq("status", "voided")
         .execute()
     )
+    if not updated.data:
+        raise HTTPException(status_code=409, detail="This order was already voided")
+    _restore_items_stock(supabase, transaction, actor_id)
     updated_row = updated.data[0]
     updated_row.setdefault("kitchen_status", "queued")
     updated_row.setdefault("order_type", None)
@@ -2375,7 +2399,8 @@ def request_kitchen_reprint(transaction_id: str, user: CurrentUser = Depends(get
     """Online Orders' "Print kitchen ticket": only the kitchen tablet is
     paired with the kitchen printer, so this just stamps the request and the
     tablet prints a REPRINT copy on its next Kitchen Display poll. Kitchen
-    status is left alone. Same gate as the kitchen-status buttons."""
+    status is left alone. Front-of-house and kitchen roles only."""
+    require_role(user, "employee", "manager", "executive", "kitchen")
     supabase = get_supabase()
     if not _kitchen_reprint_supported_check(supabase):
         raise HTTPException(status_code=501, detail="Kitchen ticket reprint needs database migration 0081")

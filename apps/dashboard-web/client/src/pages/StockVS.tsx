@@ -113,6 +113,8 @@ export default function StockVS() {
     for (const i of ingredients) counts.set(stationOf(i), (counts.get(stationOf(i)) ?? 0) + 1);
     return counts;
   }, [ingredients]);
+  // A saved ?station=unsorted link once nothing is unsorted opens the first station.
+  const activeTab: StationTab = tab === UNSORTED && !tabCounts.get(UNSORTED) ? STOCK_STATIONS[0].value : tab;
   const tabs: { value: StationTab; label: string }[] = [
     ...STOCK_STATIONS,
     ...(tabCounts.get(UNSORTED) ? [{ value: UNSORTED as StationTab, label: 'Unsorted' }] : []),
@@ -133,10 +135,10 @@ export default function StockVS() {
       );
     }
     return groupBySection(
-      ingredients.filter((i) => stationOf(i) === tab),
+      ingredients.filter((i) => stationOf(i) === activeTab),
       (i) => i.sheet_section,
     );
-  }, [ingredients, hasLayout, query, tab]);
+  }, [ingredients, hasLayout, query, activeTab]);
 
   function selectTab(value: StationTab) {
     setTab(value);
@@ -201,7 +203,7 @@ export default function StockVS() {
           <CardContent className="space-y-3">
             {!loading && hasLayout && (
               <div className="space-y-2">
-                <Tabs value={tab} onValueChange={(v) => selectTab(v as StationTab)}>
+                <Tabs value={activeTab} onValueChange={(v) => selectTab(v as StationTab)}>
                   <TabsList className="h-auto flex-wrap">
                     {tabs.map((t) => (
                       <TabsTrigger key={t.value} value={t.value}>
@@ -227,7 +229,7 @@ export default function StockVS() {
                         key={g.section}
                         type="button"
                         className="rounded-full border bg-muted/50 px-3 py-1 text-xs font-medium hover:bg-muted"
-                        onClick={() => document.getElementById(sectionAnchor(`vs-${tab}`, g.section))?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                        onClick={() => document.getElementById(sectionAnchor(`vs-${activeTab}`, g.section))?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
                       >
                         {g.section} <span className="text-muted-foreground">{g.items.length}</span>
                       </button>
@@ -272,7 +274,7 @@ export default function StockVS() {
                         <TableRow className="bg-muted/60 hover:bg-muted/60">
                           <TableCell
                             colSpan={6}
-                            id={sectionAnchor(`vs-${tab}`, group.section)}
+                            id={sectionAnchor(`vs-${activeTab}`, group.section)}
                             className="scroll-mt-20 py-2 text-xs font-bold uppercase tracking-wide text-foreground"
                           >
                             {group.section}{' '}

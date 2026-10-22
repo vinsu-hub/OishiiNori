@@ -7,7 +7,7 @@ import { printReceipt, receiptBusinessFromSettings, type ReceiptBusiness, type R
 import { printReceiptAllowed } from '@/lib/printerPrefs';
 import { advanceWindow, formatAdvanceTime, phInputTime, phLocalToIso } from '@/lib/advanceOrders';
 import { useVisiblePolling } from '@/hooks/useVisiblePolling';
-import { AdvanceOverrideDialog } from '@/components/pos/AdvanceOverrideDialog';
+import { AdvanceOverrideDialog, forgetOverrideKey, rememberOverrideKey } from '@/components/pos/AdvanceOverrideDialog';
 import { formatCurrency } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -211,10 +211,14 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
       })), itemsEdit.advance_schedule_revision, itemsOverride ?? undefined);
       setOrders((previous) => previous.map((row) => row.id === changed.id ? changed : row));
       setItemsEdit(null);
-      toast.success(`Order #${changed.order_number ?? changed.id.slice(0, 8)} updated; the kitchen will get an updated ticket.`);
+      if (itemsOverride) rememberOverrideKey(itemsOverride.override_key);
+      toast.success(changed.kitchen_status === 'completed'
+        ? `Order #${changed.order_number ?? changed.id.slice(0, 8)} updated; it stays done, so no new kitchen ticket.`
+        : `Order #${changed.order_number ?? changed.id.slice(0, 8)} updated; the kitchen will get an updated ticket.`);
       setReprintPrompt({ order: changed, previousTotal });
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Could not update the order';
+      if (itemsOverride && /override key/i.test(message)) forgetOverrideKey();
       toast.error(/changed|preparation window/i.test(message) ? 'This order changed or the kitchen has started it — refresh and try again' : message);
       load();
     } finally { setSavingItems(false); }

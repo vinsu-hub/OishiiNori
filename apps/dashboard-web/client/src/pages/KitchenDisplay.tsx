@@ -471,6 +471,13 @@ export default function KitchenDisplay() {
   const autoPrintedRef = useRef<Set<string>>(readAutoPrinted());
   const autoBusyRef = useRef(false);
 
+  /** A fresh ticket already shows the latest order, so a reprint asked for
+   * before it printed is done too (one tap never prints two tickets). */
+  function markOriginalPrinted(order: ApiTransaction) {
+    autoPrintedRef.current.add(printedKey(order));
+    if (order.kitchen_reprint_requested_at) autoPrintedRef.current.add(reprintKey(order));
+  }
+
   useEffect(() => {
     if (!autoPrintOn) return;
     let cancelled = false;
@@ -537,7 +544,7 @@ export default function KitchenDisplay() {
             faulted = true;
             break;
           }
-          autoPrintedRef.current.add(key);
+          markOriginalPrinted(order);
           writeAutoPrinted(autoPrintedRef.current);
           postKitchenPrinterHeartbeat({ status: 'ok', printed_order_number: order.order_number }).catch(() => {});
           toast.success(`Ticket printed${order.order_number != null ? ` — order #${order.order_number}` : ''}`);
@@ -548,6 +555,7 @@ export default function KitchenDisplay() {
         }
       }
       for (const order of faulted ? [] : pendingReprints) {
+        if (autoPrintedRef.current.has(reprintKey(order))) continue; // its fresh ticket just printed
         try {
           await sendHandsFree(kitchenTicketEscpos({ ...order, reprint: true }, ticketIndex));
         } catch (e) {
@@ -623,7 +631,7 @@ export default function KitchenDisplay() {
     const key = printedKey(order);
     if (!autoPrintedRef.current.has(key)) {
       if (!printTicket(order)) return;
-      autoPrintedRef.current.add(key);
+      markOriginalPrinted(order);
       writeAutoPrinted(autoPrintedRef.current);
     }
     if (!isUpcoming(order, new Date())) await acceptPrinted(order);
@@ -637,7 +645,7 @@ export default function KitchenDisplay() {
     // Print first, while still inside the tap (see printTicket).
     if (next === 'preparing' && printOn && !autoPrintedRef.current.has(printedKey(order))) {
       if (printTicket(order)) {
-        autoPrintedRef.current.add(printedKey(order));
+        markOriginalPrinted(order);
         writeAutoPrinted(autoPrintedRef.current);
       }
     }

@@ -33,6 +33,15 @@ function recalledKey(): string {
   return rememberedKey && rememberedKey.until > Date.now() ? rememberedKey.key : '';
 }
 
+/** Kept only after the server accepted it; a wrong key is forgotten. */
+export function rememberOverrideKey(key: string): void {
+  rememberedKey = { key, until: Date.now() + KEY_MEMORY_MS };
+}
+
+export function forgetOverrideKey(): void {
+  rememberedKey = null;
+}
+
 const ACTIONS: { step: Exclude<Step, 'menu'>; label: string; hint: string; icon: typeof Clock; danger?: boolean }[] = [
   { step: 'complete', label: 'Force complete', hint: 'Mark it done and handed over now, at any stage. Records the payment if unpaid.', icon: CheckCircle2 },
   { step: 'time', label: 'Change time', hint: 'Any time, even after the kitchen started.', icon: Clock },
@@ -119,7 +128,7 @@ export function AdvanceOverrideDialog({
     if (!order) return;
     const id = order.id;
     if (step === 'items') {
-      rememberedKey = { key: key.trim(), until: Date.now() + KEY_MEMORY_MS };
+      // The key is checked when the items are saved (AdvanceOrdersSection).
       onEditItems(order, auth());
       onClose();
       return;
@@ -131,14 +140,18 @@ export function AdvanceOverrideDialog({
         onUpdated(done, unpaid);
       } else if (step === 'time') {
         const changed = await overrideRescheduleAdvance(id, { ...auth(), scheduled_for: phLocalToIso(time), expected_revision: order.advance_schedule_revision });
-        toast.success(`Order ${number} moved; the kitchen gets an updated ticket`);
+        toast.success(order.kitchen_status === 'completed'
+          ? `Order ${number} moved`
+          : `Order ${number} moved; the kitchen gets an updated ticket`);
         onUpdated(changed, false);
       } else if (step === 'customer') {
         const changed = await overrideAdvanceCustomer(id, {
           ...auth(), name: name.trim(), phone: phone.trim(),
           ...(isDelivery ? { address: address.trim(), barangay: barangay.trim(), landmark: landmark.trim() } : {}),
         });
-        toast.success(`Customer details updated for ${number}`);
+        toast.success(order.kitchen_status === 'completed'
+          ? `Customer details updated for ${number}`
+          : `Customer details updated for ${number}; the kitchen gets an updated ticket`);
         onUpdated(changed, true);
       } else if (step === 'void') {
         const voided = await overrideVoidAdvance(id, auth());

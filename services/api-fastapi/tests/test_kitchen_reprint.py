@@ -49,6 +49,11 @@ class KitchenReprintTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         q.update.assert_not_called()
 
+    def test_riders_cannot_trigger_kitchen_prints(self):
+        app.dependency_overrides[get_current_user] = lambda: CurrentUser(
+            id="u2", role="rider", department=None, full_name="Rider", extra_pages=[])
+        self.assertEqual(self._post([{"id": "t1", "status": "open"}])[1].status_code, 403)
+
     def test_needs_the_migration(self):
         self.assertEqual(self._post([], migrated=False)[1].status_code, 501)
 

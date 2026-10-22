@@ -108,5 +108,25 @@ class ShiftReportTests(unittest.TestCase):
         self.assertEqual(report["payments"], {"Cash": 500.0, "Grab": 800.0})
         self.assertEqual(report["cash_drawer"]["expected_cash"], 600)
 
+    def test_grab_delivery_fee_and_refund_stay_out_of_the_shop_books(self):
+        during = "2026-10-10T01:00:00+00:00"
+        sale = {"id": "grab", "opened_at": during, "paid_at": None, "total_amount": 800, "discount_amount": 0,
+                "tax_amount": 0, "payment_method": "grab", "card_type": None, "payment_status": "paid"}
+        cash = {**sale, "id": "cash", "total_amount": 500, "payment_method": "cash"}
+        db = DB(business_settings=[], transactions=[cash, sale], digital_orders=[],
+                deliveries=[{"id": "d1", "transaction_id": "grab", "delivery_fee": 49}], cash_expenses=[],
+                shift_cash_movements=[{"id": "r1", "business_day_id": "shift", "kind": "cash_refund",
+                                       "purpose": "Grab order refunded", "amount": 30, "transaction_id": "grab",
+                                       "created_at": during, "profiles": {"full_name": "Ana"}}])
+        shift = {"id": "shift", "shift_number": 44, "business_date": "2026-10-10",
+                 "opened_at": "2026-10-09T16:00:00+00:00", "opened_by": "ana", "starting_cash": 100}
+        report = build_shift_report(db, shift, datetime(2026, 10, 10, 8, tzinfo=timezone.utc), 570)
+        # Grab's rider is not the shop's: no fee leaves the drawer.
+        self.assertEqual(report["cash_drawer"]["rider_fees_deductible"], 0)
+        self.assertEqual(report["sales"]["grab_settlement"], 849)
+        # The refund leaves the drawer but doesn't come off net (Grab was never in gross).
+        self.assertEqual(report["sales"]["net"], 500)
+        self.assertEqual(report["cash_drawer"]["expected_cash"], 570)
+
 
 if __name__ == "__main__": unittest.main()

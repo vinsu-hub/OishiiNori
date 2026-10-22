@@ -98,6 +98,33 @@ class OverrideTests(unittest.TestCase):
         self.assertEqual(patch_body["scheduled_for"], "2026-10-19T01:00:00+00:00")
         self.assertNotIn("kitchen_status", patch_body)
 
+    def test_reschedule_sends_the_kitchen_a_reprint_once_started(self):
+        body = {**KEY, "scheduled_for": "2026-10-19T01:00:00+00:00", "expected_revision": 2}
+        with patch.object(tx, "_kitchen_reprint_supported_check", return_value=True):
+            self._post("schedule", _order(kitchen_status="preparing"), body, method="patch")
+            self.assertIn("kitchen_reprint_requested_at", self.tables["transactions"].update.call_args[0][0])
+            self._post("schedule", _order(kitchen_status="queued"), body, method="patch")
+            self.assertNotIn("kitchen_reprint_requested_at", self.tables["transactions"].update.call_args[0][0])
+
+    def test_reschedule_needs_a_timezone_and_the_revision_we_read(self):
+        body = {**KEY, "scheduled_for": "2026-10-19T01:00:00", "expected_revision": 2}
+        self.assertEqual(self._post("schedule", _order(), body, method="patch").status_code, 400)
+        # Someone else saved in between: the guarded update matches no row.
+        self.tables["transactions"].execute.return_value = MagicMock(data=[])
+        body["scheduled_for"] += "+08:00"
+        self.assertEqual(self._post("schedule", _order(), body, method="patch").status_code, 409)
+
+
+class VoidRaceTests(unittest.TestCase):
+    def test_second_void_returns_no_stock(self):
+        db = MagicMock()
+        db.table.return_value = _chain([])  # the "not already voided" update matched nothing
+        with patch.object(tx, "_restore_items_stock") as restore:
+            with self.assertRaises(tx.HTTPException) as caught:
+                tx.void_transaction_core(db, _order(), "u1", "dup")
+        self.assertEqual(caught.exception.status_code, 409)
+        restore.assert_not_called()
+
 
 class OverrideItemEditTests(unittest.TestCase):
     def test_done_order_is_not_requeued(self):

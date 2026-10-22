@@ -137,26 +137,37 @@ def build_shift_report(db, shift: dict, closed_at: datetime, counted_cash: float
         # include it in transactions.total_amount.
         received = money(sale["total_amount"]) + (Decimal("0") if linked else delivery.get(sale["id"], Decimal("0")))
         payments[method] = payments.get(method, Decimal("0")) + received
+        if method == "Grab":
+            # Grab's own rider delivers it, so no fee leaves the drawer either.
+            grab_total += received
+            grab_orders += 1
+            continue
         fee = delivery.get(sale["id"], Decimal("0"))
         if method == "Cash":
             rider_fees_cash += fee
         else:
             rider_fees_deductible += fee
-        if method == "Grab":
-            grab_total += received
-            grab_orders += 1
-            continue
         gross += received + money(sale["discount_amount"])
         discounts += money(sale["discount_amount"])
         taxes += money(sale["tax_amount"])
     expenses = _page_rows(db.table("cash_expenses").select("id,description,amount,created_at,recorded_by,profiles(full_name)")
                           .eq("business_day_id", shift["id"]).order("created_at").order("id"))
-    movements = _page_rows(db.table("shift_cash_movements").select("id,kind,purpose,amount,created_at,recorded_by,profiles(full_name)")
+    movements = _page_rows(db.table("shift_cash_movements").select("id,kind,purpose,amount,transaction_id,created_at,recorded_by,profiles(full_name)")
                            .eq("business_day_id", shift["id"]).order("created_at").order("id"))
     expense_total = sum((money(e["amount"]) for e in expenses), Decimal("0"))
     paid_in = sum((money(m["amount"]) for m in movements if m["kind"] == "paid_in"), Decimal("0"))
     transfers = sum((money(m["amount"]) for m in movements if m["kind"] == "owner_transfer"), Decimal("0"))
     refunds = sum((money(m["amount"]) for m in movements if m["kind"] == "cash_refund"), Decimal("0"))
+    # A refund of a Grab order still leaves the drawer, but its sale was never
+    # in gross, so it doesn't come off net sales either.
+    refund_tx_ids = [m["transaction_id"] for m in movements if m["kind"] == "cash_refund" and m.get("transaction_id")]
+    grab_refund_ids = {
+        row["id"] for row in (db.table("transactions").select("id,payment_method").in_("id", refund_tx_ids)
+                              .execute().data if refund_tx_ids else [])
+        if row.get("payment_method") == "grab"
+    }
+    grab_refunds = sum((money(m["amount"]) for m in movements
+                        if m["kind"] == "cash_refund" and m.get("transaction_id") in grab_refund_ids), Decimal("0"))
     starting = money(shift["starting_cash"])
     cash_payments = payments.get("Cash", Decimal("0"))
     expected = (starting + cash_payments + paid_in - expense_total - transfers - refunds
@@ -179,7 +190,7 @@ def build_shift_report(db, shift: dict, closed_at: datetime, counted_cash: float
         "register_name": "Shared register",
         "opened_by": shift["opened_by"], "payments": {k: float(v) for k, v in sorted(payments.items())},
         "sales": {"gross": float(gross), "discounts": float(discounts),
-                  "cash_refunds": float(refunds), "net": float(gross - discounts - refunds),
+                  "cash_refunds": float(refunds), "net": float(gross - discounts - (refunds - grab_refunds)),
                   "taxes": float(taxes), "order_count": len(sales),
                   "grab_settlement": float(grab_total), "grab_orders": grab_orders,
                   "delivery_fees": float(rider_fees_cash + rider_fees_deductible)},
