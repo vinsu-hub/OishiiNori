@@ -477,6 +477,8 @@ export default function App() {
   const cartSubtotal = cart.reduce((sum, l) => sum + l.size.price * l.quantity, 0);
   const cartTotal = cartSubtotal + addonTotal;
   const pickupDelivery = effectiveChannel === 'pickup' || effectiveChannel === 'delivery';
+  // Pickup always needs a time, so it's held for the kitchen until then.
+  const needsTime = advanceMode || effectiveChannel === 'pickup';
   const packagingFee = pickupDelivery ? cart.reduce((sum, line) => sum + (line.product.takeout_bowl_eligible ? 10 * line.quantity : 0), 0) : 0;
   const boatDeposit = pickupDelivery ? cart.reduce((sum, line) => sum + (line.size.deposit_amount || 0) * line.quantity, 0) : 0;
   const totalDue = cartTotal + packagingFee + boatDeposit + (effectiveChannel === 'delivery' ? selectedFee ?? 0 : 0);
@@ -495,7 +497,7 @@ export default function App() {
       toast('Address and barangay are required for delivery', 'error');
       return false;
     }
-    if (advanceMode) {
+    if (needsTime) {
       const when = scheduledLocal ? new Date(scheduledLocal).getTime() : NaN;
       if (!Number.isFinite(when) || when < Date.now() + 30 * 60_000 || when > Date.now() + 7 * 86_400_000) {
         setScheduleError('Choose a date and time between 30 minutes and 7 days from now.');
@@ -515,7 +517,7 @@ export default function App() {
       addons: addons.map((l) => ({ addon_id: l.addon.id, quantity: l.quantity })),
       payment_method: method,
       customer_note: customerNote.trim() || undefined,
-      ...(advanceMode && effectiveChannel !== 'dine_in_qr' && scheduledLocal && {
+      ...(needsTime && effectiveChannel !== 'dine_in_qr' && scheduledLocal && {
         scheduled_for: new Date(scheduledLocal).toISOString(),
       }),
       ...(effectiveChannel !== 'dine_in_qr' && {
@@ -1352,9 +1354,9 @@ export default function App() {
                         <h3>Who's this for?</h3>
                       </div>
                     </div>
-                    {advanceMode && (
+                    {needsTime && (
                       <label className="schedule-field" htmlFor="scheduled-for">
-                        <span>When do you want it?</span>
+                        <span>{effectiveChannel === 'pickup' ? 'Pickup time' : 'When do you want it?'}</span>
                         <input
                           id="scheduled-for"
                           className="input"

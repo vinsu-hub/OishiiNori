@@ -90,6 +90,15 @@ class PublicSafetyTests(unittest.TestCase):
             self.assertEqual(self.client.post("/public/orders", json=body).status_code, 400)
         db.assert_not_called()
 
+    def test_pickup_order_needs_a_pickup_time(self):
+        body = {"order_channel": "pickup", "payment_method": "cash", "items": [{"product_size_id": "s", "quantity": 1}],
+                "customer_name": "A", "customer_phone": "09171234567"}
+        with patch.object(digital_menu, "get_supabase"), \
+             patch.object(digital_menu, "check_idempotency_key", return_value=None):
+            response = self.client.post("/public/orders", json=body)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Choose a pickup time")
+
     def test_public_catalog_is_cdn_cached(self):
         db = MagicMock()
         q = db.table.return_value

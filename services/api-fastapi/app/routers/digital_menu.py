@@ -266,6 +266,10 @@ def submit_digital_order(body: CreateDigitalOrderRequest, request: Request):
     # An advance order is for later, so it's allowed while today's business
     # day is closed/unopened -- staff decide when to approve it.
     scheduled_for: datetime | None = None
+    # A pickup with no time went straight to the kitchen and sat waiting --
+    # staff re-keyed one as a POS advance order and it was made twice.
+    if body.order_channel == "pickup" and body.scheduled_for is None:
+        raise HTTPException(status_code=400, detail="Choose a pickup time")
     if body.scheduled_for is not None:
         if body.order_channel == "dine_in_qr":
             raise HTTPException(status_code=400, detail="Advance orders are only for delivery or pickup")
