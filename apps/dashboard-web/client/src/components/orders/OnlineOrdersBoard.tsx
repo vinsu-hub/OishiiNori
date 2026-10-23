@@ -227,7 +227,10 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
     try {
       await requestKitchenReprint(order.transaction_id);
       const printer = await fetchKitchenPrinterStatus().catch(() => null);
-      const heardFrom = printer?.last_heartbeat_at ? Date.now() - new Date(printer.last_heartbeat_at).getTime() : Infinity;
+      // Cashier accounts can't read the printer status (null): no warning then.
+      const heardFrom = printer
+        ? (printer.last_heartbeat_at ? Date.now() - new Date(printer.last_heartbeat_at).getTime() : Infinity)
+        : 0;
       if (heardFrom > KITCHEN_TABLET_QUIET_MS) {
         toast.warning(`${orderNumber(order)} sent to the kitchen printer, but the kitchen tablet doesn't look online. Open Kitchen Display on it and the ticket prints.`, { duration: 10000 });
       } else {
@@ -493,8 +496,14 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
                 </div>
               )}
               {reviewTarget.stage !== 'pending' ? (
-                <DialogFooter>
+                <DialogFooter className="gap-2">
                   <Button variant="outline" onClick={() => setReviewTarget(null)}>Close</Button>
+                  {/* Ticket didn't come out in the kitchen? Send it again. */}
+                  {reviewTarget.transaction_id && (
+                    <Button className="gap-2" disabled={reprintingId === reviewTarget.id} onClick={() => printKitchenTicket(reviewTarget)}>
+                      <Printer className="h-4 w-4" aria-hidden /> {reprintingId === reviewTarget.id ? 'Sending…' : 'Print kitchen ticket'}
+                    </Button>
+                  )}
                 </DialogFooter>
               ) : (
               <DialogFooter className="gap-2">
