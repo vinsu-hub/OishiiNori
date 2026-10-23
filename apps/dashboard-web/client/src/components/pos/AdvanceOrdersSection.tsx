@@ -335,7 +335,7 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
         </div>
         <div className="text-sm">
           <p className="font-medium">{customerName || 'No name'}</p>
-          {customerPhone && <a className="text-muted-foreground underline-offset-2 hover:underline" href={`tel:${customerPhone}`}>{customerPhone}</a>}
+          {customerPhone && <p className="text-muted-foreground">{customerPhone}</p>}
           {orderType === 'delivery' && order.delivery?.address && <p className="text-muted-foreground">{[order.delivery.address, order.delivery.barangay].filter(Boolean).join(', ')}</p>}
         </div>
         <ul className="space-y-0.5 rounded-md bg-muted/60 px-3 py-2 text-sm">

@@ -316,7 +316,15 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
             const promo = order.items.some((item) => item.is_promo);
             const status = kitchenLabel(order);
             return (
-              <Card key={order.id} className={order.stage === 'pending' ? 'border-2 border-amber-400' : ''}>
+              <Card
+                key={order.id}
+                role="button"
+                tabIndex={0}
+                aria-label={`Open ${orderNumber(order)}`}
+                className={`cursor-pointer transition-colors hover:bg-muted/40 ${order.stage === 'pending' ? 'border-2 border-amber-400' : ''}`}
+                onClick={() => { setDeclining(false); setDeclineReason(''); setReviewTarget(order); }}
+                onKeyDown={(e) => { if (e.key === 'Enter') { setDeclining(false); setDeclineReason(''); setReviewTarget(order); } }}
+              >
                 <CardContent className="space-y-2 py-4">
                   <div className="flex items-start justify-between gap-2">
                     <div>
@@ -350,9 +358,7 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
                   {order.delivery && (
                     <div className="text-sm">
                       <p className="font-medium">{order.delivery.customer_name}</p>
-                      <a className="text-muted-foreground underline-offset-2 hover:underline" href={`tel:${order.delivery.customer_phone}`}>
-                        {order.delivery.customer_phone}
-                      </a>
+                      <p className="text-muted-foreground">{order.delivery.customer_phone}</p>
                       {order.order_channel === 'delivery' && (
                         <p className="text-muted-foreground">
                           {[order.delivery.address, order.delivery.barangay].filter(Boolean).join(', ')}
@@ -361,6 +367,7 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
                     </div>
                   )}
                   <p className="text-xs text-muted-foreground">Payment: {paymentLabel(order.payment_method)}</p>
+                  <div className="space-y-2" onClick={(e) => e.stopPropagation()}>
                   {order.stage === 'pending' && (
                     <Button className="w-full min-h-11" onClick={() => { setDeclining(false); setDeclineReason(''); setReviewTarget(order); }}>
                       Review order
@@ -397,6 +404,7 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
                       <Trash2 className="h-4 w-4" aria-hidden /> Delete order (override)
                     </Button>
                   )}
+                  </div>
                 </CardContent>
               </Card>
             );
@@ -410,10 +418,12 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
             <>
               <DialogHeader>
                 <DialogTitle>
-                  Review {orderNumber(reviewTarget)} · {reviewTarget.order_channel === 'delivery' ? 'Delivery' : 'Pickup'}
+                  {reviewTarget.stage === 'pending' ? 'Review' : 'Order'} {orderNumber(reviewTarget)} · {reviewTarget.order_channel === 'delivery' ? 'Delivery' : 'Pickup'}
                 </DialogTitle>
                 <DialogDescription>
-                  Check the order and payment, then approve to send it to the kitchen and print the customer slip.
+                  {reviewTarget.stage === 'pending'
+                    ? 'Check the order and payment, then approve to send it to the kitchen and print the customer slip.'
+                    : `${kitchenLabel(reviewTarget) ?? 'Approved'} · ordered ${formatTimestamp12h(reviewTarget.created_at)}`}
                 </DialogDescription>
               </DialogHeader>
               {reviewTarget.delivery && (
@@ -482,6 +492,11 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
                   />
                 </div>
               )}
+              {reviewTarget.stage !== 'pending' ? (
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setReviewTarget(null)}>Close</Button>
+                </DialogFooter>
+              ) : (
               <DialogFooter className="gap-2">
                 {declining ? (
                   <>
@@ -499,6 +514,7 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
                   </>
                 )}
               </DialogFooter>
+              )}
             </>
           )}
         </DialogContent>
