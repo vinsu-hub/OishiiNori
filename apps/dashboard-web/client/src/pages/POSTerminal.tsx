@@ -70,11 +70,12 @@ import {
   openBusinessDay,
   overrideTableBlock,
   posTableStatus,
+  type ApiTransaction,
 } from '@/lib/api';
 import { getTabletRole } from '@/lib/printerPrefs';
 import { phLocalToIso, phInputTime } from '@/lib/advanceOrders';
 import { formatCurrency, formatTime12h, formatTimestamp12h } from '@/lib/utils';
-import { todayIsoPH } from '@/lib/constants';
+import { toIsoDatePH, todayIsoPH } from '@/lib/constants';
 import {
   ReceiptDialog,
   receiptBusinessFromSettings,
@@ -179,6 +180,10 @@ function productAvailability(product: ApiProduct): 'available' | 'low_stock' | '
   return 'unavailable';
 }
 
+// Where an unpaid order's cash gets recorded, in the order End Business Day lists them.
+const UNPAID_GROUP_ORDER = ['delivery', 'online_pickup', 'advance_pickup', 'other'] as const;
+type UnpaidGroup = { kind: (typeof UNPAID_GROUP_ORDER)[number]; orders: ApiTransaction[]; total: number };
+
 export default function POSTerminal() {
   const { user } = useAuth();
   const [products, setProducts] = useState<ApiProduct[]>([]);
@@ -221,19 +226,32 @@ export default function POSTerminal() {
   const [endDayStep, setEndDayStep] = useState<'register-total' | 'credentials'>('register-total');
   const [endDayForm, setEndDayForm] = useState({ cashRegisterTotal: '', employeeNumber: '', pin: '' });
   const [endDaySubmitting, setEndDaySubmitting] = useState(false);
-  // Pay-on-delivery cash still out with riders -- not in the drawer yet.
-  const [unpaidDeliveries, setUnpaidDeliveries] = useState<{ count: number; total: number }>({ count: 0, total: 0 });
+  // Unpaid orders whose cash isn't in the drawer yet, grouped by the page
+  // where it's recorded. Orders scheduled for a later day aren't due today.
+  const [unpaidAtClose, setUnpaidAtClose] = useState<UnpaidGroup[]>([]);
   useEffect(() => {
     if (!endDayOpen) return;
-    fetchTransactions({ activeSince: todayIsoPH() })
+    const today = todayIsoPH();
+    fetchTransactions({ activeSince: today })
       .then((all) => {
-        const open = all.filter((t) => t.payment_status === 'unpaid' && t.status !== 'voided');
-        setUnpaidDeliveries({
-          count: open.length,
-          total: open.reduce((sum, t) => sum + t.total_amount + (t.delivery?.delivery_fee ?? 0), 0),
-        });
+        const groups = new Map<UnpaidGroup['kind'], UnpaidGroup>();
+        for (const t of all) {
+          if (t.payment_status !== 'unpaid' || t.status === 'voided') continue;
+          if (t.scheduled_for && toIsoDatePH(t.scheduled_for) > today) continue;
+          const kind: UnpaidGroup['kind'] =
+            t.order_type === 'delivery' ? 'delivery'
+              // POS advance orders carry the pickup name; website orders don't.
+              : t.order_type === 'takeout' && t.scheduled_for && t.pickup_customer_name ? 'advance_pickup'
+                : t.order_source === 'online' ? 'online_pickup'
+                  : 'other';
+          const group = groups.get(kind) ?? { kind, orders: [], total: 0 };
+          group.orders.push(t);
+          group.total += t.total_amount + (kind === 'delivery' ? t.delivery?.delivery_fee ?? 0 : 0);
+          groups.set(kind, group);
+        }
+        setUnpaidAtClose(UNPAID_GROUP_ORDER.flatMap((kind) => groups.get(kind) ?? []));
       })
-      .catch(() => setUnpaidDeliveries({ count: 0, total: 0 }));
+      .catch(() => setUnpaidAtClose([]));
   }, [endDayOpen]);
 
   // WS-13: the backend 403s with a terse "did not match your logged-in
@@ -2240,14 +2258,38 @@ export default function POSTerminal() {
                 : 'Confirm your own kiosk credentials to close today.'}
             </DialogDescription>
           </DialogHeader>
-          {unpaidDeliveries.count > 0 && (
-            <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-              {unpaidDeliveries.count} pay-on-delivery order{unpaidDeliveries.count === 1 ? '' : 's'} (
-              {formatCurrency(unpaidDeliveries.total)}) {unpaidDeliveries.count === 1 ? 'is' : 'are'} still with a rider and{' '}
-              {unpaidDeliveries.count === 1 ? "isn't" : "aren't"} counted in today’s drawer. If the rider is back, record it
-              in <b>Deliveries → Cash received</b> before closing.
-            </p>
-          )}
+          {unpaidAtClose.map((group) => {
+            const n = group.orders.length;
+            const list = group.orders
+              .map((t) => `#${t.order_number ?? '—'} ${formatCurrency(t.total_amount + (group.kind === 'delivery' ? t.delivery?.delivery_fee ?? 0 : 0))}`)
+              .join(', ');
+            return (
+              <p key={group.kind} className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                {group.kind === 'delivery' ? (
+                  <>
+                    {n} pay-on-delivery order{n === 1 ? '' : 's'} ({formatCurrency(group.total)}) {n === 1 ? 'is' : 'are'} still
+                    with a rider: {list}. If the rider is back, record it in <b>Deliveries → Cash received</b> before closing.
+                  </>
+                ) : group.kind === 'online_pickup' ? (
+                  <>
+                    {n} online pickup order{n === 1 ? '' : 's'} ({formatCurrency(group.total)}) {n === 1 ? "hasn't" : "haven't"} been
+                    paid: {list}. If the customer paid, record it in <b>Online Orders → Out / ready for pickup → Cash received</b>;
+                    if they never came, void it.
+                  </>
+                ) : group.kind === 'advance_pickup' ? (
+                  <>
+                    {n} advance order{n === 1 ? '' : 's'} due today ({formatCurrency(group.total)}) {n === 1 ? 'is' : 'are'} unpaid:{' '}
+                    {list}. Record the payment in <b>Advance Orders</b> if the customer paid.
+                  </>
+                ) : (
+                  <>
+                    {n} unpaid order{n === 1 ? '' : 's'} ({formatCurrency(group.total)}): {list}. Open {n === 1 ? 'it' : 'them'} from
+                    the <b>Order Queue</b> before closing.
+                  </>
+                )}
+              </p>
+            );
+          })}
           {endDayStep === 'register-total' ? (
             <>
               <div>
