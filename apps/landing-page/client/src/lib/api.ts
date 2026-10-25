@@ -126,6 +126,21 @@ export function submitReview(payload: SubmitReviewPayload): Promise<ReviewSubmit
   return request('/public/reviews', { method: 'POST', body: JSON.stringify(payload) });
 }
 
+// Approved reviews the owner switched on in the dashboard (Customer
+// Reviews -> "Show on website"), newest first.
+export interface PublicReview {
+  id: string;
+  name: string;
+  rating: number;
+  body: string;
+  photo_url: string | null;
+  created_at: string;
+}
+
+export function fetchPublicReviews(): Promise<PublicReview[]> {
+  return request('/public/reviews');
+}
+
 // No session on this device -- same posture as apps/customer-menu's
 // uploadProofOfPayment: just POSTs the file with no Authorization header,
 // the review's own unguessable id is the access control (see the matching

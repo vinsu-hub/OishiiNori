@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { ArrowLeft, Send, Star } from "lucide-react";
 import { useLocation } from "wouter";
-import { submitReview, uploadReviewPhoto } from "@/lib/api";
+import { fetchPublicReviews, submitReview, uploadReviewPhoto, type PublicReview } from "@/lib/api";
+import { ReviewCarousel } from "@/components/ReviewCarousel";
 
 const MAX_LENGTH = 600;
 
@@ -12,10 +13,11 @@ function generateId(): string {
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-// A new page (not a section on Home.tsx) for leaving a review -- public,
-// unauthenticated, staged into a moderation queue (POST /public/reviews).
-// Admin-only for now: nothing submitted here becomes publicly visible
-// anywhere on this site yet, only in the dashboard's Customer Reviews tab.
+// The site's REVIEWS tab: a carousel of the reviews the owner picked in the
+// dashboard (Customer Reviews -> "Show on website"), then the form for
+// leaving one -- public, unauthenticated, staged into a moderation queue
+// (POST /public/reviews). Nothing submitted here shows until approved and
+// switched on.
 export default function Review() {
   const [, setLocation] = useLocation();
   const [isAnonymous, setIsAnonymous] = useState(false);
@@ -34,6 +36,10 @@ export default function Review() {
   // attempt -- same idempotency-key convention the rest of this project's
   // public write endpoints already use.
   const [idempotencyKey] = useState(generateId);
+  const [featured, setFeatured] = useState<PublicReview[]>([]);
+  // Without featured reviews the page is just the form, as before.
+  useEffect(() => { fetchPublicReviews().then(setFeatured).catch(() => setFeatured([])); }, []);
+  const FormHeading = featured.length ? "h2" : "h1";
 
   function handlePhotoChange(file: File | null) {
     setPhotoFile(file);
@@ -91,8 +97,7 @@ export default function Review() {
 
   return (
     <div className="review-page" style={{ minHeight: "100vh", background: "#f3eddb", color: "#232321", fontFamily: '"DM Sans", sans-serif' }}>
-      <div style={{ maxWidth: 560, margin: "0 auto", padding: "48px 24px 80px" }}>
-        <style>{`
+      <style>{`
           .review-back {
             display: inline-flex; align-items: center; gap: 8px;
             background: none; border: none; cursor: pointer;
@@ -103,18 +108,55 @@ export default function Review() {
           .review-toggle { display: flex; gap: 16px; margin-bottom: 4px; }
           .review-toggle label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #3f3a33; cursor: pointer; }
           .review-counter { text-align: right; font-size: 11px; color: #6b6357; margin-top: -8px; }
+          .rv-marquee {
+            overflow: hidden; margin: 0 -24px; padding: 4px 0 8px;
+            -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+            mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+          }
+          .rv-track { display: flex; width: max-content; animation: rv-slide linear infinite; }
+          .rv-marquee:hover .rv-track, .rv-marquee:focus-within .rv-track { animation-play-state: paused; }
+          .rv-slot { padding-right: 16px; display: flex; }
+          @keyframes rv-slide { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+          .rv-static { overflow-x: auto; -webkit-mask-image: none; mask-image: none; margin: 0; }
+          .rv-static .rv-track { animation: none; gap: 16px; }
+          .rv-card {
+            box-sizing: border-box; width: 300px; max-width: 80vw; margin: 0; padding: 18px 20px;
+            background: #fffdf6; border: 1px solid #e7d9ad; border-radius: 8px;
+            display: flex; flex-direction: column; gap: 10px;
+          }
+          .rv-card-stars { display: flex; gap: 3px; }
+          .rv-card blockquote {
+            margin: 0; font-size: 15px; line-height: 1.6; color: #3f3a33;
+            display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden;
+          }
+          .rv-card img { width: 100%; height: 150px; object-fit: cover; border-radius: 6px; }
+          .rv-card figcaption { margin-top: auto; font-size: 13px; font-weight: 600; color: #232321; }
+          @media (prefers-reduced-motion: reduce) { .rv-track { animation: none; } }
         `}</style>
 
-        <a className="on-skip" href="#main-content">Skip to content</a><main tabIndex={-1} id="main-content"><button onClick={() => setLocation("/")} className="review-back">
-          <ArrowLeft size={14} /> Back to Oishii Nori
-        </button>
+      <a className="on-skip" href="#main-content">Skip to content</a><main tabIndex={-1} id="main-content">
+        <div style={{ maxWidth: 1100, margin: "0 auto", padding: "48px 24px 0" }}>
+          <button onClick={() => setLocation("/")} className="review-back">
+            <ArrowLeft size={14} /> Back to Oishii Nori
+          </button>
+          {featured.length > 0 && (
+            <section aria-labelledby="rv-heading" style={{ marginBottom: 48 }}>
+              <h1 id="rv-heading" style={{ fontFamily: '"Bebas Neue", sans-serif', fontSize: 44, color: "#a51f26", margin: "0 0 16px" }}>
+                What our guests say
+              </h1>
+              <ReviewCarousel reviews={featured} />
+            </section>
+          )}
+        </div>
 
-        <h1 style={{ fontFamily: '"Bebas Neue", sans-serif', fontSize: 44, color: "#a51f26", margin: "0 0 8px" }}>
+      <div style={{ maxWidth: 560, margin: "0 auto", padding: "0 24px 80px" }}>
+        <FormHeading style={{ fontFamily: '"Bebas Neue", sans-serif', fontSize: 44, color: "#a51f26", margin: "0 0 8px" }}>
           Leave a review
-        </h1>
+        </FormHeading>
         <p style={{ fontSize: 16, lineHeight: 1.7, color: "#3f3a33", marginBottom: 28 }}>
           How was your Oishii? Tell our kitchen what you enjoyed and what we could do better.
-          Your feedback goes to our team and isn’t posted publicly.
+          Your feedback goes to our team, and we may feature it here. Choose “Post anonymously”
+          if you’d rather your name not be shown.
         </p>
 
         <div ref={statusRef} aria-live="polite">{status && <p className="review-status" role="alert">{status}</p>}</div>
@@ -217,7 +259,7 @@ export default function Review() {
             </button>
           </form>
         )}
-      </main></div>
+      </div></main>
     </div>
   );
 }

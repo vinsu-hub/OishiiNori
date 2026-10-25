@@ -6,9 +6,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Loader2, Star } from 'lucide-react';
-import { ApiReview, approveReview, fetchReviews, rejectReview } from '@/lib/api';
+import { ApiReview, approveReview, fetchReviews, rejectReview, setReviewOnWebsite } from '@/lib/api';
 import { formatDateTime12h } from '@/lib/utils';
 
 function StarRating({ rating }: { rating: number }) {
@@ -25,8 +26,8 @@ function StarRating({ rating }: { rating: number }) {
 }
 
 // Public submission on Landing Page (`POST /public/reviews`) -> this
-// moderation queue. Admin-only for now -- an approved review is never
-// surfaced anywhere public, this is purely internal record-keeping.
+// moderation queue. Approved reviews switched to "Show on website" appear
+// in the carousel on the Landing Page's Reviews page.
 export default function Reviews() {
   const { user } = useAuth();
   const [reviews, setReviews] = useState<ApiReview[]>([]);
@@ -57,6 +58,19 @@ export default function Reviews() {
       toast.error(e instanceof Error ? e.message : 'Failed to approve review');
     } finally {
       setActingId(null);
+    }
+  }
+
+  async function handleWebsiteToggle(review: ApiReview, show: boolean) {
+    const flip = (value: boolean) =>
+      setReviews((rows) => rows.map((r) => (r.id === review.id ? { ...r, show_on_website: value } : r)));
+    flip(show);
+    try {
+      await setReviewOnWebsite(review.id, show);
+      toast.success(show ? 'Now showing on the website' : 'Hidden from the website');
+    } catch (e) {
+      flip(!show);
+      toast.error(e instanceof Error ? e.message : 'Failed to update the website');
     }
   }
 
@@ -92,6 +106,7 @@ export default function Reviews() {
 
   const pending = reviews.filter((r) => r.status === 'pending');
   const decided = reviews.filter((r) => r.status !== 'pending');
+  const onWebsite = decided.filter((r) => r.status === 'approved' && r.show_on_website).length;
 
   return (
     <DashboardLayout title="Customer Reviews">
@@ -160,6 +175,9 @@ export default function Reviews() {
           <Card>
             <CardHeader>
               <CardTitle className="font-corp-display text-base">History</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                {onWebsite} shown on the website's Reviews page. Switch on the approved reviews you want customers to see.
+              </p>
             </CardHeader>
             <CardContent className="space-y-2">
               {decided.map((r) => (
@@ -182,9 +200,18 @@ export default function Reviews() {
                       <p className="text-xs text-muted-foreground">decided {formatDateTime12h(r.decided_at)}</p>
                     )}
                   </div>
-                  <Badge variant={r.status === 'approved' ? 'default' : 'secondary'} className="shrink-0">
-                    {r.status}
-                  </Badge>
+                  <div className="flex flex-col items-end gap-2 shrink-0">
+                    <Badge variant={r.status === 'approved' ? 'default' : 'secondary'}>{r.status}</Badge>
+                    {r.status === 'approved' && (
+                      <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+                        Show on website
+                        <Switch
+                          checked={r.show_on_website}
+                          onCheckedChange={(checked) => handleWebsiteToggle(r, checked)}
+                        />
+                      </label>
+                    )}
+                  </div>
                 </div>
               ))}
             </CardContent>

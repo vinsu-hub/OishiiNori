@@ -702,11 +702,25 @@ class ReviewOut(BaseModel):
     decided_by: str | None = None
     decided_at: datetime | None = None
     photo_url: str | None = None
+    show_on_website: bool = False
     created_at: datetime
 
 
 class RejectReviewRequest(BaseModel):
     reason: str
+
+
+class ReviewWebsiteRequest(BaseModel):
+    show: bool
+
+
+class PublicReviewOut(BaseModel):
+    id: str
+    name: str
+    rating: int
+    body: str
+    photo_url: str | None = None
+    created_at: datetime
 
 
 # ---------------------------------------------------------------------------

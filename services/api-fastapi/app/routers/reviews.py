@@ -2,23 +2,35 @@
 Page (star rating + up to 600 chars, named or anonymous) staged into a
 `pending` queue -- same "public submit -> staff approve/reject" shape as
 digital_orders/reservations, reusing that pattern's rate-limiting and
-idempotency-key helpers rather than inventing a new one. Admin-only for
-now: an approved review is never surfaced anywhere public, this is purely
-an internal moderation/record-keeping queue.
+idempotency-key helpers rather than inventing a new one. Approving only
+records a review; the owner then picks which approved ones appear on the
+website's Reviews page (show_on_website -> GET /public/reviews).
 """
 
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from cachetools import TTLCache
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 
 from app.auth import CurrentUser, get_current_user, require_role_or_grant
 from app.deps import get_supabase
 from app.idempotency import check_idempotency_key, record_idempotency_key
-from app.rate_limit import client_ip, enforce_rate_limit
-from app.schemas import CreateReviewRequest, RejectReviewRequest, ReviewOut, ReviewStatus
+from app.rate_limit import client_ip, enforce_rate_limit, public_cache
+from app.schemas import (
+    CreateReviewRequest,
+    PublicReviewOut,
+    RejectReviewRequest,
+    ReviewOut,
+    ReviewStatus,
+    ReviewWebsiteRequest,
+)
 
 router = APIRouter(tags=["reviews"])
+
+PUBLIC_CACHE_SECONDS = 60
+PUBLIC_REVIEWS_LIMIT = 30
+_public_reviews_cache: TTLCache = TTLCache(maxsize=1, ttl=PUBLIC_CACHE_SECONDS)
 
 
 def _valid_idempotency_key(key: str | None) -> str | None:
@@ -70,6 +82,36 @@ def _fetch_review(supabase, review_id: str) -> dict:
     if not result or not result.data:
         raise HTTPException(status_code=404, detail="Review not found")
     return result.data
+
+
+@router.get("/public/reviews", response_model=list[PublicReviewOut])
+def public_reviews(response: Response):
+    """The website's Reviews page carousel: approved reviews the owner
+    switched on. Only what the card shows -- an anonymous review's name is
+    replaced here, never left for the page to hide."""
+    public_cache(response, PUBLIC_CACHE_SECONDS)
+    if "v" not in _public_reviews_cache:
+        rows = (
+            get_supabase().table("reviews")
+            .select("id, is_anonymous, customer_name, rating, body, photo_url, created_at")
+            .eq("status", "approved")
+            .eq("show_on_website", True)
+            .order("created_at", desc=True)
+            .limit(PUBLIC_REVIEWS_LIMIT)
+            .execute().data
+        )
+        _public_reviews_cache["v"] = [
+            {
+                "id": r["id"],
+                "name": "Anonymous" if r["is_anonymous"] else (r["customer_name"] or "Anonymous"),
+                "rating": r["rating"],
+                "body": r["body"],
+                "photo_url": r["photo_url"],
+                "created_at": r["created_at"],
+            }
+            for r in rows
+        ]
+    return _public_reviews_cache["v"]
 
 
 REVIEW_PHOTO_BUCKET = "review-photos"
@@ -171,4 +213,17 @@ def reject_review(review_id: str, body: RejectReviewRequest, user: CurrentUser =
         .eq("id", review_id)
         .execute()
     )
+    return updated.data[0]
+
+
+@router.post("/reviews/{review_id}/website", response_model=ReviewOut)
+def set_review_on_website(review_id: str, body: ReviewWebsiteRequest, user: CurrentUser = Depends(get_current_user)):
+    require_role_or_grant(user, "reviews", "manager", "executive")
+    supabase = get_supabase()
+    review = _fetch_review(supabase, review_id)
+    if body.show and review["status"] != "approved":
+        raise HTTPException(status_code=409, detail="Only an approved review can be shown on the website")
+
+    updated = supabase.table("reviews").update({"show_on_website": body.show}).eq("id", review_id).execute()
+    _public_reviews_cache.clear()
     return updated.data[0]

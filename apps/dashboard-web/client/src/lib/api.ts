@@ -2554,6 +2554,7 @@ export interface ApiReview {
   decided_by: string | null;
   decided_at: string | null;
   photo_url: string | null;
+  show_on_website: boolean;
   created_at: string;
 }
 
@@ -2567,6 +2568,10 @@ export function approveReview(id: string): Promise<ApiReview> {
 
 export function rejectReview(id: string, reason: string): Promise<ApiReview> {
   return request(`/reviews/${id}/reject`, { method: 'POST', body: JSON.stringify({ reason }) });
+}
+
+export function setReviewOnWebsite(id: string, show: boolean): Promise<ApiReview> {
+  return request(`/reviews/${id}/website`, { method: 'POST', body: JSON.stringify({ show }) });
 }
 
 // ---------------------------------------------------------------------------
