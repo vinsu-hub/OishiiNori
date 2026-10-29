@@ -2227,7 +2227,9 @@ def _restore_items_stock(supabase, transaction: dict, actor_id: str) -> None:
     )
 
 
-def void_transaction_core(supabase, transaction: dict, actor_id: str, reason: str) -> tuple[dict, list[dict]]:
+def void_transaction_core(
+    supabase, transaction: dict, actor_id: str, reason: str, restore_stock: bool = True
+) -> tuple[dict, list[dict]]:
     """Shared restore-and-mark-voided logic, used by both the direct void
     endpoint (queued-only, see its own gate below) and refund approval
     (transactions.py's own queued-only gate is specifically a limit on the
@@ -2246,6 +2248,9 @@ def void_transaction_core(supabase, transaction: dict, actor_id: str, reason: st
     they carry no recipe_items/stock impact, so there's nothing to give
     back. transaction_item_addons rows are left in place (cascade-deleted
     only if the item itself is ever deleted, which void never does).
+
+    restore_stock=False (refund approval only) voids without giving the
+    stock back -- a completed order was usually cooked and served.
 
     Returns (updated_row, response_items) -- the caller wraps these into
     whatever response shape it needs.
@@ -2269,7 +2274,8 @@ def void_transaction_core(supabase, transaction: dict, actor_id: str, reason: st
     )
     if not updated.data:
         raise HTTPException(status_code=409, detail="This order was already voided")
-    _restore_items_stock(supabase, transaction, actor_id)
+    if restore_stock:
+        _restore_items_stock(supabase, transaction, actor_id)
     updated_row = updated.data[0]
     updated_row.setdefault("kitchen_status", "queued")
     updated_row.setdefault("order_type", None)

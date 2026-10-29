@@ -1791,6 +1791,12 @@ class RefundCreateRequest(BaseModel):
     reason: str
 
 
+class RefundApproveRequest(BaseModel):
+    # None = the default for the order: give stock back unless the kitchen
+    # already completed it (then the food was usually served).
+    restore_stock: bool | None = None
+
+
 class RefundOut(BaseModel):
     id: str
     transaction_id: str
@@ -1804,6 +1810,12 @@ class RefundOut(BaseModel):
     # the refunds row itself) so the admin tab doesn't need a second fetch.
     order_number: int | None = None
     total_amount: float | None = None
+    kitchen_status: str | None = None
+    opened_at: datetime | None = None
+    order_type: str | None = None
+    payment_method: str | None = None
+    payment_status: str | None = None
+    items: list[str] = []
 
 
 class BusinessDayAdminOut(BaseModel):

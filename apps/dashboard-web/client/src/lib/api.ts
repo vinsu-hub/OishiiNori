@@ -2331,6 +2331,12 @@ export interface ApiRefund {
   reviewed_at: string | null;
   order_number: number | null;
   total_amount: number | null;
+  kitchen_status: string | null;
+  opened_at: string | null;
+  order_type: string | null;
+  payment_method: string | null;
+  payment_status: string | null;
+  items: string[];
 }
 
 export function createRefund(body: { transaction_id: string; reason: string }): Promise<ApiRefund> {
@@ -2341,8 +2347,13 @@ export function fetchRefunds(): Promise<ApiRefund[]> {
   return request('/refunds');
 }
 
-export function approveRefund(refundId: string): Promise<ApiRefund> {
-  return request(`/refunds/${refundId}/approve`, { method: 'POST' });
+// restoreStock left out = the server's default (give stock back unless the
+// order was already completed).
+export function approveRefund(refundId: string, restoreStock?: boolean): Promise<ApiRefund> {
+  return request(`/refunds/${refundId}/approve`, {
+    method: 'POST',
+    body: JSON.stringify(restoreStock === undefined ? {} : { restore_stock: restoreStock }),
+  });
 }
 
 export function rejectRefund(refundId: string): Promise<ApiRefund> {

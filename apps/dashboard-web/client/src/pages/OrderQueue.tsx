@@ -374,7 +374,7 @@ export default function OrderQueue() {
                     Void
                   </Button>
                 )}
-                {!readOnly && t.status === 'open' && (t.kitchen_status === 'preparing' || t.kitchen_status === 'ready') && (
+                {!readOnly && t.status !== 'voided' && t.kitchen_status !== 'queued' && (
                   <Button variant="outline" size="sm" onClick={() => setRefundTarget(t)}>
                     Refund
                   </Button>
@@ -450,9 +450,16 @@ export default function OrderQueue() {
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            This order is already {refundTarget?.kitchen_status} and can't be voided directly -- an
-            admin/executive must approve this request before anything is corrected.
+            This order is already {refundTarget?.kitchen_status} and can't be voided directly -- a
+            manager must approve this request before anything is corrected.
           </p>
+          <div className="flex flex-wrap gap-2">
+            {['Double punch', 'Customer cancelled', 'Wrong order'].map((preset) => (
+              <Button key={preset} type="button" size="sm" variant="secondary" onClick={() => setRefundReason(preset)}>
+                {preset}
+              </Button>
+            ))}
+          </div>
           <Input
             placeholder="Reason for refund"
             value={refundReason}

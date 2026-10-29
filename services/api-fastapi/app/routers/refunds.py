@@ -1,12 +1,16 @@
 """Refund approval flow (WS-12): void is narrowed to `queued` orders only
-(transactions.py's void_transaction) -- once an order is preparing or
-ready, a cashier files a refund request here instead, and an
-admin/executive must approve or reject it. A completed order can't be
-touched by either path. Approving performs the actual void (stock restore
-etc.) via void_transaction_core directly, deliberately bypassing that
-endpoint's own queued-only gate -- an already-approved refund is
-authorized regardless of the order's current kitchen_status (e.g. it may
-have advanced to ready while the request sat pending review).
+(transactions.py's void_transaction) -- once an order is preparing, ready
+or completed, a cashier files a refund request here instead, and an
+admin/executive must approve or reject it. Approving performs the actual
+void via void_transaction_core directly, deliberately bypassing that
+endpoint's own queued-only gate.
+
+Completed orders are refundable too (2026-10-29: double punches and
+refunds asked for after the kitchen bumped the order). The approver
+chooses whether the stock goes back: by default it does, unless the order
+was completed -- then the food was usually served. The money side is
+unchanged: shift reports keep counting the paid sale, and any cash handed
+back is recorded separately as a Shift Reports cash refund.
 """
 
 from datetime import datetime, timezone
@@ -16,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.auth import CurrentUser, get_current_user, require_role_or_grant
 from app.deps import get_supabase
 from app.routers.transactions import _fetch_transaction_with_items, void_transaction_core
-from app.schemas import RefundCreateRequest, RefundOut
+from app.schemas import RefundApproveRequest, RefundCreateRequest, RefundOut
 
 router = APIRouter(tags=["refunds"])
 
@@ -26,13 +30,33 @@ def _decorate(supabase, rows: list[dict]) -> list[dict]:
         return []
     tx_ids = list({r["transaction_id"] for r in rows})
     tx_result = (
-        supabase.table("transactions").select("id, order_number, total_amount").in_("id", tx_ids).execute()
+        supabase.table("transactions")
+        .select("id, order_number, total_amount, kitchen_status, opened_at, order_type, payment_method, payment_status")
+        .in_("id", tx_ids)
+        .execute()
     )
     tx_by_id = {t["id"]: t for t in tx_result.data}
+    item_rows = (
+        supabase.table("transaction_items")
+        .select("transaction_id, quantity, product_sizes(size_label, products(name))")
+        .in_("transaction_id", tx_ids)
+        .execute()
+        .data
+    )
+    items: dict[str, list[str]] = {}
+    for row in item_rows:
+        size = row.get("product_sizes") or {}
+        name = (size.get("products") or {}).get("name") or "Item"
+        label = size.get("size_label")
+        items.setdefault(row["transaction_id"], []).append(
+            f"{float(row['quantity']):g}× {name}" + (f" ({label})" if label and label != "Regular" else "")
+        )
     for r in rows:
-        tx = tx_by_id.get(r["transaction_id"])
-        r["order_number"] = tx.get("order_number") if tx else None
-        r["total_amount"] = tx.get("total_amount") if tx else None
+        tx = tx_by_id.get(r["transaction_id"]) or {}
+        for field in ("order_number", "total_amount", "kitchen_status", "opened_at", "order_type",
+                      "payment_method", "payment_status"):
+            r[field] = tx.get(field)
+        r["items"] = items.get(r["transaction_id"], [])
     return rows
 
 
@@ -55,15 +79,10 @@ def create_refund(body: RefundCreateRequest, user: CurrentUser = Depends(get_cur
         raise HTTPException(status_code=403, detail="Employees may only request a refund on their own orders")
     if tx["status"] == "voided":
         raise HTTPException(status_code=400, detail="Transaction is already voided")
-    # Refund is the correction path specifically for an order that's past
-    # the point of direct self-service void: still-`queued` orders should
-    # use Void instead, and `completed` orders can't be touched at all.
-    if tx.get("kitchen_status") not in ("preparing", "ready"):
-        raise HTTPException(
-            status_code=409,
-            detail="Only an order that's preparing or ready can be refund-requested "
-            "(a queued order can be voided directly; a completed order can't be corrected at all)",
-        )
+    # Refund is the correction path for an order past the point of direct
+    # self-service void: a still-`queued` order should use Void instead.
+    if tx.get("kitchen_status") == "queued":
+        raise HTTPException(status_code=409, detail="This order is still queued -- void it directly instead")
 
     existing = (
         supabase.table("refunds")
@@ -107,7 +126,11 @@ def _fetch_pending_refund(supabase, refund_id: str) -> dict:
 
 
 @router.post("/refunds/{refund_id}/approve", response_model=RefundOut)
-def approve_refund(refund_id: str, user: CurrentUser = Depends(get_current_user)):
+def approve_refund(
+    refund_id: str,
+    body: RefundApproveRequest | None = None,
+    user: CurrentUser = Depends(get_current_user),
+):
     require_role_or_grant(user, "refund-approval", "manager", "executive")
     supabase = get_supabase()
     refund = _fetch_pending_refund(supabase, refund_id)
@@ -115,16 +138,12 @@ def approve_refund(refund_id: str, user: CurrentUser = Depends(get_current_user)
     transaction = _fetch_transaction_with_items(supabase, refund["transaction_id"])
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
-    # A completed order is untouchable no matter how it got there -- if the
-    # kitchen finished it while this request sat pending review, reject
-    # rather than silently voiding a completed sale.
-    if transaction.get("kitchen_status") == "completed":
-        raise HTTPException(
-            status_code=409,
-            detail="This order was completed while the refund request was pending -- it can no longer be voided",
-        )
+    restore_stock = body.restore_stock if body and body.restore_stock is not None else (
+        transaction.get("kitchen_status") != "completed"
+    )
     if transaction["status"] != "voided":
-        void_transaction_core(supabase, transaction, user.id, f"Refund approved: {refund['reason']}")
+        reason = f"Refund approved: {refund['reason']}" + ("" if restore_stock else " (stock not returned)")
+        void_transaction_core(supabase, transaction, user.id, reason, restore_stock=restore_stock)
 
     updated = (
         supabase.table("refunds")
