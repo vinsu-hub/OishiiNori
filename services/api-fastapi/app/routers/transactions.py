@@ -271,6 +271,23 @@ def _advance_supported_check(supabase) -> bool:
 
 
 _kitchen_reprint_checked_at = 0.0
+_order_overrides_supported: bool | None = None
+_order_overrides_checked_at = 0.0
+
+
+def order_overrides_supported_check(supabase) -> bool:
+    """Online order overrides need migration 0083; same re-check as the
+    reprint column below, so they start working once it's applied."""
+    global _order_overrides_supported, _order_overrides_checked_at
+    if _order_overrides_supported or time.monotonic() - _order_overrides_checked_at < 60:
+        return bool(_order_overrides_supported)
+    _order_overrides_checked_at = time.monotonic()
+    try:
+        supabase.table("transactions").select("kitchen_change_note").limit(1).execute()
+        _order_overrides_supported = True
+    except Exception:
+        _order_overrides_supported = False
+    return _order_overrides_supported
 
 
 def _kitchen_reprint_supported_check(supabase) -> bool:
@@ -1493,6 +1510,8 @@ def list_transactions(
         raise HTTPException(status_code=501, detail="Advance orders need database migration 0068")
     if _kitchen_reprint_supported_check(supabase):
         columns += ", kitchen_reprint_requested_at"
+    if order_overrides_supported_check(supabase):
+        columns += ", kitchen_change_note"
     # Each filter is kept as a function so the one-request embedded read and
     # the general fallback below apply exactly the same ones.
     filters = []
@@ -1693,14 +1712,31 @@ def update_advance_items(
         raise HTTPException(status_code=404, detail="Advance order not found")
     if transaction["status"] == "voided":
         raise HTTPException(status_code=400, detail="This order was voided")
-    revision = transaction.get("advance_schedule_revision", 0)
-    if revision != body.expected_revision:
+    if transaction.get("advance_schedule_revision", 0) != body.expected_revision:
         raise HTTPException(status_code=409, detail="Order changed; refresh and try again")
+    # A CEO override edit of a finished order doesn't send it back to the kitchen.
+    requeue = not (override and transaction.get("kitchen_status") == "completed")
+    replace_transaction_items(supabase, transaction, body.items, user.id, requeue=requeue)
+    if override:
+        _log_override("edit items", transaction, user, body.reason)
+    return get_transaction(transaction_id, user)
+
+
+def replace_transaction_items(
+    supabase, transaction: dict, items: list, actor_id: str, requeue: bool = True, claim_extra: dict | None = None,
+) -> tuple[dict, list[dict]]:
+    """Swaps an order's items in place: old items' stock is given back, the
+    new items are deducted, and the totals are recomputed from the catalog.
+    Claims the order's revision first, so the bump makes the Kitchen Display
+    print an updated ticket. Shared by the advance-order edit and the online
+    order edit. Returns (transaction_row, inserted_items)."""
+    transaction_id = transaction["id"]
+    revision = transaction.get("advance_schedule_revision", 0)
 
     # Made bundle lines stay: match each to an unchanged line in the request.
     locked_ids = _locked_bundle_item_ids(supabase, [i["id"] for i in transaction["items"]])
     kept = [i for i in transaction["items"] if i["id"] in locked_ids]
-    remaining = list(body.items)
+    remaining = list(items)
     for row in kept:
         match = next((line for line in remaining if line.product_size_id == row["product_size_id"]
                       and float(line.quantity) == float(row["quantity"])), None)
@@ -1736,9 +1772,9 @@ def update_advance_items(
     now_iso = datetime.now(timezone.utc).isoformat()
     claim = {"advance_schedule_revision": revision + 1,
              "advance_schedule_updated_at": now_iso,
-             "advance_schedule_updated_by": user.id}
-    # A CEO override edit of a finished order doesn't send it back to the kitchen.
-    if not (override and transaction.get("kitchen_status") == "completed"):
+             "advance_schedule_updated_by": actor_id,
+             **(claim_extra or {})}
+    if requeue:
         claim.update({"kitchen_status": "queued", "kitchen_status_updated_at": now_iso})
     claimed = (supabase.table("transactions")
                .update(claim)
@@ -1754,17 +1790,14 @@ def update_advance_items(
     bundle_sizes = {r["id"] for r in (supabase.table("product_sizes").select("id, products(is_bundle)")
                                       .in_("id", size_ids).execute().data if size_ids else [])
                     if (r.get("products") or {}).get("is_bundle")}
-    _restore_items_stock(supabase, {**transaction, "items": [i for i in replaced if i["product_size_id"] not in bundle_sizes]}, user.id)
+    _restore_items_stock(supabase, {**transaction, "items": [i for i in replaced if i["product_size_id"] not in bundle_sizes]}, actor_id)
     if replaced:
         supabase.table("transaction_items").delete().in_("id", [i["id"] for i in replaced]).execute()
-    _write_items_and_totals(
-        supabase, transaction_id, user.id, remaining, sizes_by_id, addons_by_id,
+    return _write_items_and_totals(
+        supabase, transaction_id, actor_id, remaining, sizes_by_id, addons_by_id,
         discounted_item_index, discount, selected_discount_type_id, vat_exempt,
         transaction.get("order_type"), transaction.get("guest_count"), kept_subtotal=kept_subtotal,
     )
-    if override:
-        _log_override("edit items", transaction, user, body.reason)
-    return get_transaction(transaction_id, user)
 
 
 # --- CEO override on Advance Orders -----------------------------------------
@@ -2078,9 +2111,30 @@ def settle_payment(transaction_id: str, body: SettlePaymentRequest, user: Curren
     ).eq("id", transaction_id).eq("payment_status", "unpaid").neq("status", "voided").execute()
     if not settled.data:
         raise HTTPException(status_code=409, detail="Order is already paid or voided")
+    if body.payment_method != "cash":
+        _sync_online_order_method(supabase, transaction_id, body.payment_method, user.id)
     refreshed = _fetch_transaction_with_items(supabase, transaction_id)
     items = refreshed.pop("items")
     return TransactionResponse(**refreshed, items=items)
+
+
+def _sync_online_order_method(supabase, transaction_id: str, method: str, actor_id: str) -> None:
+    """Reports read an online order's method from digital_orders, so a cash
+    order settled as GCash on Deliveries must change there too, or it still
+    counts as drawer cash."""
+    linked = (supabase.table("digital_orders").select("id, payment_method")
+              .eq("transaction_id", transaction_id).limit(1).execute().data)
+    if not linked or linked[0]["payment_method"] != "cash":
+        return
+    names = supabase.table("online_payment_methods").select("name").execute().data
+    name = next((row["name"] for row in names if row["name"].lower() == method), method)
+    supabase.table("digital_orders").update({"payment_method": name}).eq("id", linked[0]["id"]).execute()
+    if order_overrides_supported_check(supabase):
+        supabase.table("online_order_changes").insert({
+            "digital_order_id": linked[0]["id"], "transaction_id": transaction_id, "kind": "payment",
+            "before": {"payment_method": "cash"}, "after": {"payment_method": name},
+            "reason": "Settled on the Deliveries page", "changed_by": actor_id,
+        }).execute()
 
 
 @router.post("/transactions/{transaction_id}/switch-table", response_model=TransactionResponse)

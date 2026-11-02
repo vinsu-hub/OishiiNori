@@ -81,7 +81,8 @@ export function DigitalOrdersQueue({
               channel === 'all' ? order.order_channel !== 'dine_in_qr' : order.order_channel === channel
             )
             .filter((order) => !scheduledOnly || !!order.scheduled_for)
-            .filter((order) => view !== 'upcoming' || !order.transaction_id)
+            // Includes an order a cashier moved to a later date after it reached the kitchen.
+            .filter((order) => view !== 'upcoming' || !order.transaction_id || Date.parse(order.scheduled_for ?? '') > Date.now())
             .sort((a, b) =>
               scheduledOnly
                 ? (a.scheduled_for ?? '').localeCompare(b.scheduled_for ?? '') || a.order_number - b.order_number

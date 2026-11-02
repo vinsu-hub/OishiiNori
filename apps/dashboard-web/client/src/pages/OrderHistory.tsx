@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { describeOrderChange } from '@/components/orders/OnlineOrderChangeDialogs';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { useAuth } from '@/contexts/AuthContext';
@@ -110,6 +111,12 @@ function OrderCard({ order }: { order: OrderHistoryEntry }) {
             {order.cash_refund_paid > 0 && <MoneyRow label="Cash refund paid out" amount={-order.cash_refund_paid} />}
             <p className="text-xs text-muted-foreground">Tax included for reference: {formatCurrency(order.tax_amount)}</p>
           </div>
+          {(order.changes?.length ?? 0) > 0 && <div className="space-y-1 border-t pt-3">
+            <h4 className="font-semibold">Cashier changes</h4>
+            {order.changes!.map((change, index) => <p key={index} className="text-sm">
+              {describeOrderChange(change)}. {change.reason}{change.reference ? ` (ref ${change.reference})` : ''} · {change.changed_by_name ?? 'Staff'}, {phDateTime.format(new Date(change.created_at))}
+            </p>)}
+          </div>}
           {(order.void_reason || order.refund_status) && <div className="space-y-1 border-t pt-3">
             <h4 className="font-semibold">Void and refund</h4>
             <Detail label="Void reason" value={order.void_reason} />

@@ -392,6 +392,8 @@ class TransactionResponse(BaseModel):
     paid_at: datetime | None = None
     # Online Orders' "Print kitchen ticket" (migration 0081).
     kitchen_reprint_requested_at: datetime | None = None
+    # What a cashier changed on an online order (migration 0083).
+    kitchen_change_note: str | None = None
     items: list[TransactionItemResponse] = Field(default_factory=list)
     delivery: DeliveryDetailOut | None = None
 
@@ -589,6 +591,17 @@ class DigitalOrderAddonResponse(BaseModel):
     unit_price: float
 
 
+class OnlineOrderChangeOut(BaseModel):
+    id: str
+    kind: Literal["payment", "items", "schedule"]
+    before: dict = Field(default_factory=dict)
+    after: dict = Field(default_factory=dict)
+    reason: str
+    reference: str | None = None
+    changed_by_name: str | None = None
+    created_at: datetime
+
+
 class DigitalOrderResponse(BaseModel):
     id: str
     order_number: int
@@ -617,6 +630,35 @@ class DigitalOrderResponse(BaseModel):
     pos_order_number: int | None = None
     payment_status: str | None = None
     scheduled_for: datetime | None = None
+    # Cashier overrides (migration 0083).
+    edit_revision: int = 0
+    changes: list[OnlineOrderChangeOut] = Field(default_factory=list)
+
+
+class OnlineOrderPaymentChangeRequest(BaseModel):
+    payment_method: PaymentMethod = Field(min_length=1, max_length=60)
+    reason: str = Field(min_length=1, max_length=500)
+    reference: str | None = Field(default=None, max_length=120)
+
+
+class CompleteOnlineOrderRequest(BaseModel):
+    # Left out = cash, the normal "Cash received". Otherwise the method the
+    # customer actually paid with when the order arrived.
+    payment_method: PaymentMethod | None = Field(default=None, max_length=60)
+    reference: str | None = Field(default=None, max_length=120)
+
+
+class OnlineOrderItemsEditRequest(BaseModel):
+    # Regular lines only: the free promo item and Sushi Boat lines stay as
+    # they are, whatever is sent here.
+    items: list[DigitalOrderItemCreate] = Field(max_length=MAX_ONLINE_ORDER_LINES)
+    reason: str = Field(min_length=1, max_length=500)
+    expected_revision: int = Field(ge=0)
+
+
+class OnlineOrderScheduleRequest(BaseModel):
+    scheduled_for: datetime
+    reason: str = Field(min_length=1, max_length=500)
 
 
 class FirstOrderPromoOut(BaseModel):

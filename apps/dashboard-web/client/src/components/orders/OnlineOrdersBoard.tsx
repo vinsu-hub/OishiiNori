@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { Banknote, Bike, CalendarClock, Gift, PackageCheck, Printer, ShoppingBag, Trash2 } from 'lucide-react';
+import { Banknote, Bike, CalendarClock, CreditCard, Gift, PackageCheck, PencilLine, Printer, ShoppingBag, Trash2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -19,6 +19,7 @@ import {
   type DigitalBoardStage,
   apiErrorDetail,
   approveDigitalOrder,
+  fetchActivePaymentMethods,
   fetchBusinessSettings,
   fetchDigitalBoard,
   completeOnlineOrder,
@@ -40,6 +41,7 @@ import {
   type ReceiptData,
 } from '@/components/pos/Receipt';
 import { EraseOrderDialog } from '@/components/shared/EraseOrderDialog';
+import { ChangePaymentDialog, EditOrderItemsDialog, ScheduleOrderDialog, describeOrderChange } from './OnlineOrderChangeDialogs';
 
 const STAGES: { key: DigitalBoardStage; label: string }[] = [
   { key: 'pending', label: 'Pending' },
@@ -64,7 +66,7 @@ function orderNumber(order: ApiDigitalOrder): string {
 function kitchenLabel(order: ApiDigitalOrder): string | null {
   switch (order.kitchen_status) {
     case 'queued':
-      return 'Waiting in kitchen';
+      return order.scheduled_for ? 'Scheduled · kitchen starts near the time' : 'Waiting in kitchen';
     case 'preparing':
       return 'Preparing';
     case 'ready':
@@ -82,6 +84,15 @@ function needsCash(order: ApiDigitalOrder): boolean {
 
 function paymentLabel(method: string): string {
   return method === 'cash' ? 'Cash on delivery/pickup' : method;
+}
+
+function canEditItems(order: ApiDigitalOrder): boolean {
+  return order.stage === 'pending' || order.stage === 'in_queue';
+}
+
+/** Food already made (ready or done) stays put. */
+function canSchedule(order: ApiDigitalOrder): boolean {
+  return canEditItems(order) && (!order.kitchen_status || ['queued', 'preparing'].includes(order.kitchen_status));
 }
 
 /** Order Queue → Online: website delivery/pickup orders, by stage. */
@@ -103,9 +114,16 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
   const [eraseTarget, setEraseTarget] = useState<ApiDigitalOrder | null>(null);
   const [cashReceived, setCashReceived] = useState('');
   const [reprintingId, setReprintingId] = useState<string | null>(null);
+  const [paidWith, setPaidWith] = useState('cash');
+  const [paidReference, setPaidReference] = useState('');
+  const [onlineMethods, setOnlineMethods] = useState<string[]>([]);
+  const [paymentTarget, setPaymentTarget] = useState<ApiDigitalOrder | null>(null);
+  const [itemsTarget, setItemsTarget] = useState<ApiDigitalOrder | null>(null);
+  const [scheduleTarget, setScheduleTarget] = useState<ApiDigitalOrder | null>(null);
 
   useEffect(() => {
     fetchBusinessSettings().then((s) => setBusiness(receiptBusinessFromSettings(s))).catch(() => {});
+    fetchActivePaymentMethods().then((rows) => setOnlineMethods(rows.map((row) => row.name))).catch(() => {});
   }, []);
 
   const load = useCallback(() => {
@@ -267,9 +285,10 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
   async function complete(order: ApiDigitalOrder) {
     setBusy(true);
     try {
-      await completeOnlineOrder(order.id);
+      const byOther = needsCash(order) && paidWith !== 'cash';
+      await completeOnlineOrder(order.id, byOther ? { payment_method: paidWith, reference: paidReference.trim() || null } : undefined);
       toast.success(needsCash(order)
-        ? `${orderNumber(order)} — ${formatCurrency(orderTotal(order))} cash logged, order completed`
+        ? `${orderNumber(order)} — ${formatCurrency(orderTotal(order))} ${byOther ? paidWith : 'cash'} logged, order completed`
         : `${orderNumber(order)} completed`);
       setCompleteTarget(null);
       setOrders((previous) => previous.map((row) => row.id === order.id ? { ...row, stage: 'completed', payment_status: 'paid' } : row));
@@ -283,7 +302,15 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
 
   const completeDue = completeTarget ? orderTotal(completeTarget) : 0;
   const cashNumber = Number(cashReceived);
-  const changeDue = cashReceived.trim() && Number.isFinite(cashNumber) ? cashNumber - completeDue : null;
+  const changeDue = paidWith === 'cash' && cashReceived.trim() && Number.isFinite(cashNumber) ? cashNumber - completeDue : null;
+
+  const afterChange = () => {
+    setPaymentTarget(null);
+    setItemsTarget(null);
+    setScheduleTarget(null);
+    setReviewTarget(null);
+    load();
+  };
 
   const visible = byStage[stage];
 
@@ -370,6 +397,11 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
                     </div>
                   )}
                   <p className="text-xs text-muted-foreground">Payment: {paymentLabel(order.payment_method)}</p>
+                  {(order.changes?.length ?? 0) > 0 && (
+                    <p className="text-xs font-medium text-amber-800">
+                      Changed: {describeOrderChange(order.changes![order.changes!.length - 1])}
+                    </p>
+                  )}
                   <div className="space-y-2" onClick={(e) => e.stopPropagation()}>
                   {order.stage === 'pending' && (
                     <Button className="w-full min-h-11" onClick={() => { setDeclining(false); setDeclineReason(''); setReviewTarget(order); }}>
@@ -381,7 +413,7 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
                     <Button
                       className="w-full min-h-11 gap-2"
                       variant={order.stage === 'out_for_delivery' ? 'default' : 'outline'}
-                      onClick={() => { setCashReceived(''); setCompleteTarget(order); }}
+                      onClick={() => { setCashReceived(''); setPaidWith('cash'); setPaidReference(''); setCompleteTarget(order); }}
                     >
                       {needsCash(order)
                         ? <><Banknote className="h-4 w-4" aria-hidden /> Cash received &amp; complete</>
@@ -483,6 +515,34 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
               ) : reviewTarget.payment_method !== 'cash' ? (
                 <p className="text-sm text-destructive">No proof of payment was uploaded for this order.</p>
               ) : null}
+              {(reviewTarget.changes?.length ?? 0) > 0 && (
+                <div className="space-y-1 border-t pt-2 text-sm">
+                  <p className="font-medium">Changes</p>
+                  {reviewTarget.changes!.map((change, index) => (
+                    <p key={change.id ?? index} className="text-muted-foreground">
+                      {describeOrderChange(change)}. {change.reason}
+                      {change.reference ? ` (ref ${change.reference})` : ''} · {change.changed_by_name ?? 'Staff'}, {formatTimestamp12h(change.created_at)}
+                    </p>
+                  ))}
+                </div>
+              )}
+              {!declining && (
+                <div className="flex flex-wrap gap-2 border-t pt-3">
+                  <Button variant="outline" size="sm" className="min-h-10 gap-2" onClick={() => { setPaymentTarget(reviewTarget); setReviewTarget(null); }}>
+                    <CreditCard className="h-4 w-4" aria-hidden /> Change payment
+                  </Button>
+                  {canEditItems(reviewTarget) && (
+                    <Button variant="outline" size="sm" className="min-h-10 gap-2" onClick={() => { setItemsTarget(reviewTarget); setReviewTarget(null); }}>
+                      <PencilLine className="h-4 w-4" aria-hidden /> Edit items
+                    </Button>
+                  )}
+                  {canSchedule(reviewTarget) && (
+                    <Button variant="outline" size="sm" className="min-h-10 gap-2" onClick={() => { setScheduleTarget(reviewTarget); setReviewTarget(null); }}>
+                      <CalendarClock className="h-4 w-4" aria-hidden /> Schedule for later
+                    </Button>
+                  )}
+                </div>
+              )}
               {declining && (
                 <div className="space-y-1">
                   <label htmlFor="decline-reason" className="text-sm font-medium">Reason for declining</label>
@@ -535,11 +595,11 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
             <>
               <DialogHeader>
                 <DialogTitle>
-                  {needsCash(completeTarget) ? 'Cash received' : 'Complete'} · {orderNumber(completeTarget)}
+                  {needsCash(completeTarget) ? 'Payment received' : 'Complete'} · {orderNumber(completeTarget)}
                 </DialogTitle>
                 <DialogDescription>
                   {needsCash(completeTarget)
-                    ? `Log the cash ${completeTarget.order_channel === 'delivery' ? 'the rider brought back' : 'from the customer'}. This marks the order ${completeTarget.order_channel === 'delivery' ? 'delivered' : 'picked up'} and finishes the ticket.`
+                    ? `Log the payment ${completeTarget.order_channel === 'delivery' ? 'the rider brought back' : 'from the customer'}. This marks the order ${completeTarget.order_channel === 'delivery' ? 'delivered' : 'picked up'} and finishes the ticket.`
                     : `Already paid (${paymentLabel(completeTarget.payment_method)}). This marks the order ${completeTarget.order_channel === 'delivery' ? 'delivered' : 'picked up'} and finishes the ticket.`}
                 </DialogDescription>
               </DialogHeader>
@@ -559,6 +619,27 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
                 </p>
               </div>
               {needsCash(completeTarget) && (
+                <div className="space-y-1">
+                  <label htmlFor="paid-with" className="text-sm font-medium">Paid by</label>
+                  <select
+                    id="paid-with"
+                    className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                    value={paidWith}
+                    onChange={(e) => setPaidWith(e.target.value)}
+                  >
+                    <option value="cash">Cash</option>
+                    {onlineMethods.map((name) => <option key={name} value={name}>{name}</option>)}
+                  </select>
+                </div>
+              )}
+              {needsCash(completeTarget) && paidWith !== 'cash' && (
+                <div className="space-y-1">
+                  <label htmlFor="paid-reference" className="text-sm font-medium">Reference number (optional)</label>
+                  <Input id="paid-reference" value={paidReference} maxLength={120} onChange={(e) => setPaidReference(e.target.value)} />
+                  <p className="text-xs text-muted-foreground">No cash goes in the drawer for this order. The drawer still pays the rider's delivery fee.</p>
+                </div>
+              )}
+              {needsCash(completeTarget) && paidWith === 'cash' && (
                 <div className="space-y-1">
                   <label htmlFor="cash-received" className="text-sm font-medium">Cash received (optional, for change)</label>
                   <Input
@@ -588,6 +669,10 @@ export function OnlineOrdersBoard({ onPendingCount }: { onPendingCount?: (count:
           )}
         </DialogContent>
       </Dialog>
+
+      <ChangePaymentDialog order={paymentTarget} methods={onlineMethods} onClose={() => setPaymentTarget(null)} onSaved={afterChange} />
+      <EditOrderItemsDialog order={itemsTarget} products={products} onClose={() => setItemsTarget(null)} onSaved={afterChange} />
+      <ScheduleOrderDialog order={scheduleTarget} onClose={() => setScheduleTarget(null)} onSaved={afterChange} />
 
       <EraseOrderDialog
         target={eraseTarget ? {

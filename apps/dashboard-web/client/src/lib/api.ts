@@ -524,6 +524,8 @@ export interface ApiTransaction {
   pickup_customer_phone: string | null;
   advance_schedule_revision: number;
   kitchen_reprint_requested_at?: string | null;
+  /** What a cashier changed on an online order, for the kitchen. */
+  kitchen_change_note?: string | null;
   advance_schedule_updated_at: string | null;
   advance_schedule_updated_by: string | null;
   items: ApiTransactionItem[];
@@ -650,6 +652,7 @@ export interface OrderHistoryEntry {
   refund_status: string | null;
   refund_reason: string | null;
   cash_refund_paid: number;
+  changes?: ApiOnlineOrderChange[];
   lines: OrderHistoryLine[];
   order_addons: { name: string; quantity: number; unit_price: number }[];
   subtotal: number;
@@ -906,6 +909,20 @@ export interface ApiDigitalOrder {
   stage?: DigitalBoardStage | null;
   pos_order_number?: number | null;
   payment_status?: string | null;
+  edit_revision?: number;
+  changes?: ApiOnlineOrderChange[];
+}
+
+/** One cashier change to an online order: who, when, what and why. */
+export interface ApiOnlineOrderChange {
+  id?: string;
+  kind: 'payment' | 'items' | 'schedule';
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+  reason: string;
+  reference: string | null;
+  changed_by_name: string | null;
+  created_at: string;
 }
 
 /** The cashier's Online tab in Order Queue. */
@@ -915,9 +932,30 @@ export function fetchDigitalBoard(): Promise<ApiDigitalOrder[]> {
   return request('/digital-orders/board');
 }
 
-/** Logs the cash if still unpaid, marks a delivery delivered, closes the ticket. */
-export function completeOnlineOrder(id: string): Promise<{ id: string; stage: 'completed' }> {
-  return request(`/digital-orders/${id}/complete`, { method: 'POST' });
+/** Logs the payment if still unpaid (cash unless told otherwise), marks a delivery delivered, closes the ticket. */
+export function completeOnlineOrder(
+  id: string,
+  paidWith?: { payment_method: string; reference: string | null },
+): Promise<{ id: string; stage: 'completed' }> {
+  return request(`/digital-orders/${id}/complete`, { method: 'POST', ...(paidWith ? { body: JSON.stringify(paidWith) } : {}) });
+}
+
+export function changeOnlineOrderPayment(
+  id: string,
+  body: { payment_method: string; reason: string; reference: string | null },
+): Promise<{ id: string }> {
+  return request(`/digital-orders/${id}/payment-method`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+export function editOnlineOrderItems(
+  id: string,
+  body: { items: { product_size_id: string; quantity: number; held_ingredients: string[] }[]; reason: string; expected_revision: number },
+): Promise<{ id: string; total: number; difference: number }> {
+  return request(`/digital-orders/${id}/items`, { method: 'PUT', body: JSON.stringify(body) });
+}
+
+export function scheduleOnlineOrder(id: string, body: { scheduled_for: string; reason: string }): Promise<{ id: string; scheduled_for: string }> {
+  return request(`/digital-orders/${id}/schedule`, { method: 'POST', body: JSON.stringify(body) });
 }
 
 export function fetchDigitalOrders(status?: DigitalOrderStatus): Promise<ApiDigitalOrder[]> {
@@ -2421,6 +2459,10 @@ export interface UpdateOnlinePaymentMethodRequest {
   account_number?: string;
   active?: boolean;
   sort_order?: number;
+}
+
+export function fetchActivePaymentMethods(): Promise<ApiOnlinePaymentMethod[]> {
+  return request('/payment-methods');
 }
 
 export function fetchAllPaymentMethods(): Promise<ApiOnlinePaymentMethod[]> {

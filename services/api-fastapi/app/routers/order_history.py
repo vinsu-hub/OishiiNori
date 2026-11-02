@@ -10,7 +10,9 @@ from app.auth import CurrentUser, get_current_user
 from app.deps import get_supabase
 from app.ph_time import PH_UTC_OFFSET, ph_day_bounds_utc, today_ph
 from app.routers.sales_insights import ID_BATCH_SIZE, _page_rows
-from app.routers.transactions import _item_discounts_supported_check, _transaction_item_addons_supported_check
+from app.routers.transactions import (
+    _item_discounts_supported_check, _transaction_item_addons_supported_check, order_overrides_supported_check,
+)
 
 router = APIRouter(tags=["order-history"])
 PH_TZ = timezone(PH_UTC_OFFSET)
@@ -106,7 +108,7 @@ def _build_entry(
     digital_addons: dict[str, list[dict]], tx_delivery: dict[str, dict],
     digital_delivery: dict[str, dict], catalog: dict[str, dict],
     discount_types: dict[str, dict], refund_rows: dict[str, list[dict]],
-    cash_refunds: dict[str, list[dict]], profiles: dict[str, dict],
+    cash_refunds: dict[str, list[dict]], profiles: dict[str, dict], changes: dict[str, list[dict]] | None = None,
 ) -> dict:
     tx_id = tx["id"] if tx else None
     digital_id = digital["id"] if digital else None
@@ -191,6 +193,12 @@ def _build_entry(
         "refund_status": (refund or {}).get("status"),
         "refund_reason": (refund or {}).get("reason"),
         "cash_refund_paid": float(payout),
+        "changes": [
+            {"kind": row["kind"], "before": row["before"], "after": row["after"], "reason": row["reason"],
+             "reference": row.get("reference"), "created_at": row["created_at"],
+             "changed_by_name": (row.get("profiles") or {}).get("full_name")}
+            for row in (changes or {}).get((digital or {}).get("id"), [])
+        ],
         "lines": lines,
         "order_addons": order_addons,
         "subtotal": float(subtotal),
@@ -251,6 +259,8 @@ def list_order_history(on_date: date | None = Query(None, alias="date"), user: C
         {row["transaction_id"]: row for row in deliveries_tx},
         {row["digital_order_id"]: row for row in deliveries_digital},
         sizes, discount_types, refunds, cash_refunds, staff,
+        _group(_batch(db, "online_order_changes", "digital_order_id,kind,before,after,reason,reference,created_at,profiles(full_name)",
+                      "digital_order_id", digital_ids), "digital_order_id") if order_overrides_supported_check(db) else {},
     )
     history = [_build_entry(tx_by_id.get(row.get("transaction_id")), row, *parts) for row in digital_day]
     for row in tx_day:

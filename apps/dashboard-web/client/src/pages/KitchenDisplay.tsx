@@ -732,6 +732,9 @@ export default function KitchenDisplay() {
                         {order.scheduled_for && (
                           <p className="text-sm font-semibold">Ready {formatAdvanceTime(order.scheduled_for)}</p>
                         )}
+                        {order.kitchen_change_note && (
+                          <p className="rounded bg-amber-100 px-2 py-1 text-sm font-semibold text-amber-900">{order.kitchen_change_note}</p>
+                        )}
                         <p className="text-xs text-muted-foreground">
                           opened {formatTimestamp12h(order.opened_at)} &middot;{' '}
                           <span

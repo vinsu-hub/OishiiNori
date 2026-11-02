@@ -12,7 +12,7 @@ into the same `DigitalOrderResponse` shape so the rider UI below needs no
 changes regardless of where an order started.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -20,7 +20,8 @@ from pydantic import TypeAdapter
 
 from app.auth import CurrentUser, get_current_user, require_role
 from app.deps import get_supabase
-from app.routers.digital_menu import _fetch_digital_order
+from app.routers.digital_menu import _fetch_digital_order, _parse_scheduled_for
+from app.routers.reservations import ADVANCE_ORDER_LEAD_MINUTES
 from app.routers.transactions import (
     _deliveries_transaction_id_supported_check, fetch_transaction_delivery_ticket, live_cache_get, live_cache_put,
     live_cache_version,
@@ -91,7 +92,12 @@ def _build_deliveries(status: str) -> list[dict]:
             .order("created_at")
             .execute()
         )
-        tickets.extend(_fetch_digital_order(supabase, o["id"]) for o in orders_result.data)
+        online = [_fetch_digital_order(supabase, o["id"]) for o in orders_result.data]
+        if status == "pending":
+            # A scheduled order isn't waiting on a rider until its prep window.
+            horizon = datetime.now(timezone.utc) + timedelta(minutes=ADVANCE_ORDER_LEAD_MINUTES)
+            online = [o for o in online if not (_parse_scheduled_for(o) and _parse_scheduled_for(o) > horizon)]
+        tickets.extend(online)
     for transaction_id in transaction_ids:
         ticket = fetch_transaction_delivery_ticket(supabase, transaction_id)
         if ticket:

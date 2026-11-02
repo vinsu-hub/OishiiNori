@@ -30,6 +30,8 @@ export interface TicketOrder {
   advance_schedule_revision?: number;
   /** A copy asked for from Online Orders ("Print kitchen ticket"), not a new order. */
   reprint?: boolean;
+  /** What a cashier changed on an online order. */
+  kitchen_change_note?: string | null;
   items: TicketItem[];
   delivery?: {
     customer_name: string;
@@ -59,6 +61,7 @@ export function buildTicketHeader(order: TicketOrder, width = PAPER_WIDTH_CHARS)
   const orderType = order.order_type;
   const lines = [center(`ORDER #${order.order_number ?? order.id.slice(0, 8)}`, width)];
   if (order.reprint) lines.push(center('** REPRINT **', width));
+  if (order.kitchen_change_note && !order.scheduled_for) lines.push(center('** UPDATED ORDER **', width));
   lines.push(center(orderType ? ORDER_TYPE_LABEL[orderType] ?? 'CHECK ORDER TYPE' : 'CHECK ORDER TYPE', width));
   if (order.scheduled_for) {
     lines.push(center(order.advance_schedule_revision ? 'ADVANCE - UPDATED' : 'ADVANCE ORDER', width));
@@ -67,6 +70,7 @@ export function buildTicketHeader(order: TicketOrder, width = PAPER_WIDTH_CHARS)
     if (order.pickup_customer_name) lines.push(...wrapLine('', asciiSafe(order.pickup_customer_name), width).map((line) => center(line, width)));
     if (order.pickup_customer_phone) lines.push(center(asciiSafe(order.pickup_customer_phone), width));
   }
+  if (order.kitchen_change_note) lines.push(...wrapLine('', asciiSafe(order.kitchen_change_note), width));
   if (order.order_source === 'grab') lines.push(center('GRAB', width));
   if (order.order_source === 'online') lines.push(center(onlineLabel(orderType), width));
   if (orderType === 'dine_in' && order.table_number != null) {

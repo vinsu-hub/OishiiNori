@@ -96,6 +96,9 @@ def build_ticket_header(transaction: dict, width: int) -> list[str]:
     delivery = transaction.get("delivery")
 
     lines = [f"ORDER #{order_number if order_number is not None else transaction['id'][:8]}".center(width)]
+    note = transaction.get("kitchen_change_note")
+    if note and not transaction.get("scheduled_for"):
+        lines.append("** UPDATED ORDER **".center(width))
     lines.append(_ORDER_TYPE_LABEL.get(order_type, "CHECK ORDER TYPE").center(width))
     if transaction.get("scheduled_for"):
         label = "ADVANCE - TIME UPDATED" if transaction.get("advance_schedule_revision") else "ADVANCE ORDER"
@@ -107,6 +110,8 @@ def build_ticket_header(transaction: dict, width: int) -> list[str]:
             lines.extend(line.center(width) for line in _wrap_line("", _ascii_safe(transaction["pickup_customer_name"]), width))
         if transaction.get("pickup_customer_phone"):
             lines.append(_ascii_safe(transaction["pickup_customer_phone"]).center(width))
+    if note:
+        lines.extend(_wrap_line("", _ascii_safe(note), width))
     if transaction.get("order_source") == "grab":
         lines.append("GRAB".center(width))
     if order_type == "dine_in" and table_number is not None:

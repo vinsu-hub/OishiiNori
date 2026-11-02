@@ -24,6 +24,7 @@ import re
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from cachetools import TTLCache
 from pydantic import TypeAdapter
@@ -35,16 +36,18 @@ from app.deps import get_supabase
 from app.ph_time import ph_day_bounds_utc, today_ph
 from app.idempotency import check_idempotency_key, record_idempotency_key
 from app.rate_limit import client_ip, enforce_rate_limit, local_rate_limit, public_cache
-from app.routers.business_days import is_open_today
+from app.routers.business_days import fetch_open_shift, is_open_today
 from app.routers.products import _list_products_data
 from app.routers.recipes import _get_recipe_data
 from app.routers.reservations import ADVANCE_ORDER_LEAD_MINUTES
 from app.routers.transactions import (
-    EraseTransactionRequest, _create_transaction_row, _get_vat_rate, close_transaction, erase_transaction_core,
-    live_cache_get, live_cache_put, live_cache_version, settle_payment,
+    EraseTransactionRequest, _create_transaction_row, _fetch_transaction_with_items, _get_vat_rate,
+    _validate_advance_time, close_transaction, erase_transaction_core, live_cache_get, live_cache_put,
+    live_cache_version, order_overrides_supported_check, replace_transaction_items, settle_payment,
 )
 from app.schemas import (
     BoatDepositReturnRequest,
+    CompleteOnlineOrderRequest,
     CreateDigitalOrderRequest,
     DeliveryFeeOut,
     DigitalOrderResponse,
@@ -53,6 +56,9 @@ from app.schemas import (
     OrderLookupOut,
     QueueDisplayOut,
     MenuAddonOut,
+    OnlineOrderItemsEditRequest,
+    OnlineOrderPaymentChangeRequest,
+    OnlineOrderScheduleRequest,
     ProductOut,
     RecipeItemOut,
     RejectDigitalOrderRequest,
@@ -359,24 +365,7 @@ def submit_digital_order(body: CreateDigitalOrderRequest, request: Request):
 
     # Prices are always recomputed from the live catalog -- a client-sent
     # price is never trusted, same posture as create_transaction.
-    subtotal = 0.0
-    packaging_fee = 0.0
-    boat_deposit = 0.0
-    for item in body.items:
-        size = sizes_by_id[item.product_size_id]
-        unit_price = float(size["price"])
-        subtotal += unit_price * item.quantity
-        product = size.get("products") or {}
-        if body.order_channel != "dine_in_qr":
-            if product.get("takeout_bowl_eligible"):
-                if not float(item.quantity).is_integer():
-                    raise HTTPException(status_code=400, detail="Food quantities must be whole numbers for takeout packaging")
-                packaging_fee += 10 * item.quantity
-            deposit_per_unit = float(size.get("deposit_amount") or 0)
-            if deposit_per_unit:
-                if not float(item.quantity).is_integer():
-                    raise HTTPException(status_code=400, detail="Sushi Boat quantities must be whole numbers")
-                boat_deposit += deposit_per_unit * item.quantity
+    subtotal, packaging_fee, boat_deposit = _price_online_items(body.items, sizes_by_id, body.order_channel)
     for addon in body.addons:
         unit_price = float(addons_by_id[addon.addon_id]["price"])
         subtotal += unit_price * addon.quantity
@@ -454,6 +443,30 @@ def submit_digital_order(body: CreateDigitalOrderRequest, request: Request):
 
     record_idempotency_key(supabase, body.idempotency_key, "POST /public/orders", order["id"])
     return _customer_order(supabase, order["id"])
+
+
+def _price_online_items(items: list, sizes_by_id: dict, channel: str) -> tuple[float, float, float]:
+    """(subtotal, packaging fee, boat deposit) of order lines, always from the
+    live catalog. Used when an order is placed and when a cashier edits it."""
+    subtotal = 0.0
+    packaging_fee = 0.0
+    boat_deposit = 0.0
+    for item in items:
+        size = sizes_by_id[item.product_size_id]
+        unit_price = float(size["price"])
+        subtotal += unit_price * item.quantity
+        product = size.get("products") or {}
+        if channel != "dine_in_qr":
+            if product.get("takeout_bowl_eligible"):
+                if not float(item.quantity).is_integer():
+                    raise HTTPException(status_code=400, detail="Food quantities must be whole numbers for takeout packaging")
+                packaging_fee += 10 * item.quantity
+            deposit_per_unit = float(size.get("deposit_amount") or 0)
+            if deposit_per_unit:
+                if not float(item.quantity).is_integer():
+                    raise HTTPException(status_code=400, detail="Sushi Boat quantities must be whole numbers")
+                boat_deposit += deposit_per_unit * item.quantity
+    return subtotal, packaging_fee, boat_deposit
 
 
 MAX_PENDING_ORDERS_PER_PHONE = 3
@@ -710,6 +723,7 @@ def digital_orders_board(user: CurrentUser = Depends(get_current_user)):
         order["pos_order_number"] = (tx or {}).get("order_number")
         order["payment_status"] = (tx or {}).get("payment_status")
         board.append(order)
+    _attach_order_changes(supabase, board)
     return live_cache_put(cache_key, _board_json.dump_json(_board_json.validate_python(board)), version)
 
 
@@ -733,12 +747,17 @@ def mark_digital_order_delivered(order_id: str, user: CurrentUser = Depends(get_
 
 
 @router.post("/digital-orders/{order_id}/complete")
-def complete_digital_order(order_id: str, user: CurrentUser = Depends(get_current_user)):
-    """Cashier finishes an online order: logs the cash if it's still unpaid,
-    marks a delivery delivered, and closes the ticket. Safe to repeat."""
+def complete_digital_order(
+    order_id: str,
+    body: CompleteOnlineOrderRequest | None = None,
+    user: CurrentUser = Depends(get_current_user),
+):
+    """Cashier finishes an online order: logs the payment if it's still unpaid
+    (cash, unless the customer paid another way on arrival), marks a delivery
+    delivered, and closes the ticket. Safe to repeat."""
     _require_front_of_house(user)
     supabase = get_supabase()
-    order = (supabase.table("digital_orders").select("id, status, order_channel, transaction_id")
+    order = (supabase.table("digital_orders").select("id, status, order_channel, transaction_id, payment_method")
              .eq("id", order_id).maybe_single().execute())
     if not order or not order.data:
         raise HTTPException(status_code=404, detail="Online order not found")
@@ -752,6 +771,14 @@ def complete_digital_order(order_id: str, user: CurrentUser = Depends(get_curren
         raise HTTPException(status_code=404, detail="This order's ticket was not found")
     if tx.data["status"] == "voided":
         raise HTTPException(status_code=409, detail="This order was voided")
+    paid_with = (body.payment_method or "").strip() if body else ""
+    if (tx.data.get("payment_status") == "unpaid" and paid_with
+            and paid_with.lower() != "cash" and paid_with.lower() != order["payment_method"].lower()):
+        _require_overrides(supabase)
+        full_order, full_tx = _order_for_override(supabase, order_id)
+        _change_order_payment(supabase, full_order, full_tx, paid_with, f"Paid by {paid_with} when the order arrived",
+                              body.reference, user)
+        tx.data["payment_status"] = "paid"
     if tx.data.get("payment_status") == "unpaid":
         try:
             settle_payment(tx_id, SettlePaymentRequest(payment_method="cash"), user)
@@ -975,7 +1002,7 @@ def _fire_digital_order(supabase, order: dict, actor_id: str):
     # transaction (POS reporting doesn't need the specific provider broken
     # out there) -- the actual method name and proof-of-payment image stay
     # on the digital_orders row itself as the real audit record.
-    pos_payment_method = "cash" if order.get("payment_method") == "cash" else "gcash"
+    pos_payment_method = _pos_method(order.get("payment_method"))
 
     transaction = _create_transaction_row(
         supabase,
@@ -1004,6 +1031,20 @@ def _fire_digital_order(supabase, order: dict, actor_id: str):
     # delivery's fee, which isn't a catalog item either. The digital_orders
     # row (linked via transaction_id) remains the record of exactly what was
     # ordered and, for delivery, what the fee was.
+    _apply_online_charges(supabase, order, transaction)
+    return transaction
+
+
+def _pos_method(online_method: str | None) -> str:
+    """The transaction's payment_method for an online method name: the same
+    name where its CHECK constraint allows it, otherwise generic "gcash"."""
+    name = (online_method or "").lower()
+    return name if name in ("cash", "gcash", "maya", "bdo") else "gcash"
+
+
+def _apply_online_charges(supabase, order: dict, transaction) -> None:
+    """Adds what isn't a catalog line to a fired order's totals. Also re-run
+    after an item edit, which recomputes the totals from the catalog."""
     delivery_fee = float(order["delivery"]["delivery_fee"]) if order.get("delivery") and order["delivery"].get("delivery_fee") else 0.0
     # Packaging is a customer charge for pickup/delivery, while the boat
     # deposit is refundable and remains outside sales revenue.
@@ -1023,7 +1064,6 @@ def _fire_digital_order(supabase, order: dict, actor_id: str):
                 "tax_amount": transaction.tax_amount + adjustment * _get_vat_rate(supabase),
             }
         ).eq("id", transaction.id).execute()
-    return transaction
 
 
 def _zero_promo_lines(supabase, order: dict, transaction) -> float:
@@ -1077,14 +1117,19 @@ def approve_digital_order(order_id: str, user: CurrentUser = Depends(get_current
     # Approving a non-cash order means staff verified its payment proof. The
     # boat deposit is included in that transfer and can be marked collected
     # here; cash-on-pickup/delivery deposits remain for the ledger tab.
-    if float(order.get("boat_deposit") or 0) > 0 and order.get("payment_method") != "cash":
-        supabase.table("sushi_boat_deposits").update({
-            "collected_at": update["approved_at"], "collected_by": user.id,
-        }).eq("digital_order_id", order_id).is_("collected_at", "null").execute()
+    if order.get("payment_method") != "cash":
+        _mark_boat_deposits_collected(supabase, order, update["approved_at"], user.id)
     result["items"] = order["items"]
     result["addons"] = order["addons"]
     result["delivery"] = order.get("delivery")
     return result
+
+
+def _mark_boat_deposits_collected(supabase, order: dict, at: str, actor_id: str) -> None:
+    if float(order.get("boat_deposit") or 0) > 0:
+        supabase.table("sushi_boat_deposits").update({
+            "collected_at": at, "collected_by": actor_id,
+        }).eq("digital_order_id", order["id"]).is_("collected_at", "null").execute()
 
 
 # Firing is triggered from GET /transactions (polled by Kitchen Display, Order
@@ -1144,6 +1189,319 @@ def fire_due_scheduled_orders(supabase) -> int:
     except Exception:
         _fire_backoff_until = time.monotonic() + 60
     return fired
+
+
+# --- Cashier overrides -------------------------------------------------------
+# A customer's plans change after ordering: they pay by GCash at the door, add
+# something by Facebook message, or meant another day. Any front-of-house staff
+# can correct the original order, with a reason, instead of entering a second
+# one. Every change is recorded in online_order_changes (migration 0083).
+
+_ORDER_TX_FIELDS = ("id, status, kitchen_status, payment_status, paid_at, opened_at, payment_method, "
+                    "scheduled_for, advance_schedule_revision")
+
+
+def _require_overrides(supabase) -> None:
+    if not order_overrides_supported_check(supabase):
+        raise HTTPException(status_code=501, detail="Online order changes need database migration 0083")
+
+
+def _order_for_override(supabase, order_id: str) -> tuple[dict, dict | None]:
+    """The order and its ticket (None until it's sent to the kitchen)."""
+    order = _fetch_digital_order(supabase, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Online order not found")
+    if order.get("order_channel") == "dine_in_qr":
+        raise HTTPException(status_code=400, detail="Only delivery and pickup orders can be changed here")
+    if order["status"] == "rejected":
+        raise HTTPException(status_code=409, detail="This order was declined")
+    tx = None
+    if order.get("transaction_id"):
+        rows = (supabase.table("transactions").select(_ORDER_TX_FIELDS)
+                .eq("id", order["transaction_id"]).limit(1).execute().data)
+        tx = rows[0] if rows else None
+        if tx and tx["status"] == "voided":
+            raise HTTPException(status_code=409, detail="This order was voided")
+    return order, tx
+
+
+def _log_order_change(supabase, order: dict, kind: str, before: dict, after: dict, reason: str,
+                      user: CurrentUser, reference: str | None = None) -> None:
+    supabase.table("online_order_changes").insert({
+        "digital_order_id": order["id"], "transaction_id": order.get("transaction_id"), "kind": kind,
+        "before": before, "after": after, "reason": reason.strip(),
+        "reference": (reference or "").strip() or None, "changed_by": user.id,
+    }).execute()
+
+
+def _attach_order_changes(supabase, orders: list[dict]) -> None:
+    if not orders or not order_overrides_supported_check(supabase):
+        return
+    rows = (supabase.table("online_order_changes").select("*, profiles(full_name)")
+            .in_("digital_order_id", [o["id"] for o in orders]).order("created_at").execute().data)
+    by_order: dict[str, list[dict]] = {}
+    for row in rows:
+        row["changed_by_name"] = (row.pop("profiles", None) or {}).get("full_name")
+        by_order.setdefault(row["digital_order_id"], []).append(row)
+    for order in orders:
+        order["changes"] = by_order.get(order["id"], [])
+
+
+def _parse_time(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def _online_method_name(supabase, requested: str) -> str:
+    wanted = requested.strip().lower()
+    if wanted == "cash":
+        return "cash"
+    rows = supabase.table("online_payment_methods").select("name").eq("active", True).execute().data
+    name = next((row["name"] for row in rows if row["name"].lower() == wanted), None)
+    if not name:
+        raise HTTPException(status_code=400, detail=f"Unknown payment method: {requested}")
+    return name
+
+
+def _change_order_payment(supabase, order: dict, tx: dict | None, requested: str, reason: str,
+                          reference: str | None, user: CurrentUser) -> None:
+    name = _online_method_name(supabase, requested)
+    previous = order["payment_method"]
+    if name.lower() == previous.lower():
+        raise HTTPException(status_code=400, detail=f"This order is already {name}")
+
+    def set_method(method: str) -> None:
+        supabase.table("digital_orders").update({"payment_method": method}).eq("id", order["id"]).execute()
+
+    def correct_paid_order() -> None:
+        # A closed shift's report is frozen, so its money can't be moved now.
+        shift = fetch_open_shift(supabase)
+        counted_at = _parse_time(tx.get("paid_at") or tx["opened_at"])
+        if not shift or counted_at < _parse_time(shift["opened_at"]):
+            raise HTTPException(status_code=409, detail="That shift is closed, so this payment can't be changed")
+        set_method(name)
+        supabase.table("transactions").update({"payment_method": _pos_method(name), "card_type": None}).eq("id", tx["id"]).execute()
+
+    if tx is None:
+        set_method(name)
+    elif tx.get("payment_status") != "unpaid":
+        correct_paid_order()
+    elif name == "cash":
+        set_method(name)  # still to be collected, now in cash
+    else:
+        # The money has arrived. The digital row goes first, so settle_payment
+        # doesn't overwrite a provider name with its generic transaction value.
+        set_method(name)
+        try:
+            settle_payment(tx["id"], SettlePaymentRequest(payment_method=_pos_method(name)), user)
+        except HTTPException as exc:
+            set_method(previous)
+            if exc.status_code != 409:
+                raise
+            correct_paid_order()  # paid meanwhile on another terminal
+    if tx is not None and name != "cash":
+        _mark_boat_deposits_collected(supabase, order, datetime.now(timezone.utc).isoformat(), user.id)
+    _log_order_change(supabase, order, "payment", {"payment_method": previous}, {"payment_method": name},
+                      reason, user, reference)
+
+
+@router.post("/digital-orders/{order_id}/payment-method")
+def change_digital_order_payment(
+    order_id: str, body: OnlineOrderPaymentChangeRequest, user: CurrentUser = Depends(get_current_user),
+):
+    """The customer paid (or will pay) another way. Changing an unpaid order
+    to a non-cash method records the payment as received now."""
+    _require_front_of_house(user)
+    if not body.reason.strip():
+        raise HTTPException(status_code=400, detail="A reason is required")
+    supabase = get_supabase()
+    _require_overrides(supabase)
+    order, tx = _order_for_override(supabase, order_id)
+    _change_order_payment(supabase, order, tx, body.payment_method, body.reason, body.reference, user)
+    return {"id": order_id}
+
+
+def _order_total(order: dict) -> float:
+    fee = float((order.get("delivery") or {}).get("delivery_fee") or 0)
+    return float(order["subtotal"]) + float(order.get("packaging_fee") or 0) + fee
+
+
+def _line_label(size: dict, quantity: float) -> str:
+    product = (size.get("products") or {}).get("name") or "Item"
+    label = size.get("size_label")
+    return f"{quantity:g}x {product}" + (f" ({label})" if label and label != "Regular" else "")
+
+
+def _kitchen_note(before: dict[str, float], after: dict[str, float], sizes_by_id: dict) -> str:
+    added = [_line_label(sizes_by_id[s], q - before.get(s, 0)) for s, q in after.items() if q > before.get(s, 0)]
+    removed = [_line_label(sizes_by_id[s], q - after.get(s, 0)) for s, q in before.items() if q > after.get(s, 0)]
+    parts = []
+    if added:
+        parts.append("ADDED: " + ", ".join(added))
+    if removed:
+        parts.append("REMOVED: " + ", ".join(removed))
+    return " / ".join(parts) or "ITEMS CHANGED"
+
+
+def _sync_digital_lines(supabase, order_id: str, existing: list[dict], incoming: list, sizes_by_id: dict) -> None:
+    """Changes only what differs. Lines aren't deleted and rewritten, because
+    a line's id is what a Sushi Boat deposit points at."""
+    unmatched = list(existing)
+    new_rows = []
+    for item in incoming:
+        holds = sorted(item.held_ingredients)
+        price = float(sizes_by_id[item.product_size_id]["price"])
+        match = next((row for row in unmatched if row["product_size_id"] == item.product_size_id
+                      and sorted(row.get("held_ingredients") or []) == holds), None)
+        if match is None:
+            new_rows.append({"digital_order_id": order_id, "product_size_id": item.product_size_id,
+                             "quantity": item.quantity, "unit_price": price,
+                             "held_ingredients": item.held_ingredients})
+            continue
+        unmatched.remove(match)
+        if float(match["quantity"]) != item.quantity or float(match["unit_price"]) != price:
+            supabase.table("digital_order_items").update({"quantity": item.quantity, "unit_price": price}).eq("id", match["id"]).execute()
+    if new_rows:
+        supabase.table("digital_order_items").insert(new_rows).execute()
+    if unmatched:
+        supabase.table("digital_order_items").delete().in_("id", [row["id"] for row in unmatched]).execute()
+
+
+@router.put("/digital-orders/{order_id}/items")
+def edit_digital_order_items(
+    order_id: str, body: OnlineOrderItemsEditRequest, user: CurrentUser = Depends(get_current_user),
+):
+    """The customer added or changed something after ordering. Allowed until
+    the order is out; a ticket already in the kitchen goes back to the queue
+    and an updated one prints, saying what was added or removed. Returns how
+    much more to collect (or give back, when negative)."""
+    _require_front_of_house(user)
+    if not body.reason.strip():
+        raise HTTPException(status_code=400, detail="A reason is required")
+    supabase = get_supabase()
+    _require_overrides(supabase)
+    order, tx = _order_for_override(supabase, order_id)
+    if board_stage(order, tx) not in ("pending", "in_queue"):
+        raise HTTPException(status_code=409, detail="This order has already left the kitchen, so its items can't be changed")
+    revision = order.get("edit_revision") or 0
+    if revision != body.expected_revision:
+        raise HTTPException(status_code=409, detail="Order changed; refresh and try again")
+
+    existing = order["items"]
+    size_ids = list({i.product_size_id for i in body.items} | {row["product_size_id"] for row in existing})
+    sizes_by_id = {s["id"]: s for s in (supabase.table("product_sizes")
+                   .select("id, price, deposit_amount, size_label, products(name, category, department, takeout_bowl_eligible)")
+                   .in_("id", size_ids).execute().data)}
+    missing = [sid for sid in size_ids if sid not in sizes_by_id]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Product sizes not found: {missing}")
+    if any(float(sizes_by_id[i.product_size_id].get("deposit_amount") or 0) for i in body.items):
+        raise HTTPException(status_code=400, detail="Sushi Boats can't be added or changed here -- decline the order and re-order instead")
+
+    promo = [row for row in existing if row.get("is_promo")]
+    boats = [row for row in existing if not row.get("is_promo") and float(sizes_by_id[row["product_size_id"]].get("deposit_amount") or 0)]
+    editable = [row for row in existing if not row.get("is_promo") and row not in boats]
+    if not body.items and not boats:
+        raise HTTPException(status_code=400, detail="An order needs at least one item -- decline it instead")
+
+    def line(row: dict) -> SimpleNamespace:
+        return SimpleNamespace(product_size_id=row["product_size_id"], quantity=float(row["quantity"]),
+                               held_ingredients=row.get("held_ingredients") or [])
+
+    fixed = [line(row) for row in boats]
+    subtotal, packaging_fee, _ = _price_online_items([*fixed, *body.items], sizes_by_id, order["order_channel"])
+    subtotal += sum(float(a["unit_price"]) * a["quantity"] for a in order["addons"])
+
+    def by_size(lines) -> dict[str, float]:
+        totals: dict[str, float] = {}
+        for item in lines:
+            totals[item.product_size_id] = totals.get(item.product_size_id, 0) + float(item.quantity)
+        return totals
+
+    old_editable = [line(row) for row in editable]
+    if by_size(old_editable) == by_size(body.items) and (
+        sorted((i.product_size_id, sorted(i.held_ingredients)) for i in old_editable)
+        == sorted((i.product_size_id, sorted(i.held_ingredients)) for i in body.items)
+    ):
+        raise HTTPException(status_code=400, detail="Nothing changed")
+    note = _kitchen_note(by_size(old_editable), by_size(body.items), sizes_by_id)
+
+    claimed = (supabase.table("digital_orders").update({"edit_revision": revision + 1})
+               .eq("id", order_id).eq("edit_revision", revision).execute())
+    if not claimed.data:
+        raise HTTPException(status_code=409, detail="Order changed; refresh and try again")
+
+    if tx is not None:
+        ticket = _fetch_transaction_with_items(supabase, tx["id"])
+        # Same line order as firing: the free promo item goes last.
+        lines = [
+            TransactionItemCreate(product_size_id=i.product_size_id, quantity=i.quantity, held_ingredients=i.held_ingredients)
+            for i in [*fixed, *body.items, *[line(row) for row in promo]]
+        ]
+        row, inserted = replace_transaction_items(supabase, ticket, lines, user.id, claim_extra={"kitchen_change_note": note})
+        _apply_online_charges(
+            supabase, {**order, "items": [*boats, *promo], "packaging_fee": packaging_fee},
+            SimpleNamespace(id=tx["id"], total_amount=float(row["total_amount"]), tax_amount=float(row["tax_amount"]),
+                            items=[SimpleNamespace(id=i["id"], product_size_id=i["product_size_id"],
+                                                   unit_price=float(i["unit_price"]), quantity=float(i["quantity"]))
+                                   for i in inserted]),
+        )
+
+    _sync_digital_lines(supabase, order_id, editable, body.items, sizes_by_id)
+    supabase.table("digital_orders").update({"subtotal": subtotal, "packaging_fee": packaging_fee}).eq("id", order_id).execute()
+
+    before_total = _order_total(order)
+    after_total = _order_total({**order, "subtotal": subtotal, "packaging_fee": packaging_fee})
+    _log_order_change(
+        supabase, order, "items",
+        {"items": [_line_label(sizes_by_id[r["product_size_id"]], float(r["quantity"])) for r in editable], "total": before_total},
+        {"items": [_line_label(sizes_by_id[i.product_size_id], float(i.quantity)) for i in body.items], "total": after_total,
+         "note": note},
+        body.reason, user,
+    )
+    return {"id": order_id, "total": after_total, "difference": after_total - before_total}
+
+
+@router.post("/digital-orders/{order_id}/schedule")
+def schedule_digital_order(
+    order_id: str, body: OnlineOrderScheduleRequest, user: CurrentUser = Depends(get_current_user),
+):
+    """The order is for a later time. Not yet in the kitchen: it's held until
+    the prep window, like any scheduled order. Already in the kitchen: the
+    ticket goes back to the queue as an upcoming advance order, a dated ticket
+    prints so the kitchen stops, and it can't be accepted until the window.
+    Its stock stays deducted, as with POS advance orders."""
+    _require_front_of_house(user)
+    if not body.reason.strip():
+        raise HTTPException(status_code=400, detail="A reason is required")
+    supabase = get_supabase()
+    _require_overrides(supabase)
+    order, tx = _order_for_override(supabase, order_id)
+    due = _validate_advance_time(body.scheduled_for)
+    previous = order.get("scheduled_for")
+    if previous and _parse_time(previous) == due:
+        raise HTTPException(status_code=400, detail="Choose a different time")
+
+    if tx is None:
+        moved = (supabase.table("digital_orders").update({"scheduled_for": due.isoformat()})
+                 .eq("id", order_id).is_("transaction_id", "null").execute())
+        if not moved.data:
+            raise HTTPException(status_code=409, detail="Order changed; refresh and try again")
+    else:
+        if tx["status"] != "open" or tx.get("kitchen_status") not in ("queued", "preparing"):
+            raise HTTPException(status_code=409, detail="The kitchen has already made this order, so it can't be moved")
+        revision = tx.get("advance_schedule_revision") or 0
+        now_iso = datetime.now(timezone.utc).isoformat()
+        moved = (supabase.table("transactions").update({
+            "scheduled_for": due.isoformat(), "kitchen_status": "queued", "kitchen_status_updated_at": now_iso,
+            "advance_schedule_revision": revision + 1, "advance_schedule_updated_at": now_iso,
+            "advance_schedule_updated_by": user.id, "kitchen_change_note": "MOVED TO A LATER DATE - MAKE FOR THE READY TIME",
+        }).eq("id", tx["id"]).eq("advance_schedule_revision", revision).eq("status", "open").execute())
+        if not moved.data:
+            raise HTTPException(status_code=409, detail="Order changed; refresh and try again")
+        supabase.table("digital_orders").update({"scheduled_for": due.isoformat()}).eq("id", order_id).execute()
+    _log_order_change(supabase, order, "schedule", {"scheduled_for": previous}, {"scheduled_for": due.isoformat()},
+                      body.reason, user)
+    return {"id": order_id, "scheduled_for": due.isoformat()}
 
 
 @router.post("/digital-orders/{order_id}/reject", response_model=DigitalOrderResponse)

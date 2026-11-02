@@ -23,6 +23,7 @@ import {
   Utensils,
   UtensilsCrossed,
   X,
+  CalendarClock,
 } from 'lucide-react';
 import {
   ApiAddon,
@@ -728,6 +729,16 @@ export default function App() {
               >
                 <ShoppingBag size={16} /> Pickup
               </button>
+              {!advanceMode && (
+                <button
+                  className="ghost-button"
+                  type="button"
+                  style={{ width: '100%', marginTop: 10 }}
+                  onClick={() => setAdvanceMode(true)}
+                >
+                  <CalendarClock size={16} /> Schedule for another day
+                </button>
+              )}
               <button
                 className="ghost-button"
                 type="button"
@@ -761,7 +772,7 @@ export default function App() {
               Order Delivery / Pickup <ArrowRight size={16} />
             </button>
             <button
-              className="ghost-button"
+              className="primary-button"
               type="button"
               style={{ width: '100%', marginTop: 10 }}
               onClick={() => {
@@ -769,8 +780,9 @@ export default function App() {
                 setLandingMode('order-channel');
               }}
             >
-              Schedule an Order <ArrowRight size={16} />
+              <CalendarClock size={16} /> Schedule an Order <ArrowRight size={16} />
             </button>
+            <p style={{ fontSize: 13, marginTop: 8, marginBottom: 0 }}>Ordering for another day? Tap Schedule an Order.</p>
             <button
               className="ghost-button"
               type="button"

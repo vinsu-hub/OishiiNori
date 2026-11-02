@@ -15,20 +15,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-
-// One line in the Edit order dialog. Kept lines carry their add-ons, held
-// ingredients and discount; a replaced or newly added line starts plain.
-interface EditLine {
-  key: string;
-  product_size_id: string;
-  quantity: number;
-  held_ingredients: string[];
-  addons: { addon_id: string; quantity: number; unit_price: number }[];
-  discount_type_id: string | null;
-  discount_amount: number;
-  // A bundle whose rolls the kitchen already logged stays as it is.
-  locked: boolean;
-}
+import { OrderItemLinesEditor, type EditLine } from '@/components/orders/OrderItemLinesEditor';
 
 type AdvanceTab = 'upcoming' | 'kitchen' | 'done';
 
@@ -194,10 +181,6 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
 
   const editChanged = !!itemsEdit && JSON.stringify(linesFromOrder(itemsEdit).map(({ key: _k, ...rest }) => rest))
     !== JSON.stringify(editLines.map(({ key: _k, ...rest }) => rest));
-
-  function updateLine(key: string, patch: Partial<EditLine>) {
-    setEditLines((lines) => lines.map((line) => line.key === key ? { ...line, ...patch } : line));
-  }
 
   async function saveItems() {
     if (!itemsEdit || !editLines.length) return;
@@ -407,30 +390,7 @@ export function AdvanceOrdersSection({ orderType }: { orderType: 'takeout' | 'de
         <DialogHeader><DialogTitle>Edit order #{itemsEdit?.order_number}</DialogTitle><DialogDescription>Add, remove or replace items. The kitchen gets an updated ticket.</DialogDescription></DialogHeader>
         {itemsEdit && itemsOverride && <p className="rounded-md border border-red-300 bg-red-50 p-2 text-sm text-red-900">CEO override{itemsEdit.kitchen_status === 'completed' ? ': this order is done and stays done — it is not sent back to the kitchen.' : '.'}</p>}
         {itemsEdit && itemsEdit.kitchen_status !== 'queued' && !(itemsOverride && itemsEdit.kitchen_status === 'completed') && <p className="rounded-md border border-amber-300 bg-amber-50 p-2 text-sm text-amber-900">The kitchen has already {itemsEdit.kitchen_status === 'completed' ? 'completed' : itemsEdit.kitchen_status === 'ready' ? 'readied' : 'started'} this order. Saving sends it back to the kitchen queue with the updated items.</p>}
-        <div className="space-y-2">
-          {editLines.map((line) => line.locked ? <div key={line.key} className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/50 p-2 text-sm">
-            <span className="flex-1">{line.quantity}× {names.get(line.product_size_id) ?? 'Bundle'}</span>
-            <span className="text-xs text-muted-foreground">Bundle already made — can't be changed</span>
-          </div> : <div key={line.key} className="flex flex-wrap items-center gap-2 rounded-md border p-2">
-            <select aria-label="Item" className="h-10 min-w-0 flex-1 rounded-md border bg-background px-2 text-sm" value={line.product_size_id}
-              onChange={(e) => updateLine(line.key, { product_size_id: e.target.value, addons: [], held_ingredients: [], discount_type_id: null, discount_amount: 0 })}>
-              {!sizeOptions.some((option) => option.id === line.product_size_id) && <option value={line.product_size_id}>{names.get(line.product_size_id) ?? 'Item'}</option>}
-              {sizeOptions.map((option) => <option key={option.id} value={option.id}>{option.text}</option>)}
-            </select>
-            <Input aria-label="Quantity" className="w-20" type="number" min="1" step="1" value={line.quantity}
-              onChange={(e) => updateLine(line.key, { quantity: Math.max(1, Math.floor(Number(e.target.value) || 1)) })} />
-            <Button type="button" variant="outline" size="icon" aria-label="Remove item" onClick={() => setEditLines((lines) => lines.filter((l) => l.key !== line.key))}><Trash2 className="h-4 w-4" /></Button>
-            {(line.addons.length > 0 || line.held_ingredients.length > 0 || line.discount_type_id) && <p className="w-full text-xs text-muted-foreground">
-              {[line.addons.length ? `${line.addons.length} add-on${line.addons.length > 1 ? 's' : ''} kept` : '', line.held_ingredients.length ? `No ${line.held_ingredients.join(', ')}` : '', line.discount_type_id ? 'Discount kept' : ''].filter(Boolean).join(' · ')}
-            </p>}
-          </div>)}
-          {editLines.length === 0 && <p className="text-sm text-destructive">An order needs at least one item.</p>}
-          <select aria-label="Add item" className="h-10 w-full rounded-md border bg-background px-3 text-sm" value=""
-            onChange={(e) => { const id = e.target.value; if (id) setEditLines((lines) => [...lines, { key: `new-${Date.now()}`, product_size_id: id, quantity: 1, held_ingredients: [], addons: [], discount_type_id: null, discount_amount: 0, locked: false }]); }}>
-            <option value="" disabled>+ Add item</option>
-            {sizeOptions.map((option) => <option key={option.id} value={option.id}>{option.text}</option>)}
-          </select>
-        </div>
+        <OrderItemLinesEditor lines={editLines} onChange={setEditLines} sizeOptions={sizeOptions} names={names} />
         {itemsEdit && <div className="space-y-1 rounded-md bg-muted px-4 py-3 text-sm">
           <p className="flex justify-between"><span>Current total</span><span>{formatCurrency(itemsEdit.total_amount + (itemsEdit.delivery?.delivery_fee ?? 0))}</span></p>
           <p className="flex justify-between font-semibold"><span>New total (estimate)</span><span>{formatCurrency(editEstimate)}</span></p>
