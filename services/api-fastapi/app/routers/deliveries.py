@@ -20,15 +20,20 @@ from pydantic import TypeAdapter
 
 from app.auth import CurrentUser, get_current_user, require_role
 from app.deps import get_supabase
-from app.routers.digital_menu import _fetch_digital_order, _parse_scheduled_for
+from app.routers.digital_menu import (
+    _fetch_digital_order, _parse_scheduled_for, select_digital_order_details, unpack_digital_orders,
+)
 from app.routers.reservations import ADVANCE_ORDER_LEAD_MINUTES
 from app.routers.transactions import (
-    _deliveries_transaction_id_supported_check, fetch_transaction_delivery_ticket, live_cache_get, live_cache_put,
-    live_cache_version,
+    _deliveries_transaction_id_supported_check, fetch_transaction_delivery_ticket, fetch_transaction_delivery_tickets,
+    live_cache_get, live_cache_put, live_cache_version,
 )
 from app.schemas import DigitalOrderResponse
 
 router = APIRouter(tags=["deliveries"])
+
+RIDER_PENDING_DAYS = 2
+COMPLETED_DELIVERIES_LIMIT = 100
 
 
 @router.get("/deliveries", response_model=list[DigitalOrderResponse])
@@ -58,50 +63,69 @@ def list_deliveries(
 _deliveries_json = TypeAdapter(list[DigitalOrderResponse])
 
 
+def _pending_ticket_ids(supabase) -> tuple[list[str], list[str]]:
+    """(digital order ids, transaction ids) still on the rider's plate. Most
+    finished deliveries are never tapped "done", so undelivered rows pile up
+    for good: ~5 a day, 166 by 2026-11, each one rebuilt on every order change.
+    A paid order the kitchen finished days ago isn't being delivered any more;
+    unpaid ones stay, since their cash is still out."""
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=RIDER_PENDING_DAYS)).isoformat()
+    horizon = now + timedelta(minutes=ADVANCE_ORDER_LEAD_MINUTES)
+    active = f"opened_at.gte.{cutoff},kitchen_status.neq.completed,payment_status.eq.unpaid"
+    transaction_ids = [
+        row["id"] for row in (
+            supabase.table("transactions").select("id, deliveries!inner(delivered_at)")
+            .eq("order_type", "delivery").neq("status", "voided").or_(active)
+            .is_("deliveries.delivered_at", "null").execute().data
+        )
+    ]
+    online = (
+        supabase.table("digital_orders")
+        .select("id, scheduled_for, deliveries!inner(delivered_at), transactions(status, kitchen_status, payment_status, opened_at)")
+        .eq("order_channel", "delivery").eq("status", "approved")
+        .is_("deliveries.delivered_at", "null").execute().data
+    )
+    order_ids = []
+    for row in online:
+        # A scheduled order isn't waiting on a rider until its prep window.
+        scheduled = _parse_scheduled_for(row)
+        if scheduled and scheduled > horizon:
+            continue
+        tx = row.get("transactions")
+        if tx and tx["status"] != "voided" and tx["kitchen_status"] == "completed" \
+                and tx["payment_status"] != "unpaid" and tx["opened_at"] < cutoff:
+            continue
+        order_ids.append(row["id"])
+    return order_ids, transaction_ids
+
+
 def _build_deliveries(status: str) -> list[dict]:
     supabase = get_supabase()
 
-    # Migration 0051 feature-detection, same posture as transactions.py's
-    # other _*_supported_check guards -- selecting a not-yet-existing
-    # deliveries.transaction_id column 500s this endpoint outright (a real
-    # regression caught in testing), so fall back to the pre-0051
-    # digital_order_id-only shape until the migration is applied.
-    transaction_source_supported = _deliveries_transaction_id_supported_check(supabase)
-    select_columns = "digital_order_id, transaction_id" if transaction_source_supported else "digital_order_id"
-    deliveries_query = supabase.table("deliveries").select(select_columns)
     if status == "pending":
-        deliveries_query = deliveries_query.is_("delivered_at", "null")
-    elif status == "completed":
-        deliveries_query = deliveries_query.not_.is_("delivered_at", "null")
-    deliveries_result = deliveries_query.execute()
-    order_ids = [d["digital_order_id"] for d in deliveries_result.data if d.get("digital_order_id")]
-    transaction_ids = (
-        [d["transaction_id"] for d in deliveries_result.data if d.get("transaction_id")]
-        if transaction_source_supported
-        else []
-    )
+        order_ids, transaction_ids = _pending_ticket_ids(supabase)
+    else:
+        deliveries_query = supabase.table("deliveries").select("digital_order_id, transaction_id")
+        if status == "completed":
+            deliveries_query = (deliveries_query.not_.is_("delivered_at", "null")
+                                .order("delivered_at", desc=True).limit(COMPLETED_DELIVERIES_LIMIT))
+        rows = deliveries_query.execute().data
+        order_ids = [d["digital_order_id"] for d in rows if d.get("digital_order_id")]
+        transaction_ids = [d["transaction_id"] for d in rows if d.get("transaction_id")]
 
     tickets = []
     if order_ids:
         orders_result = (
-            supabase.table("digital_orders")
-            .select("id, created_at")
+            select_digital_order_details(supabase)
             .in_("id", order_ids)
             .eq("order_channel", "delivery")
             .eq("status", "approved")
             .order("created_at")
             .execute()
         )
-        online = [_fetch_digital_order(supabase, o["id"]) for o in orders_result.data]
-        if status == "pending":
-            # A scheduled order isn't waiting on a rider until its prep window.
-            horizon = datetime.now(timezone.utc) + timedelta(minutes=ADVANCE_ORDER_LEAD_MINUTES)
-            online = [o for o in online if not (_parse_scheduled_for(o) and _parse_scheduled_for(o) > horizon)]
-        tickets.extend(online)
-    for transaction_id in transaction_ids:
-        ticket = fetch_transaction_delivery_ticket(supabase, transaction_id)
-        if ticket:
-            tickets.append(ticket)
+        tickets.extend(unpack_digital_orders(orders_result.data))
+    tickets.extend(fetch_transaction_delivery_tickets(supabase, transaction_ids))
 
     # One bulk lookup of the backing transactions' state: drops voided orders
     # from the rider's working queue (a voided POS delivery used to linger

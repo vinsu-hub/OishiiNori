@@ -50,6 +50,43 @@ class AuthCacheTests(unittest.TestCase):
         self.assertEqual(verify.call_count, 2)
 
 
+class LowStockCacheTests(unittest.TestCase):
+    def test_every_screen_shares_one_build(self):
+        from app.auth import get_current_user
+        from app.routers import inventory
+        inventory._low_stock_cache.clear()
+        self.addCleanup(inventory._low_stock_cache.clear)
+        app.dependency_overrides[get_current_user] = _user
+        self.addCleanup(app.dependency_overrides.clear)
+        client = TestClient(app)
+        with patch.object(inventory, "get_supabase"), \
+             patch.object(inventory, "get_low_stock_ingredients", return_value=[]) as ingredients, \
+             patch.object(inventory, "get_low_stock_stock_items", return_value=[]):
+            for _ in range(3):
+                self.assertEqual(client.get("/inventory/low-stock-summary").status_code, 200)
+        self.assertEqual(ingredients.call_count, 1)
+
+
+class DigitalOrdersRecentTests(unittest.TestCase):
+    def test_kitchen_list_keeps_recent_and_upcoming_only(self):
+        from unittest.mock import MagicMock
+        from app.routers import digital_menu
+        db = MagicMock()
+        q = db.table.return_value
+        for name in ("select", "eq", "or_", "order", "limit"):
+            getattr(q, name).return_value = q
+        q.execute.return_value = MagicMock(data=[])
+        with patch.object(digital_menu, "get_supabase", return_value=db):
+            digital_menu._list_digital_orders("approved", 200, 3)
+        recent = q.or_.call_args.args[0]
+        self.assertIn("created_at.gte.", recent)
+        self.assertIn("scheduled_for.gte.", recent)
+        q.or_.reset_mock()
+        with patch.object(digital_menu, "get_supabase", return_value=db):
+            digital_menu._list_digital_orders("approved", 200)
+        q.or_.assert_not_called()
+
+
 class LiveCacheTests(unittest.TestCase):
     def setUp(self):
         transactions.clear_live_cache()

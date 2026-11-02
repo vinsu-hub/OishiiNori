@@ -33,37 +33,49 @@ QUIET_POLL_SECONDS = 300
 # measured locally, rounded up.
 OVERHEAD_MS = 2.0
 COLD_STARTS_PER_DAY = 40
-# GET /transactions* and /digital-orders share a 10 s response cache (transactions.py
-# _live_cache). Of the calls in each 10 s window only the first builds it;
-# the rest cost about the same as a cheap call.
-SHARED_CACHE_SECONDS = 10
+# Live lists are shared through transactions.py's _live_cache, rebuilt per
+# instance only when the change counter moves (migration 0077) or every
+# LIVE_MAX_AGE_SECONDS. Every other call costs about the same as a cheap one.
+LIVE_PATHS = ("/transactions", "/digital-orders", "/deliveries")
+LIVE_MAX_AGE_SECONDS = 300
 CACHE_HIT_MS = 2.0
+# Reading the change counter: one small request per instance, measured 3 ms.
+VERSION_CHECK_MS = 3.0
+# Paths with their own shared cache: path -> seconds per build, per instance.
+TTL_PATHS = {"/inventory/low-stock-summary": 300}
+# Kitchen tablet's printer heartbeat, a small write (so not measured here).
+HEARTBEAT_SECONDS = 60
+HEARTBEAT_MS = 5.0
 
 # Supabase free plan: 5 GB egress a month, and every request is a log line
 # (1 GB of logs a month). Live lists are re-downloaded only when the database
 # change counter moves (migration 0077), so egress follows order activity, not
-# polling: ~600 order events on a busy day, collapsed into 5 s check windows.
+# polling. The counter itself gave 9,134 changes in the 14 days to 2026-11-02,
+# ~650 a day (an upper bound: bursts collapse into one 10 s check window).
 SUPABASE_EGRESS_LIMIT_GB = 5.0
-ORDER_CHANGE_WINDOWS_PER_DAY = 600
+ORDER_CHANGE_WINDOWS_PER_DAY = 650
 API_INSTANCES = 2  # warm Vercel instances, each with its own cache
-VERSION_CHECK_SECONDS = 5
+VERSION_CHECK_SECONDS = 10
 
 
 def schedule(today: str, adv_from: str, adv_before: str, devices: dict) -> list[tuple]:
-    """(screen, device count, poll seconds, endpoint). Matches the frontends as of 2026-10-16."""
+    """(screen, device count, poll seconds, endpoint). Matches the frontends as of 2026-11-02."""
     kitchen = devices["kitchen"]
     cashier = devices["cashier"]
     tv = devices["tv"]
     bridge = devices["bridge"]
+    rider = devices["rider"]
     return [
         ("Kitchen tablet", kitchen, 10, f"/transactions?active_since={today}"),
-        ("Kitchen tablet", kitchen, 10, "/digital-orders?status=approved"),
+        ("Kitchen tablet", kitchen, 10, "/digital-orders?status=approved&recent_days=3"),
         ("Kitchen tablet", kitchen, 10, f"/transactions/advance-orders?order_type=takeout&date_from={adv_from}&date_before={adv_before}"),
         ("Kitchen tablet", kitchen, 10, f"/transactions/advance-orders?order_type=delivery&date_from={adv_from}&date_before={adv_before}"),
         ("Cashier (new-order alarm)", cashier, 20, "/digital-orders?status=pending"),
         ("Cashier (order queue / boards)", cashier, 30, f"/transactions?active_since={today}"),
-        ("Cashier (online orders)", cashier, 30, "/digital-orders"),
+        ("Cashier (online orders)", cashier, 30, "/digital-orders/board"),
         ("Cashier (advance orders)", cashier, 30, f"/transactions/advance-orders?order_type=takeout&date_from={adv_from}&date_before={adv_before}"),
+        ("Every screen (low-stock badge)", kitchen + cashier, 90, "/inventory/low-stock-summary"),
+        ("Rider phone", rider, 15, "/deliveries?status=pending"),
         ("TV queue board", tv, 10, "/public/queue-display"),
         ("Print bridge", bridge, 20, "/transactions?kitchen_status=queued"),
         ("Print bridge", bridge, 20, "/transactions?kitchen_status=preparing"),
@@ -76,12 +88,14 @@ def main() -> int:
     parser.add_argument("--cashier", type=int, default=2, help="cashier/POS screens open (default 2)")
     parser.add_argument("--tv", type=int, default=1, help="TV queue boards (default 1)")
     parser.add_argument("--bridge", type=int, default=0, help="kitchen print bridges running (default 0)")
+    parser.add_argument("--rider", type=int, default=1, help="rider phones with the app open (default 1)")
     parser.add_argument("--samples", type=int, default=5)
     args = parser.parse_args()
 
     from fastapi.testclient import TestClient
     from app.auth import CurrentUser, get_current_user
     from app.main import app
+    from app.routers.inventory import _low_stock_cache
     from app.routers.transactions import clear_live_cache
 
     # Auth is cached for 60 s per token in production, so a poll's cost is the handler itself.
@@ -95,7 +109,7 @@ def main() -> int:
         today,
         (now - timedelta(days=7)).isoformat().replace("+00:00", "Z"),
         (now + timedelta(days=8)).isoformat().replace("+00:00", "Z"),
-        {"kitchen": args.kitchen, "cashier": args.cashier, "tv": args.tv, "bridge": args.bridge},
+        {"kitchen": args.kitchen, "cashier": args.cashier, "tv": args.tv, "bridge": args.bridge, "rider": args.rider},
     )
 
     import httpx
@@ -122,6 +136,7 @@ def main() -> int:
         total = 0.0
         for _ in range(args.samples):
             clear_live_cache()  # measure a real build; cache hits are modelled below
+            _low_stock_cache.clear()
             started = time.process_time()
             client.get(path)
             total += time.process_time() - started
@@ -145,23 +160,42 @@ def main() -> int:
     print(f"Projected Active CPU (busy {BUSY_HOURS_PER_DAY} h/day, quiet polls every {QUIET_POLL_SECONDS // 60} min)\n")
     print(f"{'screen':32} {'dev':>3} {'every':>6} {'CPU/call':>9} {'CPU/month':>10}  endpoint")
     month_seconds = 0.0
-    # Per shared endpoint: total calls/second across every screen asking for it.
-    shared_rate: dict[str, float] = {}
+    def daily_calls(devices: int, every: int) -> float:
+        return devices * (BUSY_HOURS_PER_DAY * 3600 / every + (24 - BUSY_HOURS_PER_DAY) * 3600 / QUIET_POLL_SECONDS)
+
+    # Per shared endpoint: total calls a day across every screen asking for it.
+    shared_calls: dict[str, float] = {}
     for _, devices, every, path in rows:
-        if devices and path.startswith(("/transactions", "/digital-orders")):
-            shared_rate[path] = shared_rate.get(path, 0) + devices / every
+        if devices:
+            shared_calls[path] = shared_calls.get(path, 0) + daily_calls(devices, every)
+    live_builds_per_day = (ORDER_CHANGE_WINDOWS_PER_DAY + 86400 / LIVE_MAX_AGE_SECONDS) * API_INSTANCES
+
+    def builds_per_day(path: str) -> float | None:
+        if path.startswith(LIVE_PATHS):
+            return live_builds_per_day
+        ttl = TTL_PATHS.get(path.split("?")[0])
+        return 86400 / ttl * API_INSTANCES if ttl else None
+
     for screen, devices, every, path in rows:
         if devices == 0:
             continue
-        calls_per_day = devices * (BUSY_HOURS_PER_DAY * 3600 / every + (24 - BUSY_HOURS_PER_DAY) * 3600 / QUIET_POLL_SECONDS)
+        calls_per_day = daily_calls(devices, every)
         per_call = cost_ms[path]
-        if path in shared_rate:
-            # Fraction of calls that rebuild: at most one per cache window.
-            builds = min(1.0, (1 / SHARED_CACHE_SECONDS) / shared_rate[path])
-            per_call = builds * cost_ms[path] + (1 - builds) * CACHE_HIT_MS
+        builds = builds_per_day(path)
+        if builds is not None:
+            # Fraction of calls that rebuild.
+            share = min(1.0, builds / shared_calls[path])
+            per_call = share * cost_ms[path] + (1 - share) * CACHE_HIT_MS
         seconds = calls_per_day * 30 * per_call / 1000
         month_seconds += seconds
         print(f"{screen:32} {devices:>3} {every:>5}s {per_call:>7.1f}ms {seconds / 3600:>8.2f} h  {path.split('?')[0]}")
+    checks_per_day = BUSY_HOURS_PER_DAY * 3600 / VERSION_CHECK_SECONDS * API_INSTANCES
+    checks = checks_per_day * 30 * VERSION_CHECK_MS / 1000
+    month_seconds += checks
+    print(f"{'Change counter checks':32} {API_INSTANCES:>3} {VERSION_CHECK_SECONDS:>5}s {VERSION_CHECK_MS:>7.1f}ms {checks / 3600:>8.2f} h")
+    beats = args.kitchen * BUSY_HOURS_PER_DAY * 3600 / HEARTBEAT_SECONDS * 30 * HEARTBEAT_MS / 1000
+    month_seconds += beats
+    print(f"{'Kitchen printer heartbeat':32} {args.kitchen:>3} {HEARTBEAT_SECONDS:>5}s {HEARTBEAT_MS:>7.1f}ms {beats / 3600:>8.2f} h")
     cold = COLD_STARTS_PER_DAY * 30 * 0.7  # ~0.65 s CPU per cold import, measured 2026-10-16
     month_seconds += cold
     print(f"{'Cold starts (~0.7 s each)':32} {'':>3} {'':>6} {'':>9} {cold / 3600:>8.2f} h")
@@ -176,14 +210,13 @@ def main() -> int:
     # Supabase: a full day's order list is the heavy one, so size it on yesterday.
     yesterday = (now + timedelta(hours=8) - timedelta(days=1)).date().isoformat()
     shared = {path.replace(f"active_since={today}", f"active_since={yesterday}")
-              for _, devices, _, path in rows if devices and path in shared_rate}
+              for _, devices, _, path in rows if devices and path.startswith(LIVE_PATHS)}
     per_build = [supabase_cost(path) for path in sorted(shared)]
     build_bytes = sum(b for b, _ in per_build)
     build_requests = sum(r for _, r in per_build)
     rebuilds = ORDER_CHANGE_WINDOWS_PER_DAY * API_INSTANCES
-    checks = BUSY_HOURS_PER_DAY * 3600 / VERSION_CHECK_SECONDS * API_INSTANCES
     egress_gb = rebuilds * build_bytes * 30 / 1e9
-    requests_day = rebuilds * build_requests + checks
+    requests_day = rebuilds * build_requests + checks_per_day
     egress_limit = SUPABASE_EGRESS_LIMIT_GB * WARN_FRACTION
     print(f"\nSupabase: one rebuild of every live list = {build_bytes / 1024:.0f} KB, {build_requests} requests")
     print(f"Projected egress {egress_gb:.2f} GB / month (limit {SUPABASE_EGRESS_LIMIT_GB:.0f} GB, guardrail {egress_limit:.2f} GB), "

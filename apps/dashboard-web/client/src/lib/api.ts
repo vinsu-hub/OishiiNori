@@ -958,8 +958,12 @@ export function scheduleOnlineOrder(id: string, body: { scheduled_for: string; r
   return request(`/digital-orders/${id}/schedule`, { method: 'POST', body: JSON.stringify(body) });
 }
 
-export function fetchDigitalOrders(status?: DigitalOrderStatus): Promise<ApiDigitalOrder[]> {
-  return request(`/digital-orders${status ? `?status=${status}` : ''}`);
+export function fetchDigitalOrders(status?: DigitalOrderStatus, recentDays?: number): Promise<ApiDigitalOrder[]> {
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  if (recentDays) params.set('recent_days', String(recentDays));
+  const query = params.toString();
+  return request(`/digital-orders${query ? `?${query}` : ''}`);
 }
 
 export function approveDigitalOrder(id: string): Promise<ApiDigitalOrder> {

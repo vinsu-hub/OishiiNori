@@ -643,17 +643,20 @@ def tracking_stage(order: dict, tx: dict | None) -> str:
 def list_digital_orders(
     status: str | None = Query(None),
     limit: int = Query(200, le=500),
+    recent_days: int | None = Query(None, ge=1, le=30),
     user: CurrentUser = Depends(get_current_user),
 ):
     # Polled by every cashier screen's new-order alarm and the kitchen tablet;
     # shares transactions.py's live cache (rebuilt only when orders change).
-    cache_key = ("digital-orders", status, limit)
+    # recent_days: the tablet only needs orders it could be cooking, not the
+    # whole history (up to `limit` orders, rebuilt on every order change).
+    cache_key = ("digital-orders", status, limit, recent_days)
     body = live_cache_get(cache_key)
     if body is not None:
         return Response(body, media_type="application/json")
     version = live_cache_version()
     return live_cache_put(cache_key, _digital_orders_json.dump_json(
-        _digital_orders_json.validate_python(_list_digital_orders(status, limit))), version)
+        _digital_orders_json.validate_python(_list_digital_orders(status, limit, recent_days))), version)
 
 
 _digital_orders_json = TypeAdapter(list[DigitalOrderResponse])
@@ -703,11 +706,12 @@ def digital_orders_board(user: CurrentUser = Depends(get_current_user)):
     version = live_cache_version()
     supabase = get_supabase()
     start, _ = ph_day_bounds_utc(today_ph())
-    orders = (supabase.table("digital_orders").select("*")
-              .in_("order_channel", ["delivery", "pickup"])
-              .or_(f"created_at.gte.{start},status.eq.pending,scheduled_for.gte.{start}")
-              .order("created_at", desc=True).limit(300).execute().data)
-    orders = _hydrate_digital_orders(supabase, orders)
+    orders = unpack_digital_orders(
+        select_digital_order_details(supabase)
+        .in_("order_channel", ["delivery", "pickup"])
+        .or_(f"created_at.gte.{start},status.eq.pending,scheduled_for.gte.{start}")
+        .order("created_at", desc=True).limit(300).execute().data
+    )
     tx_ids = [o["transaction_id"] for o in orders if o.get("transaction_id")]
     txs = {t["id"]: t for t in (supabase.table("transactions")
                                 .select("id, order_number, status, kitchen_status, payment_status")
@@ -836,50 +840,41 @@ def erase_digital_order_core(supabase, order_id: str, user: CurrentUser, reason:
     return {"id": order_id, "erased": True}
 
 
-def _list_digital_orders(status: str | None, limit: int) -> list[dict]:
+def _list_digital_orders(status: str | None, limit: int, recent_days: int | None = None) -> list[dict]:
     supabase = get_supabase()
-    query = supabase.table("digital_orders").select("*")
+    query = supabase.table("digital_orders").select(_DIGITAL_ORDER_DETAILS)
     if status:
         query = query.eq("status", status)
-    orders = query.order("created_at", desc=True).limit(limit).execute().data
-    return _hydrate_digital_orders(supabase, orders)
+    if recent_days:
+        now = datetime.now(timezone.utc)
+        query = query.or_(f"created_at.gte.{(now - timedelta(days=recent_days)).isoformat()},scheduled_for.gte.{now.isoformat()}")
+    return unpack_digital_orders(query.order("created_at", desc=True).limit(limit).execute().data)
 
 
-def _hydrate_digital_orders(supabase, orders: list[dict]) -> list[dict]:
-    """Attach items, add-ons and the delivery row to digital_orders rows."""
-    if not orders:
-        return []
+# Items, add-ons and the delivery row in ONE request. These lists are rebuilt on
+# every order change, and each separate lookup costs CPU (see the same fix for
+# transactions in transactions.py's _embedded_transactions).
+_DIGITAL_ORDER_DETAILS = ("*, digital_order_items(*), digital_order_addons(*, menu_addons(name)), "
+                          "deliveries(*, profiles(full_name))")
 
-    order_ids = [o["id"] for o in orders]
-    items_result = supabase.table("digital_order_items").select("*").in_("digital_order_id", order_ids).execute()
-    items_by_order: dict[str, list] = {}
-    for item in items_result.data:
-        items_by_order.setdefault(item["digital_order_id"], []).append(item)
 
-    addons_result = (
-        supabase.table("digital_order_addons")
-        .select("*, menu_addons(name)")
-        .in_("digital_order_id", order_ids)
-        .execute()
-    )
-    addons_by_order: dict[str, list] = {}
-    for row in addons_result.data:
-        addon_info = row.pop("menu_addons", None) or {}
-        row["addon_name"] = addon_info.get("name")
-        addons_by_order.setdefault(row["digital_order_id"], []).append(row)
+def select_digital_order_details(supabase):
+    return supabase.table("digital_orders").select(_DIGITAL_ORDER_DETAILS)
 
-    delivery_order_ids = [o["id"] for o in orders if o.get("order_channel") != "dine_in_qr"]
-    deliveries_by_order: dict[str, dict] = {}
-    if delivery_order_ids:
-        deliveries_result = (
-            supabase.table("deliveries").select("*").in_("digital_order_id", delivery_order_ids).execute()
-        )
-        deliveries_by_order = {d["digital_order_id"]: d for d in deliveries_result.data}
 
+def unpack_digital_orders(orders: list[dict]) -> list[dict]:
+    """Turns a _DIGITAL_ORDER_DETAILS read into orders with items, addons and delivery."""
     for order in orders:
-        order["items"] = items_by_order.get(order["id"], [])
-        order["addons"] = addons_by_order.get(order["id"], [])
-        order["delivery"] = deliveries_by_order.get(order["id"])
+        order["items"] = order.pop("digital_order_items", None) or []
+        addons = order.pop("digital_order_addons", None) or []
+        for row in addons:
+            row["addon_name"] = (row.pop("menu_addons", None) or {}).get("name")
+        order["addons"] = addons
+        deliveries = order.pop("deliveries", None) or []
+        delivery = deliveries[0] if isinstance(deliveries, list) and deliveries else (deliveries or None)
+        if delivery:
+            delivery["rider_name"] = (delivery.pop("profiles", None) or {}).get("full_name")
+        order["delivery"] = delivery
     return orders
 
 

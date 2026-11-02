@@ -246,7 +246,7 @@ export default function KitchenDisplay() {
   const load = useCallback(() => {
     const window = advanceWindow();
     Promise.all([
-      fetchTransactions({ activeSince: todayIsoPH() }), fetchDigitalOrders('approved'),
+      fetchTransactions({ activeSince: todayIsoPH() }), fetchDigitalOrders('approved', 3),
       fetchAdvanceOrders('takeout', window.from, window.before),
       fetchAdvanceOrders('delivery', window.from, window.before),
     ])

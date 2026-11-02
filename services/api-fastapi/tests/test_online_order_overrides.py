@@ -305,19 +305,38 @@ class ScheduleTests(OverrideCase):
 
 
 class RiderListTests(unittest.TestCase):
-    def test_future_orders_are_hidden_until_the_prep_window(self):
+    def _pending_ids(self, online=(), pos=()):
         db = _db()
-        rows = {"deliveries": [{"digital_order_id": "o1"}, {"digital_order_id": "o2"}],
-                "digital_orders": [{"id": "o1", "created_at": "1"}, {"id": "o2", "created_at": "2"}],
-                "transactions": []}
+        for name in ("neq", "or_"):
+            getattr(db.table.return_value, name).return_value = db.table.return_value
+        rows = {"transactions": list(pos), "digital_orders": list(online)}
         db.table.return_value.execute.side_effect = lambda: MagicMock(data=rows[db.table.call_args.args[0]])
-        tickets = {"o1": {"id": "o1", "created_at": "1", "scheduled_for": FUTURE},
-                   "o2": {"id": "o2", "created_at": "2", "scheduled_for": None}}
-        with patch.object(deliveries, "get_supabase", return_value=db), \
-             patch.object(deliveries, "_deliveries_transaction_id_supported_check", return_value=False), \
-             patch.object(deliveries, "_fetch_digital_order", side_effect=lambda _db, oid: tickets[oid]):
-            visible = deliveries._build_deliveries("pending")
-        self.assertEqual([t["id"] for t in visible], ["o2"])
+        return deliveries._pending_ticket_ids(db), db
+
+    def test_future_orders_are_hidden_until_the_prep_window(self):
+        (orders, _), _ = self._pending_ids(online=[
+            {"id": "later", "scheduled_for": FUTURE, "transactions": None},
+            {"id": "now", "scheduled_for": None, "transactions": None},
+        ])
+        self.assertEqual(orders, ["now"])
+
+    def test_old_finished_paid_orders_drop_off(self):
+        old = (NOW - timedelta(days=5)).isoformat()
+        tx = {"status": "open", "kitchen_status": "completed", "payment_status": "paid", "opened_at": old}
+        (orders, _), _ = self._pending_ids(online=[
+            {"id": "finished", "scheduled_for": None, "transactions": tx},
+            {"id": "cash-out", "scheduled_for": None, "transactions": {**tx, "payment_status": "unpaid"}},
+            {"id": "cooking", "scheduled_for": None, "transactions": {**tx, "kitchen_status": "preparing"}},
+            {"id": "today", "scheduled_for": None, "transactions": {**tx, "opened_at": NOW.isoformat()}},
+        ])
+        self.assertEqual(orders, ["cash-out", "cooking", "today"])
+
+    def test_pos_list_is_narrowed_by_the_database(self):
+        (_, transactions), db = self._pending_ids(pos=[{"id": "t1"}])
+        self.assertEqual(transactions, ["t1"])
+        active = db.table.return_value.or_.call_args.args[0]
+        self.assertIn("kitchen_status.neq.completed", active)
+        self.assertIn("payment_status.eq.unpaid", active)
 
 
 class ShiftReportTests(unittest.TestCase):

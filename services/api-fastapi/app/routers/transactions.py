@@ -699,7 +699,28 @@ def fetch_transaction_delivery_ticket(supabase, transaction_id: str) -> dict | N
     provenance (order_channel="delivery" + status="approved" already make
     that explicit)."""
     transaction = _fetch_transaction_with_items(supabase, transaction_id)
-    if not transaction or transaction.get("order_type") != "delivery" or not transaction.get("delivery"):
+    return _delivery_ticket(transaction) if transaction else None
+
+
+def fetch_transaction_delivery_tickets(supabase, transaction_ids: list[str]) -> list[dict]:
+    """The same tickets in one PostgREST request. Fetching them one at a time
+    took about 6 requests each, ~3.4 s CPU for the rider's list by 2026-11."""
+    if not transaction_ids:
+        return []
+    columns = "id, order_number, order_type, total_amount, payment_status, payment_method, opened_at"
+    rows = _embedded_transactions(supabase, columns, lambda q: q.in_("id", transaction_ids))
+    tickets = []
+    for row in rows:
+        row["items"] = row.pop("_items")
+        ticket = _delivery_ticket(row)
+        if ticket:
+            tickets.append(ticket)
+    return tickets
+
+
+def _delivery_ticket(transaction: dict) -> dict | None:
+    transaction_id = transaction["id"]
+    if transaction.get("order_type") != "delivery" or not transaction.get("delivery"):
         return None
     items = [
         {
@@ -1306,7 +1327,7 @@ def _validate_reservation_override(supabase, override_id, table_id, blocking_res
 # -- this is what keeps Supabase egress and log volume inside the free plan.
 # Without migration 0077 it falls back to a plain 10 s cache.
 _LIVE_CACHE_SECONDS = 10
-VERSION_CHECK_SECONDS = 5
+VERSION_CHECK_SECONDS = 10
 # Safety net for anything the triggers don't cover.
 _LIVE_CACHE_MAX_AGE_SECONDS = 300
 _live_cache: dict = {}

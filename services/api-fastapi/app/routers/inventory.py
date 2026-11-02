@@ -1,5 +1,6 @@
 from datetime import date, datetime, timedelta, timezone
 
+from cachetools import TTLCache
 from fastapi import APIRouter, Depends, HTTPException, Query
 from postgrest.exceptions import APIError
 
@@ -22,6 +23,9 @@ from app.schemas import (
 from app.routers.stock_items import _build_daily_summaries, _upsert_override_entry, get_low_stock_stock_items
 
 router = APIRouter(tags=["inventory"])
+
+LOW_STOCK_CACHE_SECONDS = 300
+_low_stock_cache: TTLCache = TTLCache(maxsize=1, ttl=LOW_STOCK_CACHE_SECONDS)
 
 
 def get_low_stock_ingredients(supabase) -> list[LowStockIngredient]:
@@ -111,16 +115,19 @@ def get_low_stock_summary(user: CurrentUser = Depends(get_current_user)):
     (every role can see stock levels, only editing catalog fields is
     gated). Reuses the same reorder_threshold comparisons Command Center
     already computes, plus stock_items' own reorder_threshold (previously
-    defined but never read anywhere)."""
-    supabase = get_supabase()
-    ingredients = get_low_stock_ingredients(supabase)
-    stock_items = get_low_stock_stock_items(supabase)
-    return LowStockSummaryResponse(
-        ingredient_count=len(ingredients),
-        stock_item_count=len(stock_items),
-        ingredients=ingredients[:10],
-        stock_items=stock_items[:10],
-    )
+    defined but never read anywhere). Every signed-in screen polls this, and
+    it downloads both whole lists, so it's shared for LOW_STOCK_CACHE_SECONDS."""
+    if "v" not in _low_stock_cache:
+        supabase = get_supabase()
+        ingredients = get_low_stock_ingredients(supabase)
+        stock_items = get_low_stock_stock_items(supabase)
+        _low_stock_cache["v"] = LowStockSummaryResponse(
+            ingredient_count=len(ingredients),
+            stock_item_count=len(stock_items),
+            ingredients=ingredients[:10],
+            stock_items=stock_items[:10],
+        )
+    return _low_stock_cache["v"]
 
 
 @router.get("/inventory/expiring-soon", response_model=list[ExpiringIngredient])
