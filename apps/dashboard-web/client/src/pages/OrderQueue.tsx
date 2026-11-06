@@ -86,9 +86,9 @@ export default function OrderQueue() {
   const [voiding, setVoiding] = useState(false);
 
   // WS-12: Refund is the correction path once an order is past `queued`
-  // (preparing/ready) -- void no longer works there (see the narrowed
-  // backend gate). Files a request; an admin/executive approves/rejects it
-  // from the new Refund Approval tab.
+  // -- void no longer works there (see the narrowed backend gate). Since
+  // 2026-11-07 the refund happens right away with only a reason; the Refund
+  // Approval tab keeps it as history.
   const [refundTarget, setRefundTarget] = useState<ApiTransaction | null>(null);
   const [refundReason, setRefundReason] = useState('');
   const [refunding, setRefunding] = useState(false);
@@ -217,12 +217,16 @@ export default function OrderQueue() {
     setRefunding(true);
     try {
       await createRefund({ transaction_id: refundTarget.id, reason: refundReason.trim() });
-      toast.success('Refund request sent for approval');
+      const paidCash = refundTarget.payment_status === 'paid' && refundTarget.payment_method === 'cash';
+      toast.success(
+        `Order refunded${refundTarget.kitchen_status !== 'completed' ? ' and stock returned' : ''}.` +
+          (paidCash ? ' Pay the customer, then record it in Shift Reports → Cash refund.' : ''),
+      );
       setRefundTarget(null);
       setRefundReason('');
       load();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to request refund');
+      toast.error(e instanceof Error ? e.message : 'Failed to refund order');
     } finally {
       setRefunding(false);
     }
@@ -445,13 +449,16 @@ export default function OrderQueue() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              Request refund for order{' '}
+              Refund order{' '}
               {refundTarget?.order_number != null ? `#${refundTarget.order_number}` : refundTarget?.id.slice(0, 8)}
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            This order is already {refundTarget?.kitchen_status} and can't be voided directly -- a
-            manager must approve this request before anything is corrected.
+            This order is already {refundTarget?.kitchen_status}. Refunding cancels it right away
+            {refundTarget?.kitchen_status === 'completed'
+              ? ' (stock is not returned, since the food was served).'
+              : ' and returns its stock.'}{' '}
+            State the reason for the refund.
           </p>
           <div className="flex flex-wrap gap-2">
             {['Double punch', 'Customer cancelled', 'Wrong order'].map((preset) => (
@@ -466,8 +473,8 @@ export default function OrderQueue() {
             onChange={(e) => setRefundReason(e.target.value)}
           />
           <DialogFooter>
-            <Button disabled={refunding} onClick={handleRefund}>
-              {refunding ? 'Sending...' : 'Send refund request'}
+            <Button disabled={refunding || !refundReason.trim()} onClick={handleRefund}>
+              {refunding ? 'Refunding...' : 'Confirm refund'}
             </Button>
           </DialogFooter>
         </DialogContent>

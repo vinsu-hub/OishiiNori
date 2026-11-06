@@ -2356,9 +2356,9 @@ export function fetchBusinessDayItems(businessDate: string): Promise<ApiBusiness
 
 // --- Refund approval flow (WS-12) ------------------------------------------
 // Void is queued-only (see voidTransaction's backend gate); a preparing/ready
-// order goes through this instead -- a cashier files a request, an
-// admin/executive approves (performs the actual void) or rejects it. A
-// completed order can't be touched by either path.
+// or completed order goes through this instead. createRefund refunds right
+// away (2026-11-07, no approval); approve/reject only apply to requests
+// filed before that change.
 
 export type RefundStatus = 'pending' | 'approved' | 'rejected';
 

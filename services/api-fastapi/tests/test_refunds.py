@@ -32,15 +32,51 @@ class RefundRequestTests(unittest.TestCase):
         self.client = TestClient(app)
         self.addCleanup(app.dependency_overrides.clear)
 
-    def _request(self, tx):
-        # tx lookup, pending check, insert, then _decorate's two reads
-        db = _db(tx, None, [REFUND], [], [])
-        with patch.object(refunds, "get_supabase", return_value=db):
-            return self.client.post("/refunds", json={"transaction_id": "t1", "reason": "Double punch"})
+    def _request(self, tx, pending=None):
+        # tx lookup, pending check, insert/update, then _decorate's two reads
+        db = _db(tx, pending, [{**REFUND, "status": "approved"}], [], [])
+        with patch.object(refunds, "get_supabase", return_value=db), \
+             patch.object(refunds, "_fetch_transaction_with_items", return_value=tx), \
+             patch.object(refunds, "void_transaction_core") as void:
+            response = self.client.post("/refunds", json={"transaction_id": "t1", "reason": "Double punch"})
+        self.void_call = void.call_args
+        self.db = db
+        return response
 
-    def test_completed_order_can_be_requested(self):
+    def test_cashier_refund_voids_immediately(self):
         _as("employee")
-        self.assertEqual(self._request(TX).status_code, 200)
+        response = self._request(TX)
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "approved")
+        self.assertIsNotNone(self.void_call)
+        inserted = self.db.table.return_value.insert.call_args.args[0]
+        self.assertEqual(inserted["status"], "approved")
+        self.assertEqual(inserted["reviewed_by"], "u1")
+
+    def test_completed_order_keeps_stock(self):
+        _as("employee")
+        self._request(TX)
+        self.assertFalse(self.void_call.kwargs["restore_stock"])
+
+    def test_ready_order_returns_stock(self):
+        _as("employee")
+        self._request({**TX, "kitchen_status": "ready"})
+        self.assertTrue(self.void_call.kwargs["restore_stock"])
+
+    def test_old_pending_request_is_closed_out(self):
+        _as("employee")
+        self.assertEqual(self._request(TX, pending={"id": "r1"}).status_code, 200)
+        self.db.table.return_value.insert.assert_not_called()
+        self.assertEqual(self.db.table.return_value.update.call_args.args[0]["status"], "approved")
+
+    def test_blank_reason_rejected(self):
+        _as("employee")
+        db = _db(TX)
+        with patch.object(refunds, "get_supabase", return_value=db), \
+             patch.object(refunds, "void_transaction_core") as void:
+            r = self.client.post("/refunds", json={"transaction_id": "t1", "reason": "  "})
+        self.assertEqual(r.status_code, 400)
+        void.assert_not_called()
 
     def test_queued_order_is_voided_directly(self):
         _as("employee")

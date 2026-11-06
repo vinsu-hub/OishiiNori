@@ -1,9 +1,10 @@
-"""Refund approval flow (WS-12): void is narrowed to `queued` orders only
+"""Refunds (WS-12): void is narrowed to `queued` orders only
 (transactions.py's void_transaction) -- once an order is preparing, ready
-or completed, a cashier files a refund request here instead, and an
-admin/executive must approve or reject it. Approving performs the actual
-void via void_transaction_core directly, deliberately bypassing that
-endpoint's own queued-only gate.
+or completed, the cashier refunds it here instead. Since 2026-11-07 the
+refund happens immediately with only a reason (the owner had no time to
+approve each one); the row is stored already `approved` so the Refund
+Approval tab still lists it as history. The approve/reject endpoints stay
+for any request filed before that change.
 
 Completed orders are refundable too (2026-10-29: double punches and
 refunds asked for after the kitchen bumped the order). The approver
@@ -63,7 +64,7 @@ def _decorate(supabase, rows: list[dict]) -> list[dict]:
 @router.post("/refunds", response_model=RefundOut)
 def create_refund(body: RefundCreateRequest, user: CurrentUser = Depends(get_current_user)):
     if user.role == "kitchen":
-        raise HTTPException(status_code=403, detail="Kitchen accounts can't request refunds")
+        raise HTTPException(status_code=403, detail="Kitchen accounts can't refund orders")
     supabase = get_supabase()
     tx_result = (
         supabase.table("transactions")
@@ -76,7 +77,7 @@ def create_refund(body: RefundCreateRequest, user: CurrentUser = Depends(get_cur
         raise HTTPException(status_code=404, detail="Transaction not found")
     tx = tx_result.data
     if user.role == "employee" and tx["employee_id"] != user.id:
-        raise HTTPException(status_code=403, detail="Employees may only request a refund on their own orders")
+        raise HTTPException(status_code=403, detail="Employees may only refund their own orders")
     if tx["status"] == "voided":
         raise HTTPException(status_code=400, detail="Transaction is already voided")
     # Refund is the correction path for an order past the point of direct
@@ -84,6 +85,22 @@ def create_refund(body: RefundCreateRequest, user: CurrentUser = Depends(get_cur
     if tx.get("kitchen_status") == "queued":
         raise HTTPException(status_code=409, detail="This order is still queued -- void it directly instead")
 
+    if not body.reason.strip():
+        raise HTTPException(status_code=400, detail="A reason is required")
+    reason = body.reason.strip()
+
+    # Refund now happens right away (2026-11-07): no approval step. Stock
+    # follows the same default the approver used to get -- returned unless
+    # the kitchen already completed the order.
+    transaction = _fetch_transaction_with_items(supabase, body.transaction_id)
+    if not transaction:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    restore_stock = transaction.get("kitchen_status") != "completed"
+    void_reason = f"Refund: {reason}" + ("" if restore_stock else " (stock not returned)")
+    void_transaction_core(supabase, transaction, user.id, void_reason, restore_stock=restore_stock)
+
+    now = datetime.now(timezone.utc).isoformat()
+    record = {"status": "approved", "reviewed_by": user.id, "reviewed_at": now}
     existing = (
         supabase.table("refunds")
         .select("id")
@@ -93,16 +110,14 @@ def create_refund(body: RefundCreateRequest, user: CurrentUser = Depends(get_cur
         .execute()
     )
     if existing and existing.data:
-        raise HTTPException(status_code=409, detail="A refund request is already pending for this order")
-
-    if not body.reason.strip():
-        raise HTTPException(status_code=400, detail="A reason is required")
-
-    result = (
-        supabase.table("refunds")
-        .insert({"transaction_id": body.transaction_id, "requested_by": user.id, "reason": body.reason.strip()})
-        .execute()
-    )
+        # A request left over from the old approval flow: close it out.
+        result = supabase.table("refunds").update({**record, "reason": reason}).eq("id", existing.data["id"]).execute()
+    else:
+        result = (
+            supabase.table("refunds")
+            .insert({"transaction_id": body.transaction_id, "requested_by": user.id, "reason": reason, **record})
+            .execute()
+        )
     return _decorate(supabase, result.data)[0]
 
 
