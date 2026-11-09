@@ -32,13 +32,13 @@ class RefundRequestTests(unittest.TestCase):
         self.client = TestClient(app)
         self.addCleanup(app.dependency_overrides.clear)
 
-    def _request(self, tx, pending=None):
+    def _request(self, tx, pending=None, reason="Double punch"):
         # tx lookup, pending check, insert/update, then _decorate's two reads
         db = _db(tx, pending, [{**REFUND, "status": "approved"}], [], [])
         with patch.object(refunds, "get_supabase", return_value=db), \
              patch.object(refunds, "_fetch_transaction_with_items", return_value=tx), \
              patch.object(refunds, "void_transaction_core") as void:
-            response = self.client.post("/refunds", json={"transaction_id": "t1", "reason": "Double punch"})
+            response = self.client.post("/refunds", json={"transaction_id": "t1", "reason": reason})
         self.void_call = void.call_args
         self.db = db
         return response
@@ -55,8 +55,13 @@ class RefundRequestTests(unittest.TestCase):
 
     def test_completed_order_keeps_stock(self):
         _as("employee")
-        self._request(TX)
+        self._request(TX, reason="Customer cancelled")
         self.assertFalse(self.void_call.kwargs["restore_stock"])
+
+    def test_double_punch_returns_stock_even_when_completed(self):
+        _as("employee")
+        self._request(TX)  # reason in _request is "Double punch"
+        self.assertTrue(self.void_call.kwargs["restore_stock"])
 
     def test_ready_order_returns_stock(self):
         _as("employee")

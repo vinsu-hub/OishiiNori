@@ -59,6 +59,7 @@ import {
   createPosHangedOrder,
   fetchTransactions,
   QueuedOfflineError,
+  PossibleDuplicateError,
   fetchAddons,
   fetchBusinessSettings,
   fetchDeliveryFees,
@@ -141,6 +142,26 @@ interface PosDraft {
   deliveryLandmark: string;
   deliveryBarangay: string;
   deliveryFeeAmount: string;
+  // The key of the last Charge tap and the cart it was for. Saved before the
+  // request goes out, so a refresh mid-charge restores it and the next
+  // Charge gets the same order back instead of a second one (#1023/#1024).
+  chargeKey?: string;
+  chargeSignature?: string;
+}
+
+type ChargeAttempt = { key: string; signature: string };
+
+// Writes the pending charge into the saved draft right away -- the normal
+// save effect only runs on the next render, which a refresh can beat.
+function saveChargeAttempt(attempt: ChargeAttempt) {
+  try {
+    const raw = localStorage.getItem(POS_DRAFT_KEY);
+    if (!raw) return;
+    const draft = JSON.parse(raw) as PosDraft;
+    localStorage.setItem(POS_DRAFT_KEY, JSON.stringify({ ...draft, chargeKey: attempt.key, chargeSignature: attempt.signature }));
+  } catch {
+    /* storage unavailable -- the server's duplicate check is still there */
+  }
 }
 
 function loadHeldCarts(): HeldCart[] {
@@ -369,7 +390,15 @@ export default function POSTerminal() {
   const [advancePickupName, setAdvancePickupName] = useState('');
   const [advancePickupPhone, setAdvancePickupPhone] = useState('');
   const [advancePayAtPickup, setAdvancePayAtPickup] = useState(false);
-  const advanceAttemptKey = useRef<string | null>(null);
+  // One idempotency key per cart: re-tapping Charge (or charging again after
+  // a refresh) for the same cart reuses it, so the server returns the first
+  // order. A changed cart gets a new key.
+  const chargeAttempt = useRef<ChargeAttempt | null>(null);
+  const [duplicatePrompt, setDuplicatePrompt] = useState<{
+    orderNumber: number | null;
+    openedAt: string | null;
+    advance?: { scheduledFor: string; pickupName: string; pickupPhone: string; payAtPickup: boolean };
+  } | null>(null);
   const [cardTypePromptOpen, setCardTypePromptOpen] = useState(false);
   // Independent of any discount's own vat_exempt -- lets a cashier book an
   // order non-VAT with no VAT-exempt discount applied.
@@ -418,7 +447,12 @@ export default function POSTerminal() {
           setDeliveryLandmark(d.deliveryLandmark ?? '');
           setDeliveryBarangay(d.deliveryBarangay ?? '');
           setDeliveryFeeAmount(d.deliveryFeeAmount ?? '');
-          toast.info('Restored the order you were working on.');
+          if (d.chargeKey && d.chargeSignature) {
+            chargeAttempt.current = { key: d.chargeKey, signature: d.chargeSignature };
+            toast.info("Restored the order you were working on. Its Charge may already have gone through -- tapping Charge again won't double it.");
+          } else {
+            toast.info('Restored the order you were working on.');
+          }
         }
       }
     } catch {
@@ -843,6 +877,8 @@ export default function POSTerminal() {
       deliveryLandmark,
       deliveryBarangay,
       deliveryFeeAmount,
+      chargeKey: chargeAttempt.current?.key,
+      chargeSignature: chargeAttempt.current?.signature,
     };
     try {
       localStorage.setItem(POS_DRAFT_KEY, JSON.stringify(draft));
@@ -1012,7 +1048,7 @@ export default function POSTerminal() {
     setVatOverride('non_vat');
     setCashReceived('');
     clearOwnerRequest();
-    advanceAttemptKey.current = null;
+    chargeAttempt.current = null;
   }
 
   function handleHoldOrder() {
@@ -1093,7 +1129,10 @@ export default function POSTerminal() {
     });
   }
 
-  async function handleCharge(advance?: { scheduledFor: string; pickupName: string; pickupPhone: string; payAtPickup: boolean }) {
+  async function handleCharge(
+    advance?: { scheduledFor: string; pickupName: string; pickupPhone: string; payAtPickup: boolean },
+    confirmDuplicate = false,
+  ) {
     if (!user) return;
     const blockers = advance?.payAtPickup ? advanceChargeBlockers : chargeBlockers;
     if (blockers.length > 0) {
@@ -1102,6 +1141,17 @@ export default function POSTerminal() {
     }
     const codSale = orderType === 'delivery' && payOnDelivery;
     const payAtPickup = orderType === 'takeout' && !!advance?.payAtPickup;
+    const signature = JSON.stringify({
+      lines: cart.map((l) => [l.size.id, l.quantity, l.held_ingredients, l.addons.map((a) => [a.addon_id, a.quantity]), l.discountTypeId ?? null]),
+      orderType,
+      table: orderType === 'dine_in' ? tableNumber : null,
+      addonTo: addonTo ?? null,
+      scheduledFor: advance?.scheduledFor ?? null,
+    });
+    if (chargeAttempt.current?.signature !== signature) {
+      chargeAttempt.current = { key: generateId(), signature };
+    }
+    saveChargeAttempt(chargeAttempt.current);
     setSubmitting(true);
     try {
       const transaction = await createTransaction({
@@ -1128,7 +1178,8 @@ export default function POSTerminal() {
         scheduled_for: advance?.scheduledFor,
         pickup_customer_name: advance?.pickupName || undefined,
         pickup_customer_phone: advance?.pickupPhone || undefined,
-        idempotency_key: advance ? (advanceAttemptKey.current ??= generateId()) : undefined,
+        idempotency_key: chargeAttempt.current.key,
+        confirm_duplicate: confirmDuplicate || undefined,
         card_type: payAtPickup ? null : cardType ?? undefined,
         force_vat_exempt: vatOverride === 'non_vat',
         reservation_override_id: overrideId ?? undefined,
@@ -1203,7 +1254,7 @@ export default function POSTerminal() {
       setAdvanceReadyAt('');
       setAdvancePickupName('');
       setAdvancePickupPhone('');
-      advanceAttemptKey.current = null;
+      chargeAttempt.current = null;
       setTableNumber('');
       setTableStatus(null);
       setOverrideId(null);
@@ -1225,7 +1276,11 @@ export default function POSTerminal() {
       if (payAtPickup) toast.info('Payment is due at pickup. Record it in Advance Orders when received.');
       loadTableOptions();
     } catch (e) {
-      if (e instanceof QueuedOfflineError) {
+      if (e instanceof PossibleDuplicateError) {
+        // Nothing was created. Keep the cart and the key; "Charge anyway"
+        // resends the same attempt with confirm_duplicate.
+        setDuplicatePrompt({ orderNumber: e.orderNumber, openedAt: e.openedAt, advance });
+      } else if (e instanceof QueuedOfflineError) {
         // A real network failure, not a rejection -- the sale is safely
         // queued in localStorage and will replay automatically once the
         // connection returns (see SyncContext/offlineQueue.ts). The
@@ -2371,6 +2426,38 @@ export default function POSTerminal() {
           </div>
           <DialogFooter>
             <Button onClick={() => setCredentialMismatchOpen(false)}>Got it</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!duplicatePrompt} onOpenChange={(open) => !open && !submitting && setDuplicatePrompt(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Same order again?</DialogTitle>
+            <DialogDescription>
+              This looks like the same order as{' '}
+              {duplicatePrompt?.orderNumber != null ? `#${duplicatePrompt.orderNumber}` : 'one you just charged'}
+              {duplicatePrompt?.openedAt
+                ? `, charged ${Math.max(1, Math.round((Date.now() - Date.parse(duplicatePrompt.openedAt)) / 60_000))} min ago`
+                : ''}
+              . Check Order Queue before charging again -- the first one may have already gone through.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" disabled={submitting} onClick={() => setDuplicatePrompt(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={submitting}
+              onClick={() => {
+                const prompt = duplicatePrompt;
+                setDuplicatePrompt(null);
+                void handleCharge(prompt?.advance, true);
+              }}
+            >
+              Charge anyway
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

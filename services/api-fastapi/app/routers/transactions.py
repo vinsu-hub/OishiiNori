@@ -147,6 +147,8 @@ def submit_pos_hanged_order(order_id: str, user: CurrentUser = Depends(get_curre
     # Stable per draft (the idempotency column is a uuid), so a retried send
     # returns the first sale instead of creating a second one.
     payload.idempotency_key = str(uuid.uuid5(uuid.NAMESPACE_URL, f"hanged-order:{order_id}"))
+    # Sending a hanged order is deliberate and keyed per draft already.
+    payload.confirm_duplicate = True
     try:
         transaction = create_transaction(payload, user)
         supabase.table("pos_hanged_orders").update({"status": "submitted", "transaction_id": transaction.id, "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", order_id).execute()
@@ -1115,6 +1117,60 @@ def _validate_grab_settlement(order_source: str, payment_method: str | None,
         raise HTTPException(status_code=400, detail="Grab settlement is only for Grab orders")
 
 
+DUPLICATE_WINDOW = timedelta(minutes=3)
+DUPLICATE_MIN_ITEMS_NO_TABLE = 3
+
+
+def _find_possible_duplicate(supabase, body: CreateTransactionRequest) -> dict | None:
+    """The cashier's own non-voided order from the last few minutes with the
+    same order type, table and items (2026-11-10: a refresh mid-charge
+    restored the cart and the cashier charged it again, #1023/#1024). The
+    POS shows it and lets the cashier charge anyway (confirm_duplicate)."""
+    # Without a table to match (takeout/delivery), two customers ordering the
+    # same drink minutes apart is normal -- only a bigger cart is suspicious.
+    if not body.table_number and sum(float(i.quantity) for i in body.items) < DUPLICATE_MIN_ITEMS_NO_TABLE:
+        return None
+    since = (datetime.now(timezone.utc) - DUPLICATE_WINDOW).isoformat()
+    query = (
+        supabase.table("transactions")
+        .select("id, order_number, opened_at, table_number")
+        .eq("employee_id", body.employee_id)
+        .neq("status", "voided")
+        .gte("opened_at", since)
+    )
+    if body.order_type:
+        query = query.eq("order_type", body.order_type)
+    candidates = [
+        t for t in (query.execute().data or [])
+        if (t.get("table_number") or None) == (body.table_number or None)
+    ]
+    if not candidates:
+        return None
+
+    def _counts(pairs) -> dict[str, float]:
+        out: dict[str, float] = defaultdict(float)
+        for size_id, qty in pairs:
+            out[size_id] += float(qty)
+        return dict(out)
+
+    wanted = _counts((i.product_size_id, i.quantity) for i in body.items)
+    rows = (
+        supabase.table("transaction_items")
+        .select("transaction_id, product_size_id, quantity")
+        .in_("transaction_id", [t["id"] for t in candidates])
+        .execute()
+        .data
+        or []
+    )
+    by_tx: dict[str, list] = defaultdict(list)
+    for r in rows:
+        by_tx[r["transaction_id"]].append((r["product_size_id"], r["quantity"]))
+    for t in sorted(candidates, key=lambda t: t["opened_at"], reverse=True):
+        if _counts(by_tx.get(t["id"], [])) == wanted:
+            return t
+    return None
+
+
 @router.post("/transactions", response_model=TransactionResponse)
 def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depends(get_current_user)):
     """Create a sale via the POS. Auth/ownership and Owner's Request
@@ -1131,6 +1187,14 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
 
     if body.employee_id != user.id:
         raise HTTPException(status_code=403, detail="Cannot record a sale under another employee's id")
+    if not body.confirm_duplicate and not body.related_transaction_id and body.items:
+        duplicate = _find_possible_duplicate(supabase, body)
+        if duplicate:
+            raise HTTPException(status_code=409, detail={
+                "code": "possible_duplicate",
+                "order_number": duplicate.get("order_number"),
+                "opened_at": duplicate.get("opened_at"),
+            })
     if body.order_type == "dine_in" and not body.table_number:
         raise HTTPException(status_code=400, detail="Table number is required for dine-in orders")
     if body.order_type == "delivery" and not body.delivery:

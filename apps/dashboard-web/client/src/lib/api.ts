@@ -27,6 +27,27 @@ export class QueuedOfflineError extends Error {
   }
 }
 
+/** The server thinks this is the same order this cashier just charged
+ * (409 possible_duplicate). The POS asks, then resends with
+ * confirm_duplicate and the same idempotency key. */
+export class PossibleDuplicateError extends Error {
+  constructor(public orderNumber: number | null, public openedAt: string | null) {
+    super(`Looks like the same order as ${orderNumber != null ? `#${orderNumber}` : 'one just charged'}`);
+    this.name = 'PossibleDuplicateError';
+  }
+}
+
+function possibleDuplicateFrom(err: unknown): PossibleDuplicateError | null {
+  if (!(err instanceof Error) || !err.message.includes(' 409 ')) return null;
+  try {
+    const detail = (JSON.parse(err.message.slice(err.message.indexOf('{'))) as { detail?: { code?: string; order_number?: number | null; opened_at?: string | null } }).detail;
+    if (detail?.code === 'possible_duplicate') return new PossibleDuplicateError(detail.order_number ?? null, detail.opened_at ?? null);
+  } catch {
+    /* not JSON */
+  }
+  return null;
+}
+
 /**
  * Human-readable text for an error headed to a toast. A bare fetch rejection
  * ("NetworkError when attempting to fetch resource" / "Failed to fetch") means
@@ -457,6 +478,8 @@ export interface CreateTransactionRequest {
   // that attempt -- lets the backend recognize and no-op a duplicate if a
   // request actually succeeded but its response was lost. See createTransaction().
   idempotency_key?: string;
+  // "Charge anyway" after a PossibleDuplicateError.
+  confirm_duplicate?: boolean;
 }
 
 export interface ApiTransactionItemAddon {
@@ -581,6 +604,8 @@ export async function createTransaction(body: CreateTransactionRequest, options?
   // the same key, so a request that actually succeeded server-role but lost
   // its response never creates a second transaction (see app/idempotency.py
   // on the backend).
+  // The POS passes its own key, kept with the saved cart, so a refresh in
+  // the middle of a charge doesn't create a second order either.
   const withKey: CreateTransactionRequest = { ...body, idempotency_key: body.idempotency_key ?? crypto.randomUUID() };
   try {
     return await _createTransactionRequest(withKey);
@@ -589,7 +614,7 @@ export async function createTransaction(body: CreateTransactionRequest, options?
       enqueue(withKey as unknown as Record<string, unknown>);
       throw new QueuedOfflineError();
     }
-    throw err;
+    throw possibleDuplicateFrom(err) ?? err;
   }
 }
 

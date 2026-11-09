@@ -26,6 +26,10 @@ from app.schemas import RefundApproveRequest, RefundCreateRequest, RefundOut
 router = APIRouter(tags=["refunds"])
 
 
+def is_double_punch(reason: str) -> bool:
+    return reason.strip().lower().startswith("double punch")
+
+
 def _decorate(supabase, rows: list[dict]) -> list[dict]:
     if not rows:
         return []
@@ -91,11 +95,12 @@ def create_refund(body: RefundCreateRequest, user: CurrentUser = Depends(get_cur
 
     # Refund now happens right away (2026-11-07): no approval step. Stock
     # follows the same default the approver used to get -- returned unless
-    # the kitchen already completed the order.
+    # the kitchen already completed the order. A double punch is the
+    # exception: only one of the two orders was cooked (2026-11-10).
     transaction = _fetch_transaction_with_items(supabase, body.transaction_id)
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
-    restore_stock = transaction.get("kitchen_status") != "completed"
+    restore_stock = transaction.get("kitchen_status") != "completed" or is_double_punch(reason)
     void_reason = f"Refund: {reason}" + ("" if restore_stock else " (stock not returned)")
     void_transaction_core(supabase, transaction, user.id, void_reason, restore_stock=restore_stock)
 

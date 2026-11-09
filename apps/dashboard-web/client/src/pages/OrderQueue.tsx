@@ -65,6 +65,12 @@ const KITCHEN_STATUS_VALUES: KitchenStatus[] = ['queued', 'preparing', 'ready', 
 
 const PAGE_SIZE = 10;
 
+// Mirrors refunds.py: stock goes back unless the kitchen completed the
+// order -- except a double punch, where only one of the two was cooked.
+function refundReturnsStock(t: ApiTransaction | null, reason: string): boolean {
+  return t?.kitchen_status !== 'completed' || reason.trim().toLowerCase().startsWith('double punch');
+}
+
 export default function OrderQueue() {
   // Kitchen accounts see order status only -- voids and refunds are cashier work.
   const readOnly = useAuth().user?.role === 'kitchen';
@@ -219,7 +225,7 @@ export default function OrderQueue() {
       await createRefund({ transaction_id: refundTarget.id, reason: refundReason.trim() });
       const paidCash = refundTarget.payment_status === 'paid' && refundTarget.payment_method === 'cash';
       toast.success(
-        `Order refunded${refundTarget.kitchen_status !== 'completed' ? ' and stock returned' : ''}.` +
+        `Order refunded${refundReturnsStock(refundTarget, refundReason) ? ' and stock returned' : ''}.` +
           (paidCash ? ' Pay the customer, then record it in Shift Reports → Cash refund.' : ''),
       );
       setRefundTarget(null);
@@ -455,9 +461,9 @@ export default function OrderQueue() {
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
             This order is already {refundTarget?.kitchen_status}. Refunding cancels it right away
-            {refundTarget?.kitchen_status === 'completed'
-              ? ' (stock is not returned, since the food was served).'
-              : ' and returns its stock.'}{' '}
+            {refundReturnsStock(refundTarget, refundReason)
+              ? ' and returns its stock.'
+              : ' (stock is not returned, since the food was served -- pick Double punch if it was never cooked).'}{' '}
             State the reason for the refund.
           </p>
           <div className="flex flex-wrap gap-2">

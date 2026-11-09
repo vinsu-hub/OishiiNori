@@ -265,6 +265,9 @@ class RiderPayoutUpdate(BaseModel):
 class CreateTransactionRequest(BaseModel):
     employee_id: str
     items: list[TransactionItemCreate]
+    # The POS asks first when this looks like the same order this cashier
+    # just charged (see _find_possible_duplicate); true = "charge anyway".
+    confirm_duplicate: bool = False
     discount_type_id: str | None = None
     is_owner_request: bool = False
     owner_request_employee_number: str | None = None
