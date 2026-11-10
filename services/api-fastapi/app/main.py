@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.auth import clear_auth_cache
 from app.routers import (
     analytics,
     trend_insights,
@@ -105,6 +106,12 @@ async def cpu_meter(request: Request, call_next):
     cpu_ms = (time.process_time() - started) * 1000
     if request.method not in ("GET", "HEAD", "OPTIONS") and response.status_code < 400:
         transactions.expire_version_check()
+        # The Kitchen Display's printer heartbeat writes every minute and
+        # never touches the menu -- clearing on it would undo the cache.
+        if not request.url.path.startswith("/kitchen-printer"):
+            products.clear_products_cache()
+        if request.url.path.startswith("/employees"):
+            clear_auth_cache()
     response.headers["Server-Timing"] = f"cpu;dur={cpu_ms:.1f}"
     if cpu_ms > SLOW_CPU_MS:
         logger.warning("CPU budget: %s %s took %.0f ms CPU", request.method, request.url.path, cpu_ms)

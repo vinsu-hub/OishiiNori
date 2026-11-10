@@ -814,7 +814,7 @@ export default function POSTerminal() {
   // Refundable Sushi Boat deposit (takeout/delivery only -- dine-in boats
   // stay in the store). Collected with the sale, logged in Sushi Boat
   // Deposits, never part of sales or VAT (2026-11-11).
-  const boatDeposit = orderType === 'takeout' || orderType === 'delivery'
+  const boatDeposit = (orderType === 'takeout' || orderType === 'delivery') && orderSource !== 'grab'
     ? cart.reduce((sum, l) => sum + (l.size.deposit_amount || 0) * l.quantity, 0)
     : 0;
   const cashTotal = Math.round((previewTotal + (orderType === 'delivery' ? selectedDeliveryFee ?? 0 : 0) + boatDeposit) * 100) / 100;

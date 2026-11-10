@@ -109,9 +109,11 @@ interface AddonLine {
   quantity: number;
 }
 
-const STATUS_POLL_MS = 10_000;
+// Waiting for approval, then tracking. Kept moderate to stay inside the
+// Supabase free plan (2026-11-11); the server caches each order too.
+const STATUS_POLL_MS = 15_000;
 // Once confirmed, the tracker refreshes less often until it's done.
-const TRACKING_POLL_MS = 20_000;
+const TRACKING_POLL_MS = 30_000;
 const FINAL_STAGES: (TrackingStage | null | undefined)[] = ['completed', 'declined'];
 const SHOP_OPEN_POLL_MS = 120_000;
 

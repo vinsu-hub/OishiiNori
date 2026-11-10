@@ -586,13 +586,30 @@ def public_order_lookup(order_number: int, phone: str, request: Request):
     return {"id": rows[0]["id"]}
 
 
+# Each open order's tracking page polls every 10-20 s, and building it is 4-6
+# Supabase reads -- uncached, a big share of the log quota (2026-11-11). The
+# built order is reused until the change counter moves (approving, kitchen
+# status, delivery and payment all bump it) or ORDER_STATUS_MAX_AGE_SECONDS
+# pass. Kept apart from the live cache so many open orders can't push the
+# kitchen's lists out of it.
+ORDER_STATUS_MAX_AGE_SECONDS = 120
+_order_status_cache: TTLCache = TTLCache(maxsize=256, ttl=ORDER_STATUS_MAX_AGE_SECONDS)
+
+
 @router.get("/public/orders/{order_id}", response_model=DigitalOrderStatusResponse)
 def public_order_status(order_id: str, request: Request):
     # The customer's page polls this while the order is in progress.
     local_rate_limit(f"order-status:{client_ip(request)}", limit=30, window_seconds=60)
-    order = _customer_order(get_supabase(), order_id)
+    version = live_cache_version()
+    cached = _order_status_cache.get(order_id)
+    if cached is not None and version is not None and cached[0] == version:
+        return cached[1]
+    supabase = get_supabase()
+    order = _customer_order(supabase, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+    if version is not None:
+        _order_status_cache[order_id] = (version, order)
     return order
 
 

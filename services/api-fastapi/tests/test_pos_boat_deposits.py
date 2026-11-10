@@ -51,6 +51,12 @@ class DepositSizeTests(unittest.TestCase):
         self.assertEqual(_boat_deposit_sizes(db, _body("dine_in")), {})
         db.table.assert_not_called()
 
+    def test_grab_order_has_no_deposit(self):
+        db = MagicMock()
+        body = _body(order_source="grab")
+        self.assertEqual(_boat_deposit_sizes(db, body), {})
+        db.table.assert_not_called()
+
     def test_fractional_boat_refused(self):
         with self.assertRaises(HTTPException) as caught:
             _boat_deposit_sizes(_sizes_db([MEDIUM, RAMEN]), _body(qty=1.5))

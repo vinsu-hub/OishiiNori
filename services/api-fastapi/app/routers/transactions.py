@@ -1125,7 +1125,8 @@ def _boat_deposit_sizes(supabase, body: CreateTransactionRequest) -> dict[str, f
     sale (2026-11-11). Dine-in boats stay in the store, like the online
     dine_in_qr rule. Checked before the sale is saved so a fractional boat
     quantity is refused up front."""
-    if body.order_type not in BOAT_DEPOSIT_ORDER_TYPES or not body.items:
+    # Grab collects payment itself, so the shop never receives a deposit.
+    if body.order_type not in BOAT_DEPOSIT_ORDER_TYPES or body.order_source == "grab" or not body.items:
         return {}
     size_ids = list({i.product_size_id for i in body.items})
     rows = supabase.table("product_sizes").select("id, deposit_amount").in_("id", size_ids).execute().data or []

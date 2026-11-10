@@ -23,11 +23,13 @@ export function formatAdvanceTime(iso: string): string {
 }
 
 export function advanceWindow(now = new Date()): { from: string; before: string } {
-  // Whole minutes, so every screen polling within the same minute asks for the
-  // same range and shares the API's 10-second response cache.
-  const minute = Math.floor(now.getTime() / 60_000) * 60_000;
+  // Whole hours: the range is a week either side, so an hour's rounding
+  // changes nothing on screen, and the request stays the same long enough for
+  // the API to reuse its cached list. (Whole minutes made every screen rebuild
+  // it from Supabase once a minute -- 2026-11-11 quota fix.)
+  const hour = Math.floor(now.getTime() / 3_600_000) * 3_600_000;
   return {
-    from: new Date(minute - 7 * 86400000).toISOString(),
-    before: new Date(minute + 8 * 86400000).toISOString(),
+    from: new Date(hour - 7 * 86400000).toISOString(),
+    before: new Date(hour + 8 * 86400000).toISOString(),
   };
 }

@@ -1,6 +1,7 @@
+import threading
+import time
 from collections import defaultdict
 
-from cachetools import TTLCache
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.auth import CurrentUser, get_current_user, require_role
@@ -9,11 +10,34 @@ from app.schemas import ProductOut, UpdateProductImageRequest
 
 router = APIRouter(tags=["products"])
 
-# Catalog changes rarely (menu editing is an occasional admin action) but is
-# read by every 20s-polling dashboard page plus the public digital menu --
-# a short TTL cuts repeat DB round-trips without meaningfully changing
-# staleness (already bounded by the 20s poll interval itself).
-_products_cache: TTLCache = TTLCache(maxsize=16, ttl=5)
+# The full menu (products, sizes, sold-out state, bundle pieces) is 5
+# Supabase reads. It used to be cached 5 s, so every poll and every website
+# visit rebuilt it -- all night too, a large part of the Supabase log quota
+# (2026-11-11). Now it's reused until the change counter (live_version, the
+# same one the live order lists use) moves -- orders and size/bundle edits
+# bump it, which keeps sold-out state current -- or 5 minutes pass. Writes on
+# this instance clear it straight away (main.py), so a menu edit shows at once.
+PRODUCTS_CACHE_MAX_AGE_SECONDS = 300
+_products_cache: dict = {}
+_products_cache_lock = threading.Lock()
+
+
+def clear_products_cache() -> None:
+    with _products_cache_lock:
+        _products_cache.clear()
+
+
+def _products_cache_get(key, version):
+    with _products_cache_lock:
+        entry = _products_cache.get(key)
+    if entry is None:
+        return None
+    built_version, built_at, out = entry
+    if time.monotonic() - built_at >= PRODUCTS_CACHE_MAX_AGE_SECONDS:
+        return None
+    if version is not None and built_version != version:
+        return None
+    return out
 
 
 def _compute_size_availability(supabase, product_size_ids: list[str]) -> dict[str, str]:
@@ -85,8 +109,11 @@ def _list_products_data(supabase, active_only: bool, department: str | None) -> 
     the public digital-menu route -- no branch scoping (single-branch
     build), every caller sees the full catalog. `department` is an optional
     display filter (kitchen/cafe), not an access boundary."""
+    from app.routers.transactions import current_live_version  # avoids an import cycle
+
     cache_key = (active_only, department)
-    cached = _products_cache.get(cache_key)
+    version = current_live_version(supabase)
+    cached = _products_cache_get(cache_key, version)
     if cached is not None:
         return cached
 
@@ -133,7 +160,8 @@ def _list_products_data(supabase, active_only: bool, department: str | None) -> 
             s["total_pieces"] = total_pieces_by_size.get(s["id"])
         p["sizes"] = sizes
         out.append(p)
-    _products_cache[cache_key] = out
+    with _products_cache_lock:
+        _products_cache[cache_key] = (version, time.monotonic(), out)
     return out
 
 

@@ -71,6 +71,16 @@ function refundReturnsStock(t: ApiTransaction | null, reason: string): boolean {
   return t?.kitchen_status !== 'completed' || reason.trim().toLowerCase().startsWith('double punch');
 }
 
+// Days of approved online orders the selected date needs: back to the chosen
+// date, plus 8 because an advance order can be placed up to 7 days before
+// it's cooked; capped at the API's 30.
+function digitalOrderDaysFor(date: string): number {
+  const today = Date.parse(`${todayIsoPH()}T00:00:00+08:00`);
+  const chosen = date ? Date.parse(`${date}T00:00:00+08:00`) : today;
+  const back = Number.isFinite(chosen) ? Math.ceil((today - chosen) / 86_400_000) : 0;
+  return Math.min(30, Math.max(0, back) + 8);
+}
+
 export default function OrderQueue() {
   // Kitchen accounts see order status only -- voids and refunds are cashier work.
   const readOnly = useAuth().user?.role === 'kitchen';
@@ -120,7 +130,9 @@ export default function OrderQueue() {
       : undefined;
     Promise.all([
       fetchTransactions({ date: dateFilter || undefined, status: transactionStatusParam }),
-      fetchDigitalOrders('approved'),
+      // Only the days this view can show (it used to pull up to 200 approved
+      // orders from all time on every poll -- 2026-11-11 quota fix).
+      fetchDigitalOrders('approved', digitalOrderDaysFor(dateFilter)),
     ])
       .then(([data, digitalOrders]) => {
         setTransactions(data);

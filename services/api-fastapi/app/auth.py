@@ -109,8 +109,10 @@ def _get_user_with_retry(supabase, token: str):
 # (auth.get_user + the profile row) before doing its real work -- about half
 # the CPU of a typical poll. A verified token is reused for up to 60 s (never
 # past its own expiry), so a deactivation or role change takes effect within
-# a minute instead of instantly. Keyed by a hash so raw tokens aren't held.
-_AUTH_CACHE_SECONDS = 60
+# five minutes instead of instantly. Keyed by a hash so raw tokens aren't held.
+# (60 s until 2026-11-11: two Supabase calls a minute per device was a large
+# share of the free plan's log quota.)
+_AUTH_CACHE_SECONDS = 300
 _auth_cache: TTLCache = TTLCache(maxsize=512, ttl=_AUTH_CACHE_SECONDS)
 
 
@@ -121,6 +123,11 @@ def _token_expiry(token: str) -> float:
         return float(json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))["exp"])
     except Exception:
         return 0.0
+
+
+def clear_auth_cache() -> None:
+    """After an employee edit (role, deactivation) on this instance."""
+    _auth_cache.clear()
 
 
 def get_current_user(
