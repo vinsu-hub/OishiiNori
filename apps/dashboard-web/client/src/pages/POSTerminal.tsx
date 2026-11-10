@@ -811,7 +811,13 @@ export default function POSTerminal() {
   const cashReceivedAmount = Number(cashReceived);
   // Rounded to centavos so "Exact" matches the printed total and change never
   // shows as -P0.00 from a fraction-of-a-centavo preview difference.
-  const cashTotal = Math.round((previewTotal + (orderType === 'delivery' ? selectedDeliveryFee ?? 0 : 0)) * 100) / 100;
+  // Refundable Sushi Boat deposit (takeout/delivery only -- dine-in boats
+  // stay in the store). Collected with the sale, logged in Sushi Boat
+  // Deposits, never part of sales or VAT (2026-11-11).
+  const boatDeposit = orderType === 'takeout' || orderType === 'delivery'
+    ? cart.reduce((sum, l) => sum + (l.size.deposit_amount || 0) * l.quantity, 0)
+    : 0;
+  const cashTotal = Math.round((previewTotal + (orderType === 'delivery' ? selectedDeliveryFee ?? 0 : 0) + boatDeposit) * 100) / 100;
   const cashReceivedIsSufficient = Number.isFinite(cashReceivedAmount) && cashReceivedAmount >= cashTotal;
 
   // Tablet lock: the kitchen tablet (Printer Setup) and kitchen accounts
@@ -1197,6 +1203,7 @@ export default function POSTerminal() {
             : undefined,
       }, { queueOffline: !advance });
       const deliveryFee = orderType === 'delivery' ? transaction.delivery?.delivery_fee ?? 0 : 0;
+      const saleBoatDeposit = boatDeposit;
       const appliedItemDiscount = transaction.items.find((item) => (item.discount_amount ?? 0) > 0);
       setReceipt({
         orderNumber: transaction.order_number,
@@ -1215,6 +1222,7 @@ export default function POSTerminal() {
         taxAmount: transaction.tax_amount,
         deliveryFee,
         totalAmount: transaction.total_amount + deliveryFee,
+        boatDeposit: saleBoatDeposit,
         paymentMethod: transaction.payment_method,
         payOnDelivery: codSale,
         payOnPickup: payAtPickup,
@@ -1231,7 +1239,7 @@ export default function POSTerminal() {
         cashTendered: !codSale && !payAtPickup && paymentMethod === 'cash' ? cashReceivedAmount : null,
         changeDue:
           !codSale && !payAtPickup && paymentMethod === 'cash'
-            ? Math.max(0, Math.round((cashReceivedAmount - (transaction.total_amount + deliveryFee)) * 100) / 100)
+            ? Math.max(0, Math.round((cashReceivedAmount - (transaction.total_amount + deliveryFee + saleBoatDeposit)) * 100) / 100)
             : null,
         itemCount: cart.reduce((sum, line) => sum + line.quantity, 0),
         delivery:
@@ -2191,6 +2199,21 @@ export default function POSTerminal() {
                 <span>Total (preview)</span>
                 <span>{formatCurrency(previewTotal)}</span>
               </div>
+              {boatDeposit > 0 && (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Refundable Sushi Boat deposit</span>
+                    <span>{formatCurrency(boatDeposit)}</span>
+                  </div>
+                  <div className="flex justify-between font-semibold text-base">
+                    <span>Amount due</span>
+                    <span>{formatCurrency(cashTotal)}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Not part of the sale. Refunded when the boat comes back clean -- record it in Sushi Boat Deposits.
+                  </p>
+                </>
+              )}
             </div>
 
             {cart.length > 0 && chargeBlockers.length > 0 && (

@@ -41,6 +41,7 @@ class AdvanceTimeTests(unittest.TestCase):
              patch("app.routers.transactions.check_idempotency_key", return_value=None), \
              patch("app.routers.transactions._business_days_supported_check", return_value=False), \
              patch("app.routers.transactions._create_transaction_row", return_value=SimpleNamespace(id="order")) as create, \
+             patch("app.routers.transactions._boat_deposit_sizes", return_value={}), \
              patch("app.routers.transactions.record_idempotency_key"):
             create_transaction(body, SimpleNamespace(id="cashier", role="employee"))
         self.assertIsNone(create.call_args.kwargs["payment_method"])

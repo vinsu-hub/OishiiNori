@@ -1117,6 +1117,55 @@ def _validate_grab_settlement(order_source: str, payment_method: str | None,
         raise HTTPException(status_code=400, detail="Grab settlement is only for Grab orders")
 
 
+BOAT_DEPOSIT_ORDER_TYPES = {"takeout", "delivery"}
+
+
+def _boat_deposit_sizes(supabase, body: CreateTransactionRequest) -> dict[str, float]:
+    """Per-unit Sushi Boat deposit for each size in a takeout/delivery POS
+    sale (2026-11-11). Dine-in boats stay in the store, like the online
+    dine_in_qr rule. Checked before the sale is saved so a fractional boat
+    quantity is refused up front."""
+    if body.order_type not in BOAT_DEPOSIT_ORDER_TYPES or not body.items:
+        return {}
+    size_ids = list({i.product_size_id for i in body.items})
+    rows = supabase.table("product_sizes").select("id, deposit_amount").in_("id", size_ids).execute().data or []
+    deposits = {r["id"]: float(r.get("deposit_amount") or 0) for r in rows if float(r.get("deposit_amount") or 0) > 0}
+    for item in body.items:
+        if item.product_size_id in deposits and not float(item.quantity).is_integer():
+            raise HTTPException(status_code=400, detail="Sushi Boat quantities must be whole numbers")
+    return deposits
+
+
+def _record_pos_boat_deposits(supabase, transaction: TransactionResponse, deposits: dict[str, float],
+                              collected: bool, cashier_id: str) -> None:
+    """One sushi_boat_deposits row per boat on the sale -- the same ledger
+    online orders use, kept outside sales. A sale paid at the counter has
+    the deposit in hand already; pay-on-delivery/pickup is recorded
+    collected later from the Sushi Boat Deposits page."""
+    now = datetime.now(timezone.utc).isoformat()
+    rows = []
+    for item in transaction.items:
+        amount = deposits.get(item.product_size_id)
+        if not amount:
+            continue
+        for unit_number in range(1, int(item.quantity) + 1):
+            rows.append({
+                "transaction_id": transaction.id,
+                "transaction_item_id": item.id,
+                "product_size_id": item.product_size_id,
+                "unit_number": unit_number,
+                "amount": amount,
+                **({"collected_at": now, "collected_by": cashier_id} if collected else {}),
+            })
+    if rows:
+        try:
+            supabase.table("sushi_boat_deposits").insert(rows).execute()
+        except APIError:
+            # The sale is already saved; a ledger problem (e.g. migration 0084
+            # not applied yet) must not turn it into an error the cashier retries.
+            logger.warning("Could not record Sushi Boat deposits for transaction %s", transaction.id, exc_info=True)
+
+
 DUPLICATE_WINDOW = timedelta(minutes=3)
 DUPLICATE_MIN_ITEMS_NO_TABLE = 3
 
@@ -1291,6 +1340,8 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
                 supabase, body.reservation_override_id, blocked_table["id"], blocking
             )
 
+    boat_deposits = _boat_deposit_sizes(supabase, body)
+
     result = _create_transaction_row(
         supabase,
         employee_id=body.employee_id,
@@ -1314,6 +1365,12 @@ def create_transaction(body: CreateTransactionRequest, user: CurrentUser = Depen
         pickup_customer_name=body.pickup_customer_name.strip() if body.pickup_customer_name else None,
         pickup_customer_phone=body.pickup_customer_phone.strip() if body.pickup_customer_phone else None,
     )
+
+    if boat_deposits:
+        _record_pos_boat_deposits(
+            supabase, result, boat_deposits,
+            collected=not (body.pay_on_delivery or body.pay_on_pickup), cashier_id=user.id,
+        )
 
     if consumed_override_id is not None:
         supabase.table("reservation_overrides").update({"transaction_id": result.id}).eq(
@@ -2415,6 +2472,12 @@ def void_transaction_core(
         raise HTTPException(status_code=409, detail="This order was already voided")
     if restore_stock:
         _restore_items_stock(supabase, transaction, actor_id)
+    # A boat that never left the store has no deposit to track any more; one
+    # already handed over keeps its row so its return is still recorded.
+    try:
+        supabase.table("sushi_boat_deposits").delete().eq("transaction_id", transaction_id).is_("handoff_at", "null").execute()
+    except APIError:
+        logger.warning("Could not clear Sushi Boat deposits for voided transaction %s", transaction_id, exc_info=True)
     updated_row = updated.data[0]
     updated_row.setdefault("kitchen_status", "queued")
     updated_row.setdefault("order_type", None)

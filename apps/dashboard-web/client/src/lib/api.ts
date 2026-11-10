@@ -201,8 +201,13 @@ export function fetchProducts(activeOnly = true, department?: Department): Promi
 
 export interface SushiBoatDeposit {
   id: string;
-  digital_order_id: string;
-  digital_order_item_id: string;
+  // Online orders set the digital_order pair; boats charged on the POS
+  // (takeout/delivery) set the transaction pair instead.
+  source: 'online' | 'pos';
+  digital_order_id: string | null;
+  digital_order_item_id: string | null;
+  transaction_id: string | null;
+  transaction_item_id: string | null;
   product_size_id: string;
   unit_number: number;
   amount: number;
@@ -2308,7 +2313,7 @@ export interface ShiftReport {
   payments: Record<string, number>;
   /** grab_settlement / grab_orders: Grab orders, kept out of gross and net sales (reports closed from 2026-10-21; absent before). */
   sales: { gross: number; discounts: number; cash_refunds: number; net: number; taxes: number; order_count: number; grab_settlement?: number; grab_orders?: number };
-  cash_drawer: { starting_cash: number; cash_payments: number; cash_refunds: number; paid_in: number; paid_out: number; operating_expenses: number; owner_transfers: number; rider_fees_cash?: number; rider_fees_deductible?: number; expected_cash: number; actual_cash: number | null; difference: number | null };
+  cash_drawer: { starting_cash: number; cash_payments: number; cash_refunds: number; paid_in: number; paid_out: number; operating_expenses: number; owner_transfers: number; rider_fees_cash?: number; rider_fees_deductible?: number; boat_deposits_in?: number; boat_deposits_out?: number; expected_cash: number; actual_cash: number | null; difference: number | null };
   entries: ShiftMovement[];
   /** Closed by an End-of-Day override; an executive still has to enter the counted cash. */
   cash_count_pending?: boolean;

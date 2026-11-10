@@ -885,26 +885,47 @@ def _require_deposit_staff(user: CurrentUser) -> None:
 
 @router.get("/sushi-boat-deposits")
 def list_sushi_boat_deposits(user: CurrentUser = Depends(get_current_user)):
-    """Staff ledger for online pickup/delivery Sushi Boat deposits."""
+    """Staff ledger for Sushi Boat deposits: online pickup/delivery orders
+    and, since 2026-11-11, takeout/delivery boats charged on the POS."""
     _require_deposit_staff(user)
     supabase = get_supabase()
     rows = supabase.table("sushi_boat_deposits").select("*").order("created_at", desc=True).limit(500).execute().data
     if not rows:
         return []
-    order_ids = list({row["digital_order_id"] for row in rows})
-    item_ids = list({row["digital_order_item_id"] for row in rows})
+    order_ids = list({row["digital_order_id"] for row in rows if row.get("digital_order_id")})
+    item_ids = list({row["digital_order_item_id"] for row in rows if row.get("digital_order_item_id")})
+    tx_ids = list({row["transaction_id"] for row in rows if row.get("transaction_id")})
+    tx_item_ids = list({row["transaction_item_id"] for row in rows if row.get("transaction_item_id")})
     size_ids = list({row["product_size_id"] for row in rows})
     staff_ids = list({row[key] for row in rows for key in ("collected_by", "handed_by", "returned_by") if row.get(key)})
-    orders = {row["id"]: row for row in supabase.table("digital_orders").select("id,order_number,order_channel,status,payment_method,scheduled_for,created_at").in_("id", order_ids).execute().data}
-    deliveries = {row["digital_order_id"]: row for row in supabase.table("deliveries").select("digital_order_id,customer_name,customer_phone,address,barangay").in_("digital_order_id", order_ids).execute().data}
-    items = {row["id"]: row for row in supabase.table("digital_order_items").select("id,quantity").in_("id", item_ids).execute().data}
+    orders = {row["id"]: row for row in supabase.table("digital_orders").select("id,order_number,order_channel,status,payment_method,scheduled_for,created_at").in_("id", order_ids).execute().data} if order_ids else {}
+    deliveries = {row["digital_order_id"]: row for row in supabase.table("deliveries").select("digital_order_id,customer_name,customer_phone,address,barangay").in_("digital_order_id", order_ids).execute().data} if order_ids else {}
+    items = {row["id"]: row for row in supabase.table("digital_order_items").select("id,quantity").in_("id", item_ids).execute().data} if item_ids else {}
+    transactions = {row["id"]: row for row in supabase.table("transactions").select("id,order_number,order_type,status,payment_method,pickup_customer_name,pickup_customer_phone,opened_at").in_("id", tx_ids).execute().data} if tx_ids else {}
+    tx_deliveries = {row["transaction_id"]: row for row in supabase.table("deliveries").select("transaction_id,customer_name,customer_phone,address,barangay").in_("transaction_id", tx_ids).execute().data} if tx_ids else {}
+    tx_items = {row["id"]: row for row in supabase.table("transaction_items").select("id,quantity").in_("id", tx_item_ids).execute().data} if tx_item_ids else {}
     sizes = supabase.table("product_sizes").select("id,size_label,products(name)").in_("id", size_ids).execute().data
     sizes_by_id = {row["id"]: row for row in sizes}
     staff = {row["id"]: row.get("full_name") for row in supabase.table("profiles").select("id,full_name").in_("id", staff_ids).execute().data} if staff_ids else {}
     for row in rows:
-        row["order"] = orders.get(row["digital_order_id"], {})
-        row["delivery"] = deliveries.get(row["digital_order_id"])
-        row["item_quantity"] = items.get(row["digital_order_item_id"], {}).get("quantity", 1)
+        if row.get("transaction_id"):
+            tx = transactions.get(row["transaction_id"], {})
+            row["source"] = "pos"
+            row["order"] = {
+                "order_number": tx.get("order_number"), "order_channel": tx.get("order_type"),
+                "status": tx.get("status"), "payment_method": tx.get("payment_method"),
+                "scheduled_for": None, "created_at": tx.get("opened_at"),
+            }
+            row["delivery"] = tx_deliveries.get(row["transaction_id"]) or (
+                {"customer_name": tx.get("pickup_customer_name"), "customer_phone": tx.get("pickup_customer_phone"),
+                 "address": None, "barangay": None} if tx.get("pickup_customer_name") else None
+            )
+            row["item_quantity"] = tx_items.get(row["transaction_item_id"], {}).get("quantity", 1)
+        else:
+            row["source"] = "online"
+            row["order"] = orders.get(row["digital_order_id"], {})
+            row["delivery"] = deliveries.get(row["digital_order_id"])
+            row["item_quantity"] = items.get(row["digital_order_item_id"], {}).get("quantity", 1)
         size = sizes_by_id.get(row["product_size_id"], {})
         product = size.get("products") or {}
         row["product_name"] = product.get("name", "Sushi Boat")
@@ -925,9 +946,14 @@ def collect_sushi_boat_deposit(deposit_id: str, user: CurrentUser = Depends(get_
         raise HTTPException(status_code=404, detail="Deposit not found")
     if row.get("collected_at"):
         raise HTTPException(status_code=409, detail="Deposit is already recorded as collected")
-    order = supabase.table("digital_orders").select("status").eq("id", row["digital_order_id"]).maybe_single().execute().data
-    if not order or order.get("status") != "approved":
-        raise HTTPException(status_code=409, detail="Approve the online order before recording its deposit")
+    if row.get("transaction_id"):
+        tx = supabase.table("transactions").select("status").eq("id", row["transaction_id"]).maybe_single().execute()
+        if not tx or not tx.data or tx.data.get("status") == "voided":
+            raise HTTPException(status_code=409, detail="This order was voided")
+    else:
+        order = supabase.table("digital_orders").select("status").eq("id", row["digital_order_id"]).maybe_single().execute().data
+        if not order or order.get("status") != "approved":
+            raise HTTPException(status_code=409, detail="Approve the online order before recording its deposit")
     changed = supabase.table("sushi_boat_deposits").update({
         "collected_at": datetime.now(timezone.utc).isoformat(), "collected_by": user.id,
     }).eq("id", deposit_id).is_("collected_at", "null").execute()

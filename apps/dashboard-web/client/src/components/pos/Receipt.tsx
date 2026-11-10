@@ -83,6 +83,9 @@ export interface ReceiptData {
   scheduledFor?: string | null;
   pickupCustomerName?: string | null;
   pickupCustomerPhone?: string | null;
+  /** Refundable Sushi Boat deposit taken with this sale -- not part of the
+   * sale total or VAT, printed below it as its own amount due. */
+  boatDeposit?: number;
 }
 
 const ORDER_TYPE_LABEL: Record<string, string> = {
@@ -156,9 +159,9 @@ export function receiptHtml(r: ReceiptData): string {
     <hr/><section class="order-number c"><div class="eyebrow">YOUR ORDER NUMBER</div><div class="b ticket">${r.orderNumber != null ? `#${r.orderNumber}` : '--'}</div><div class="small">Watch the screen for your number</div><div class="small">Now Serving = ready for pick-up</div></section>
     <hr/><section class="meta small">${htmlText('meta-line', orderTypeLabel(r))}${r.orderType === 'dine_in' && r.tableNumber != null ? `<div class="receipt-table-number">TABLE ${r.tableNumber}</div>` : ''}${htmlText('meta-line', r.scheduledFor ? `ADVANCE ORDER · ${r.orderType === 'delivery' ? 'Ready for rider' : 'Pickup ready'} ${timestamp(r.scheduledFor)}` : '')}${htmlText('meta-line', r.pickupCustomerName ? `Pickup: ${r.pickupCustomerName} · ${r.pickupCustomerPhone ?? ''}` : '')}${htmlText('meta-line', timestamp(r.openedAt))}${htmlText('meta-line', r.cashierName ? `Cashier: ${r.cashierName}` : '')}${htmlText('meta-line', r.reference ? `Ref: ${r.reference}` : '')}</section>
     <hr/><section class="items">${items}${row('Items:', String(r.itemCount))}</section><hr/>
-    <section class="totals">${row('Subtotal', formatCurrency(r.subtotal))}${r.discountAmount > 0 ? row(`Discount (${r.discountLabel || 'Discount'})`, `-${formatCurrency(r.discountAmount)}`) : ''}${r.deliveryFee > 0 ? row('Delivery fee', formatCurrency(r.deliveryFee)) : ''}${row('TOTAL', formatCurrency(r.totalAmount), true)}</section>
+    <section class="totals">${row('Subtotal', formatCurrency(r.subtotal))}${r.discountAmount > 0 ? row(`Discount (${r.discountLabel || 'Discount'})`, `-${formatCurrency(r.discountAmount)}`) : ''}${r.deliveryFee > 0 ? row('Delivery fee', formatCurrency(r.deliveryFee)) : ''}${row('TOTAL', formatCurrency(r.totalAmount), true)}${r.boatDeposit ? row('Refundable boat deposit', formatCurrency(r.boatDeposit)) + row('AMOUNT DUE', formatCurrency(r.totalAmount + r.boatDeposit), true) : ''}</section>
     ${r.taxAmount > 0 || r.vatExempt ? `<section class="vat small">${r.vatExempt ? row('VAT-exempt sales', formatCurrency(r.totalAmount - r.deliveryFee)) : row('VATable sales', formatCurrency(vatSales))}${!r.vatExempt && r.taxAmount > 0 ? row('VAT 12%', formatCurrency(r.taxAmount)) : ''}</section>` : ''}
-    ${r.payOnDelivery || r.payOnPickup ? `<hr/><section class="payment"><div class="c b">PAY ON ${r.payOnPickup ? 'PICKUP' : 'DELIVERY'}</div>${row(r.payOnPickup ? 'Due at pickup' : 'Rider collects', formatCurrency(r.totalAmount), true)}</section>` : r.paymentMethod ? `<hr/><section class="payment">${row('Paid via', paymentLabel(r.paymentMethod))}${r.cashTendered != null ? row('Cash tendered', formatCurrency(r.cashTendered)) : ''}${r.cashTendered != null ? row('Change', formatCurrency(r.changeDue ?? 0)) : ''}</section>` : ''}
+    ${r.payOnDelivery || r.payOnPickup ? `<hr/><section class="payment"><div class="c b">PAY ON ${r.payOnPickup ? 'PICKUP' : 'DELIVERY'}</div>${row(r.payOnPickup ? 'Due at pickup' : 'Rider collects', formatCurrency(r.totalAmount + (r.boatDeposit ?? 0)), true)}</section>` : r.paymentMethod ? `<hr/><section class="payment">${row('Paid via', paymentLabel(r.paymentMethod))}${r.cashTendered != null ? row('Cash tendered', formatCurrency(r.cashTendered)) : ''}${r.cashTendered != null ? row('Change', formatCurrency(r.changeDue ?? 0)) : ''}</section>` : ''}
     ${r.delivery ? `<hr/><section class="delivery small"><div class="b">Deliver to:</div>${htmlText('delivery-line', r.delivery.customerName)}${htmlText('delivery-line', r.delivery.phone)}${htmlText('delivery-line', deliveryAddress(r.delivery))}</section>` : ''}
     <hr/><footer class="c small"><div class="b legal">THIS IS NOT AN OFFICIAL RECEIPT</div><div>Keep this slip until your order is served.</div></footer>
   </div>`;
@@ -265,6 +268,12 @@ export function receiptEscpos(
   p.bold(true).size('tall');
   rows('TOTAL', money(r.totalAmount));
   p.size('normal').bold(false);
+  if (r.boatDeposit) {
+    rows('Refundable boat deposit', money(r.boatDeposit));
+    p.bold(true);
+    rows('AMOUNT DUE', money(r.totalAmount + r.boatDeposit));
+    p.bold(false);
+  }
   if (r.taxAmount > 0 || r.vatExempt) {
     if (r.vatExempt)
       rows('VAT-exempt sales', money(r.totalAmount - r.deliveryFee));
@@ -276,7 +285,7 @@ export function receiptEscpos(
     centered(r.payOnPickup ? 'PAY ON PICKUP' : 'PAY ON DELIVERY');
     p.size('normal');
     p.align('left');
-    rows(r.payOnPickup ? 'Due at pickup' : 'Rider collects', money(r.totalAmount));
+    rows(r.payOnPickup ? 'Due at pickup' : 'Rider collects', money(r.totalAmount + (r.boatDeposit ?? 0)));
     p.bold(false);
   } else if (r.paymentMethod) {
     p.line(divider);

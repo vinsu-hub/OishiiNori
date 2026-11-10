@@ -44,7 +44,7 @@ class Query:
 
 class DB:
     def __init__(self, **rows): self.rows = rows
-    def table(self, name): return Query(self.rows[name])
+    def table(self, name): return Query(self.rows.get(name, []))
 
 
 class ShiftReportTests(unittest.TestCase):

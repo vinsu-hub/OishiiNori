@@ -1,10 +1,12 @@
 """Cashier shift ledger and immutable report snapshots (migration 0069)."""
 
+import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
+from postgrest.exceptions import APIError
 from pydantic import BaseModel, Field
 
 from app.auth import CurrentUser, get_current_user
@@ -85,6 +87,34 @@ def _sales(db, start: str, end: str) -> list[dict]:
                          .gte("paid_at", start).lt("paid_at", end)
                          .eq("payment_status", "paid").order("id"))
     return immediate + settled
+
+
+def _boat_deposit_cash(db, start: str, end: str) -> tuple[Decimal, Decimal]:
+    """(cash in, cash out) of Sushi Boat deposits during the shift. Deposits
+    are refundable, so they sit in the drawer but never in sales: collected
+    in cash adds to expected cash, a refund handed back in cash takes it
+    out (2026-11-11)."""
+    collected = _page_rows(db.table("sushi_boat_deposits")
+                           .select("id,amount,transaction_id,digital_order_id")
+                           .gte("collected_at", start).lt("collected_at", end).order("id"))
+    tx_ids = list({r["transaction_id"] for r in collected if r.get("transaction_id")})
+    order_ids = list({r["digital_order_id"] for r in collected if r.get("digital_order_id")})
+    cash_sources: set[str] = set()
+    for offset in range(0, len(tx_ids), ID_BATCH_SIZE):
+        cash_sources |= {row["id"] for row in _page_rows(db.table("transactions").select("id,payment_method")
+                         .in_("id", tx_ids[offset:offset + ID_BATCH_SIZE]).order("id"))
+                         if (row.get("payment_method") or "").casefold() == "cash"}
+    for offset in range(0, len(order_ids), ID_BATCH_SIZE):
+        cash_sources |= {row["id"] for row in _page_rows(db.table("digital_orders").select("id,payment_method")
+                         .in_("id", order_ids[offset:offset + ID_BATCH_SIZE]).order("id"))
+                         if (row.get("payment_method") or "").casefold() == "cash"}
+    cash_in = sum((money(r["amount"]) for r in collected
+                   if (r.get("transaction_id") or r.get("digital_order_id")) in cash_sources), Decimal("0"))
+    returned = _page_rows(db.table("sushi_boat_deposits").select("id,refund_amount,refund_method")
+                          .gte("returned_at", start).lt("returned_at", end).order("id"))
+    cash_out = sum((money(r["refund_amount"]) for r in returned
+                    if (r.get("refund_method") or "").strip().casefold() == "cash"), Decimal("0"))
+    return cash_in, cash_out
 
 
 def build_shift_report(db, shift: dict, closed_at: datetime, counted_cash: float) -> dict:
@@ -170,8 +200,14 @@ def build_shift_report(db, shift: dict, closed_at: datetime, counted_cash: float
                         if m["kind"] == "cash_refund" and m.get("transaction_id") in grab_refund_ids), Decimal("0"))
     starting = money(shift["starting_cash"])
     cash_payments = payments.get("Cash", Decimal("0"))
+    try:
+        boat_deposits_in, boat_deposits_out = _boat_deposit_cash(db, start, end)
+    except APIError:
+        # Migration 0084 not applied yet -- never block closing the day over it.
+        logging.getLogger(__name__).warning("Sushi Boat deposits left out of the drawer", exc_info=True)
+        boat_deposits_in = boat_deposits_out = Decimal("0")
     expected = (starting + cash_payments + paid_in - expense_total - transfers - refunds
-                - rider_fees_cash - rider_fees_deductible)
+                - rider_fees_cash - rider_fees_deductible + boat_deposits_in - boat_deposits_out)
     entries = [
         {"id": e["id"], "time": e["created_at"], "staff": (e.get("profiles") or {}).get("full_name"),
          "purpose": e["description"], "kind": "expense", "amount": -float(money(e["amount"]))}
@@ -199,6 +235,8 @@ def build_shift_report(db, shift: dict, closed_at: datetime, counted_cash: float
                         "operating_expenses": float(expense_total), "owner_transfers": float(transfers),
                         "rider_fees_cash": float(rider_fees_cash),
                         "rider_fees_deductible": float(rider_fees_deductible),
+                        "boat_deposits_in": float(boat_deposits_in),
+                        "boat_deposits_out": float(boat_deposits_out),
                         "paid_out": float(expense_total + transfers), "expected_cash": float(expected),
                         "actual_cash": float(money(counted_cash)),
                         "difference": float(money(counted_cash) - expected)},

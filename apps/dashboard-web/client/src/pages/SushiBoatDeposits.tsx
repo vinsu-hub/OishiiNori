@@ -58,7 +58,7 @@ export default function SushiBoatDeposits() {
     <div className="space-y-5 p-6">
       <header className="space-y-1">
         <h1 className="font-corp-display text-2xl font-semibold">Sushi Boat Deposits</h1>
-        <p className="text-sm text-muted-foreground">Track pickup and delivery boat deposits, handoffs, returns, deductions, and refunds.</p>
+        <p className="text-sm text-muted-foreground">Track boat deposits for online orders and for takeout or delivery boats charged on the POS: handoffs, returns, deductions, and refunds.</p>
       </header>
 
       <section className="rounded-lg border border-primary/20 bg-primary/5 p-4" aria-labelledby="boat-policy-title">
@@ -76,7 +76,7 @@ export default function SushiBoatDeposits() {
       </section>
 
       {loading && <p className="text-sm text-muted-foreground">Loading deposits…</p>}
-      {!loading && rows.length === 0 && <p className="rounded-md border p-5 text-sm text-muted-foreground">No online sushi boat deposits yet.</p>}
+      {!loading && rows.length === 0 && <p className="rounded-md border p-5 text-sm text-muted-foreground">No sushi boat deposits yet.</p>}
 
       {open.length > 0 && <section className="space-y-3"><h2 className="font-corp-display text-lg font-semibold">Open deposits <Badge variant="secondary">{open.length}</Badge></h2>
         <div className="grid gap-3 xl:grid-cols-2">{open.map((row) => {
@@ -85,7 +85,7 @@ export default function SushiBoatDeposits() {
           const overdue = due && due.getTime() < Date.now();
           return <Card key={row.id}><CardContent className="space-y-3 py-4">
             <div className="flex flex-wrap items-start justify-between gap-2">
-              <div><p className="font-semibold">Order #{row.order?.order_number} · {row.product_name} ({row.size_label})</p><p className="text-sm text-muted-foreground">{name} · {row.order?.order_channel === 'delivery' ? 'Delivery' : 'Pickup'} · {row.delivery?.customer_phone || ''}</p></div>
+              <div><p className="font-semibold">{row.source === 'pos' ? 'POS' : 'Online'} #{row.order?.order_number} · {row.product_name} ({row.size_label})</p><p className="text-sm text-muted-foreground">{name} · {row.order?.order_channel === 'delivery' ? 'Delivery' : 'Pickup'} · {row.delivery?.customer_phone || ''}</p></div>
               <div className="text-right"><p className="font-semibold tabular-nums">{formatCurrency(row.amount)}</p><Badge variant={row.return_due_at ? overdue ? 'destructive' : 'secondary' : row.collected_at ? 'outline' : 'gold'}>{row.returned_at ? 'Returned' : row.return_due_at ? overdue ? 'Past due' : 'With customer' : row.collected_at ? 'Collected' : 'Awaiting collection'}</Badge></div>
             </div>
             <dl className="grid gap-x-4 gap-y-1 text-sm sm:grid-cols-2">
@@ -105,7 +105,7 @@ export default function SushiBoatDeposits() {
       </section>}
 
       {returned.length > 0 && <section className="space-y-3"><h2 className="font-corp-display text-lg font-semibold">Returned deposits <Badge variant="outline">{returned.length}</Badge></h2>
-        <div className="overflow-x-auto rounded-md border"><table className="w-full min-w-[700px] text-left text-sm"><thead className="bg-muted/50"><tr><th className="p-3">Order / Boat</th><th className="p-3">Returned</th><th className="p-3">Deposit</th><th className="p-3">Deduction</th><th className="p-3">Refund recorded</th><th className="p-3">Method / reference</th><th className="p-3">Staff / notes</th></tr></thead><tbody>{returned.map((row) => <tr key={row.id} className="border-t"><td className="p-3">#{row.order?.order_number} · {row.product_name} ({row.size_label})</td><td className="p-3">{dateTime.format(new Date(row.returned_at!))}</td><td className="p-3">{formatCurrency(row.amount)}</td><td className="p-3">{formatCurrency(row.deduction_amount)}</td><td className="p-3">{formatCurrency(row.refund_amount)}</td><td className="p-3">{row.refund_method || '—'}{row.refund_reference && <><br />{row.refund_reference}</>}</td><td className="p-3">{row.returned_by_name || '—'}{row.notes && <><br />{row.notes}</>}</td></tr>)}</tbody></table></div>
+        <div className="overflow-x-auto rounded-md border"><table className="w-full min-w-[700px] text-left text-sm"><thead className="bg-muted/50"><tr><th className="p-3">Order / Boat</th><th className="p-3">Returned</th><th className="p-3">Deposit</th><th className="p-3">Deduction</th><th className="p-3">Refund recorded</th><th className="p-3">Method / reference</th><th className="p-3">Staff / notes</th></tr></thead><tbody>{returned.map((row) => <tr key={row.id} className="border-t"><td className="p-3">{row.source === 'pos' ? 'POS' : 'Online'} #{row.order?.order_number} · {row.product_name} ({row.size_label})</td><td className="p-3">{dateTime.format(new Date(row.returned_at!))}</td><td className="p-3">{formatCurrency(row.amount)}</td><td className="p-3">{formatCurrency(row.deduction_amount)}</td><td className="p-3">{formatCurrency(row.refund_amount)}</td><td className="p-3">{row.refund_method || '—'}{row.refund_reference && <><br />{row.refund_reference}</>}</td><td className="p-3">{row.returned_by_name || '—'}{row.notes && <><br />{row.notes}</>}</td></tr>)}</tbody></table></div>
       </section>}
     </div>
 
