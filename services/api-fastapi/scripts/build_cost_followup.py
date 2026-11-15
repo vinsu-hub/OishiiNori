@@ -26,6 +26,12 @@ QUESTIONS = [
               "Ilang slices sa isang 500 g pack (ginamit namin: 20 slices, 25 g each)?"),
     ("Matcha", "May dalawa: 'Matcha Powder (Drip Tea)' (per scoop) at 'Matcha powder' (per gram, cafe). Pareho po bang matcha? "
                "Kung oo, ilang grams ang isang scoop?"),
+    ("Angus beef", "Naka-save: ₱450 per GRAM (₱45,000 bawat Angus Ramen). Mukhang ₱450 per kg o per pack. "
+                   "Magkano po at ilang grams ang laman? (I-type sa dashboard: ₱___ for ___ kg.)"),
+    ("Salmon", "Naka-save: ₱500 per GRAM. Mukhang ₱500 per kg o per pack. Magkano po at ilang grams?"),
+    ("Crab stick", "Crazy Maki (8 pcs) recipe: 60 crab sticks. Ilang piraso po talaga? (60 grams ba yan?)"),
+    ("Chicken (cutlet)", "Torikatsu Maki (8 pcs) recipe: 60 chicken cutlets. Ilang piraso o ilang grams po talaga?"),
+    ("Breaded prawn", "Dragon Maki at Oishii Maki: dati 60 g at 50 g, ginawa naming 2 piraso (gaya ng Tempura Maki). Tama po ba?"),
     ("Steamed rice", "Ginamit namin: 1 kg bigas (₱65) = mga 2.2 kg na luto. Tama po ba?"),
 ]
 

@@ -118,6 +118,15 @@ COSTS = {
     "Water": (0, 1, "tap water, no cost", False),
 }
 
+# After UNITS, the few recipe lines that were real grams, not counts (found by
+# the post-apply check, 2026-11-15). Breaded prawn: Tempura Maki uses 2, so
+# 2 is the estimate; it is in the follow-up questions.
+RECIPE_FIXES = [
+    ("Angus Ramen", "1 bowl", "Ramen noodles", 150, 1),
+    ("Dragon Maki", "8 pcs", "Breaded prawn", 60, 2),
+    ("Oishii Maki", "8 pcs", "Breaded prawn", 50, 2),
+]
+
 # Sizes they buy in, so the next price is just "P1050 for 1 box" (item_units,
 # migration 0061). kg / L / gallon / lb are built in and not listed. Scoop
 # and stirrer sizes rest on the same estimates as COSTS above.
@@ -255,6 +264,29 @@ def main() -> int:
             print(f"  {name}: {ing['base_unit']} -> {unit}")
             write("ingredients", {"base_unit": unit}, id=ing["id"])
             ing["base_unit"] = unit
+
+    print("Recipe fixes:")
+    for product, size, ingredient, was, now in RECIPE_FIXES:
+        ing = by_name.get(ingredient)
+        rows = (db.table("recipe_items").select("id, qty_per_serving, product_sizes!inner(size_label, products!inner(name))")
+                .eq("ingredient_id", ing["id"]).eq("product_sizes.size_label", size)
+                .eq("product_sizes.products.name", product).execute().data) if ing else []
+        if len(rows) != 1 or abs(float(rows[0]["qty_per_serving"]) - was) > 1e-6:
+            continue
+        changes += 1
+        print(f"  {product} ({size}): {ingredient} {was:g} -> {now:g} {ing['base_unit']}")
+        write("recipe_items", {"qty_per_serving": now}, id=rows[0]["id"])
+
+    print("Recipe unit labels:")
+    for name in UNITS:
+        ing = by_name.get(name)
+        if not ing:
+            continue
+        stale = db.table("recipe_items").select("id").eq("ingredient_id", ing["id"]).neq("unit", ing["base_unit"]).execute().data
+        if stale:
+            changes += 1
+            print(f"  {name}: {len(stale)} line(s) -> {ing['base_unit']}")
+            write("recipe_items", {"unit": ing["base_unit"]}, ingredient_id=ing["id"])
 
     print("Unit costs:")
     for name, (price, qty, note, estimate) in COSTS.items():
