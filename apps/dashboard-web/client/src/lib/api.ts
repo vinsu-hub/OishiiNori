@@ -269,6 +269,27 @@ export interface RecipeCoverageSize {
   cost: number | null;
   /** Ingredients in this recipe with no unit cost yet. */
   missing_cost: string[];
+  /** The recipe: how much of each ingredient one serving uses. */
+  lines?: { ingredient_id: string; qty_per_serving: number }[];
+}
+
+/** One row of an ingredient's price history (migration 0085). */
+export interface IngredientCostEntry {
+  unit_cost: number;
+  previous_unit_cost: number | null;
+  price_paid: number | null;
+  qty: number | null;
+  unit_name: string | null;
+  /** Base units in one unit_name. */
+  base_qty: number | null;
+  source: 'manual' | 'delivery' | 'import' | string;
+  note: string | null;
+  changed_by_name: string | null;
+  created_at: string;
+}
+
+export function fetchIngredientCostHistory(id: string): Promise<IngredientCostEntry[]> {
+  return request(`/inventory/${id}/cost-history`);
 }
 
 export interface RecipeCoverageProduct {
@@ -287,6 +308,8 @@ export interface RecipeCoverageIngredient {
   unit_cost: number | null;
   used_in: number;
   used_in_examples: string[];
+  /** Newest price-history row; null/absent before migration 0085. */
+  last_purchase?: IngredientCostEntry | null;
 }
 
 export function fetchRecipeCoverage(): Promise<{ products: RecipeCoverageProduct[]; ingredients: RecipeCoverageIngredient[] }> {
@@ -1104,6 +1127,13 @@ export interface UpdateIngredientRequest {
   shelf_life_note?: string | null;
   used_in_note?: string | null;
   unit_cost?: number | null;
+  /** What was paid, for the price history: "P1050 for 2 kg". */
+  price_paid?: number;
+  purchase_qty?: number;
+  purchase_unit?: string;
+  /** Base units in one purchase_unit (kg -> 1000 for an ingredient in g). */
+  purchase_base_qty?: number;
+  cost_note?: string;
 }
 
 export function updateIngredient(id: string, body: UpdateIngredientRequest): Promise<ApiIngredient> {

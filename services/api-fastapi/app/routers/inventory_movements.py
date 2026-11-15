@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.auth import CurrentUser, get_current_user
+from app.cost_log import log_unit_cost
 from app.deps import get_supabase
 from app.schemas import InventoryMovementCreate, InventoryMovementResponse, MovementType
 
@@ -37,7 +38,9 @@ def apply_inventory_movement(
     table = "ingredients" if ingredient_id else "stock_items"
     target_id = ingredient_id or stock_item_id
 
-    target_result = supabase.table(table).select("id").eq("id", target_id).maybe_single().execute()
+    target_result = (
+        supabase.table(table).select("id, unit_cost" if ingredient_id else "id").eq("id", target_id).maybe_single().execute()
+    )
     if not target_result or not target_result.data:
         raise HTTPException(status_code=404, detail=f"{'Ingredient' if ingredient_id else 'Stock item'} not found")
 
@@ -64,6 +67,11 @@ def apply_inventory_movement(
     # ingredients (unit_cost_snapshot is simply ignored for a stock item).
     if ingredient_id and type in ("delivery", "trans_in") and unit_cost_snapshot is not None:
         supabase.table("ingredients").update({"unit_cost": unit_cost_snapshot}).eq("id", target_id).execute()
+        log_unit_cost(
+            supabase, target_id, unit_cost_snapshot, target_result.data.get("unit_cost"),
+            price_paid=round(unit_cost_snapshot * quantity, 2), qty=quantity, base_qty=1,
+            source="delivery", note=reason, changed_by=employee_id,
+        )
 
     insert_result = (
         supabase.table("inventory_movements")

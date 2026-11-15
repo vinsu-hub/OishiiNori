@@ -18,14 +18,32 @@ export interface UnitOption {
 
 // Built-in conversions that never need setting up.
 const STANDARD: Record<string, { name: string; factor: number }[]> = {
-  g: [{ name: 'kg', factor: 1000 }],
-  ml: [{ name: 'L', factor: 1000 }],
+  g: [{ name: 'kg', factor: 1000 }, { name: 'lb', factor: 453.592 }],
+  ml: [{ name: 'L', factor: 1000 }, { name: 'gallon', factor: 3785 }],
 };
+
+// Spellings the catalog actually has ("grams", "Liter") for the two bases
+// that convert by weight/volume.
+const ALIASES: Record<string, string> = {
+  g: 'g', gram: 'g', grams: 'g', gr: 'g', grms: 'g',
+  ml: 'ml', milliliter: 'ml', milliliters: 'ml', millilitre: 'ml', millilitres: 'ml',
+};
+
+/** 'g' or 'ml' when the base unit is a weight/volume, else null. */
+export function measureOf(baseUnit: string | null | undefined): 'g' | 'ml' | null {
+  const key = ALIASES[(baseUnit || '').trim().toLowerCase()];
+  return key === 'g' || key === 'ml' ? key : null;
+}
+
+/** Count-style units (scoop, pump, pcs...) that may need "1 scoop weighs N g". */
+export function isCountUnit(baseUnit: string | null | undefined): boolean {
+  return measureOf(baseUnit) === null;
+}
 
 export function unitOptionsFor(baseUnit: string | null | undefined, saved: ApiItemUnit[]): UnitOption[] {
   const base = (baseUnit || 'pcs').trim();
   const opts: UnitOption[] = [{ key: 'base', name: base, factor: 1 }];
-  for (const s of STANDARD[base.toLowerCase()] ?? []) opts.push({ key: `std:${s.name}`, name: s.name, factor: s.factor });
+  for (const s of STANDARD[measureOf(base) ?? ''] ?? []) opts.push({ key: `std:${s.name}`, name: s.name, factor: s.factor });
   for (const u of [...saved].sort((a, b) => b.base_qty - a.base_qty)) {
     if (opts.some((o) => o.name.toLowerCase() === u.name.toLowerCase())) continue;
     opts.push({ key: u.id, name: u.name, factor: u.base_qty, savedId: u.id });

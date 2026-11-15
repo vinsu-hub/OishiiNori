@@ -5,10 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from postgrest.exceptions import APIError
 
 from app.auth import CurrentUser, get_current_user, require_role
+from app.cost_log import cost_log_supported_check, log_unit_cost, to_history_entry
 from app.deps import get_supabase
 from app.ph_time import today_ph
 from app.schemas import (
     ExpiringIngredient,
+    IngredientCostEntry,
     IngredientCreate,
     IngredientDailySummary,
     IngredientFieldOverrideRequest,
@@ -269,16 +271,44 @@ def update_ingredient(
     """
     require_role(user, "executive")
     supabase = get_supabase()
-    existing = supabase.table("ingredients").select("id").eq("id", ingredient_id).maybe_single().execute()
+    existing = supabase.table("ingredients").select("id, unit_cost").eq("id", ingredient_id).maybe_single().execute()
     if not existing or not existing.data:
         raise HTTPException(status_code=404, detail="Ingredient not found")
 
     update_data = body.model_dump(exclude_unset=True)
+    # Purchase details go to the price history, not ingredient columns.
+    purchase = {k: update_data.pop(k, None) for k in ("price_paid", "purchase_qty", "purchase_unit", "purchase_base_qty", "cost_note")}
     update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
     result = supabase.table("ingredients").update(update_data).eq("id", ingredient_id).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Ingredient not found")
+    if update_data.get("unit_cost") is not None:
+        log_unit_cost(
+            supabase, ingredient_id, update_data["unit_cost"], existing.data.get("unit_cost"),
+            price_paid=purchase["price_paid"], qty=purchase["purchase_qty"], unit_name=purchase["purchase_unit"],
+            base_qty=purchase["purchase_base_qty"], note=purchase["cost_note"], changed_by=user.id,
+        )
     return result.data[0]
+
+
+@router.get("/inventory/{ingredient_id}/cost-history", response_model=list[IngredientCostEntry])
+def get_ingredient_cost_history(ingredient_id: str, user: CurrentUser = Depends(get_current_user)):
+    """Price history for one ingredient, newest first (migration 0085).
+    Empty until 0085 is run. Executive-only, like editing the cost."""
+    require_role(user, "executive")
+    supabase = get_supabase()
+    if not cost_log_supported_check(supabase):
+        return []
+    rows = (
+        supabase.table("ingredient_cost_log")
+        .select("unit_cost, previous_unit_cost, price_paid, qty, unit_name, base_qty, source, note, created_at, profiles(full_name)")
+        .eq("ingredient_id", ingredient_id)
+        .order("created_at", desc=True)
+        .limit(50)
+        .execute()
+        .data
+    ) or []
+    return [to_history_entry(r) for r in rows]
 
 
 @router.get("/inventory/{ingredient_id}/recipe-usage", response_model=list[IngredientRecipeUsage])

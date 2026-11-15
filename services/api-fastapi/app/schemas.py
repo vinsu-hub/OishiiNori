@@ -141,6 +141,28 @@ class RecipeCoverageSize(BaseModel):
     # full cost, until that list is empty). None when there's no recipe.
     cost: float | None = None
     missing_cost: list[str] = Field(default_factory=list)
+    # The recipe itself, so Food cost can show each line's cost and let the
+    # owner fix an ingredient's unit cost right there.
+    lines: list["RecipeCoverageLine"] = Field(default_factory=list)
+
+
+class RecipeCoverageLine(BaseModel):
+    ingredient_id: str
+    qty_per_serving: float
+
+
+class IngredientCostEntry(BaseModel):
+    """One row of an ingredient's price history (migration 0085)."""
+    unit_cost: float
+    previous_unit_cost: float | None = None
+    price_paid: float | None = None
+    qty: float | None = None
+    unit_name: str | None = None
+    base_qty: float | None = None
+    source: str = "manual"
+    note: str | None = None
+    changed_by_name: str | None = None
+    created_at: str
 
 
 class RecipeCoverageProduct(BaseModel):
@@ -160,6 +182,8 @@ class RecipeCoverageIngredient(BaseModel):
     # Active menu sizes whose recipe uses this ingredient.
     used_in: int
     used_in_examples: list[str] = Field(default_factory=list)
+    # Newest price-history row: "P1050 for 1 box", who and when.
+    last_purchase: IngredientCostEntry | None = None
 
 
 class RecipeCoverageResponse(BaseModel):
@@ -828,7 +852,15 @@ class IngredientUpdate(BaseModel):
     cost_volatility_tier: CostVolatilityTier | None = None
     shelf_life_note: str | None = None
     used_in_note: str | None = None
-    unit_cost: float | None = None
+    unit_cost: float | None = Field(default=None, ge=0)
+    # What was paid, for the price history (not ingredient columns): "P1050
+    # for 2 kg" is price_paid=1050, purchase_qty=2, purchase_unit="kg",
+    # purchase_base_qty=1000 (base units in one purchase_unit).
+    price_paid: float | None = Field(default=None, ge=0)
+    purchase_qty: float | None = Field(default=None, gt=0)
+    purchase_unit: str | None = Field(default=None, max_length=40)
+    purchase_base_qty: float | None = Field(default=None, gt=0)
+    cost_note: str | None = Field(default=None, max_length=200)
     station: str | None = None
     sheet_section: str | None = None
     sort_order: int | None = None

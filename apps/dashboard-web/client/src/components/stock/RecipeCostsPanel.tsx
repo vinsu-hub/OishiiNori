@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'wouter';
 import { toast } from 'sonner';
-import { CheckCircle2, Download, Loader2, RefreshCw, Search } from 'lucide-react';
+import { CheckCircle2, ChevronDown, ChevronRight, Download, RefreshCw, Search } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,37 +15,18 @@ import {
   type RecipeCoverageProduct,
   fetchItemUnits,
   fetchRecipeCoverage,
-  updateIngredient,
 } from '@/lib/api';
-import { fmtQty, unitOptionsFor, unitsForItem } from '@/lib/units';
+import { fmtQty, unitsForItem } from '@/lib/units';
 import { formatCurrency } from '@/lib/utils';
 import { StockStatTile } from '@/components/stock/StockStatTile';
+import { type CostImpact, UnitCostEntry, fmtUnitCost } from '@/components/stock/UnitCostEntry';
 
 type Section = 'costs' | 'recipes' | 'food-cost';
-
-interface CostDraft {
-  price: string;
-  qty: string;
-  unitKey: string;
-}
 
 /** A menu size counts as set up when sales deduct something for it: a recipe,
  * or a per-item stock rule (e.g. a bottled drink). */
 function needsRecipe(size: RecipeCoverageProduct['sizes'][number]) {
   return size.recipe_lines === 0 && size.consumption_rules === 0;
-}
-
-function perUnitCost(draft: CostDraft | undefined, factor: number): number | null {
-  if (!draft) return null;
-  const price = Number(draft.price);
-  const qty = Number(draft.qty || '1');
-  if (!draft.price.trim() || !Number.isFinite(price) || price < 0 || !Number.isFinite(qty) || qty <= 0) return null;
-  return price / (qty * factor);
-}
-
-function fmtUnitCost(value: number): string {
-  // Costs per gram/ml are often centavos: keep 4 decimals there.
-  return value < 1 ? `₱${value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '')}` : formatCurrency(value);
 }
 
 function csvCell(value: string | number) {
@@ -64,8 +45,8 @@ export function RecipeCostsPanel() {
   const [ingredients, setIngredients] = useState<RecipeCoverageIngredient[]>([]);
   const [itemUnits, setItemUnits] = useState<ApiItemUnit[]>([]);
   const [loading, setLoading] = useState(true);
-  const [drafts, setDrafts] = useState<Record<string, CostDraft>>({});
-  const [savingId, setSavingId] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [editingLine, setEditingLine] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [search, setSearch] = useState('');
 
@@ -117,30 +98,35 @@ export function RecipeCostsPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [products, query]);
 
-  function draftFor(ingredient: RecipeCoverageIngredient): CostDraft {
-    return drafts[ingredient.id] ?? { price: '', qty: '1', unitKey: 'base' };
-  }
+  const ingredientById = useMemo(() => new Map(ingredients.map((i) => [i.id, i])), [ingredients]);
 
-  function updateDraft(id: string, patch: Partial<CostDraft>, ingredient: RecipeCoverageIngredient) {
-    setDrafts((prev) => ({ ...prev, [id]: { ...draftFor(ingredient), ...prev[id], ...patch } }));
-  }
-
-  async function saveCost(ingredient: RecipeCoverageIngredient, value: number) {
-    setSavingId(ingredient.id);
-    try {
-      await updateIngredient(ingredient.id, { unit_cost: Math.round(value * 10000) / 10000 });
-      toast.success(`${ingredient.name}: ${fmtUnitCost(value)} per ${ingredient.base_unit}`);
-      setDrafts((prev) => {
-        const next = { ...prev };
-        delete next[ingredient.id];
-        return next;
-      });
-      load();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not save the unit cost');
-    } finally {
-      setSavingId(null);
+  /** Food cost of every recipe using this ingredient, before and after a new
+   * unit cost -- from the recipes already loaded, no extra request. */
+  function impactFor(ingredientId: string, newCost: number): CostImpact {
+    let count = 0;
+    let biggest: CostImpact['biggest'];
+    let biggestMove = -1;
+    for (const p of products) {
+      for (const size of p.sizes) {
+        const lines = (size.lines ?? []).filter((l) => l.ingredient_id === ingredientId);
+        if (!lines.length || size.cost == null) continue;
+        count += 1;
+        const oldCost = ingredientById.get(ingredientId)?.unit_cost;
+        const qty = lines.reduce((sum, l) => sum + l.qty_per_serving, 0);
+        const after = size.cost + qty * (newCost - (oldCost ?? 0));
+        const pct = (c: number) => (size.price > 0 ? (c / size.price) * 100 : null);
+        const move = Math.abs((pct(after) ?? 0) - (pct(size.cost) ?? 0));
+        if (move > biggestMove) {
+          biggestMove = move;
+          biggest = { label: `${p.name} (${size.size_label})`, before: size.cost ? pct(size.cost) : null, after: pct(after) };
+        }
+      }
     }
+    return { count, biggest };
+  }
+
+  function addUnit(unit: ApiItemUnit) {
+    setItemUnits((prev) => [...prev.filter((u) => u.id !== unit.id), unit]);
   }
 
   function downloadChecklist() {
@@ -230,9 +216,11 @@ export function RecipeCostsPanel() {
           {!loading && section === 'costs' && (
             <div className="space-y-5">
               <p className="text-sm text-muted-foreground">
-                Type what you paid and how much you got, e.g. <span className="font-medium text-foreground">₱450 for 1 kg</span> or{' '}
-                <span className="font-medium text-foreground">₱120 for 1 pack</span>. The cost per unit is worked out for you.
-                Most-used ingredients are listed first.
+                Type what you paid and how much was in it, the way it's on the receipt. Example: cream cheese, paid{' '}
+                <span className="font-medium text-foreground">₱1050 for 2 kg</span>: type 1050, then 2, then pick kg. For a box
+                or pack, pick <span className="font-medium text-foreground">+ New size</span> once (1 box = 2000 g) and next time it's
+                just ₱… for 1 box. Scoops and pumps can be priced by the kilo or liter: pick kg and say how much one scoop weighs.
+                The cost per unit is worked out for you. Most-used ingredients are listed first.
                 {!canEditCosts && ' Only the owner (executive) can save costs.'}
               </p>
               {costGroups.length === 0 && (
@@ -245,10 +233,6 @@ export function RecipeCostsPanel() {
                   <h3 className="text-xs font-bold uppercase tracking-wide text-muted-foreground">{category} · {rows.length}</h3>
                   <div className="divide-y rounded-lg border">
                     {rows.map((ingredient) => {
-                      const options = unitOptionsFor(ingredient.base_unit, unitsForItem(itemUnits, 'ingredient', ingredient.id));
-                      const draft = draftFor(ingredient);
-                      const option = options.find((o) => o.key === draft.unitKey) ?? options[0];
-                      const computed = perUnitCost(drafts[ingredient.id], option.factor);
                       return (
                         <div key={ingredient.id} className="grid gap-2 p-3 md:grid-cols-[minmax(0,1.3fr)_minmax(0,2fr)] md:items-center">
                           <div className="min-w-0">
@@ -268,52 +252,13 @@ export function RecipeCostsPanel() {
                             </p>
                           </div>
                           {canEditCosts ? (
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="text-sm text-muted-foreground">Paid ₱</span>
-                              <Input
-                                className="w-24"
-                                inputMode="decimal"
-                                type="number"
-                                min={0}
-                                step="0.01"
-                                value={draft.price}
-                                onChange={(e) => updateDraft(ingredient.id, { price: e.target.value }, ingredient)}
-                                aria-label={`Price paid for ${ingredient.name}`}
-                              />
-                              <span className="text-sm text-muted-foreground">for</span>
-                              <Input
-                                className="w-20"
-                                inputMode="decimal"
-                                type="number"
-                                min={0}
-                                step="any"
-                                value={draft.qty}
-                                onChange={(e) => updateDraft(ingredient.id, { qty: e.target.value }, ingredient)}
-                                aria-label={`Quantity bought of ${ingredient.name}`}
-                              />
-                              <Select value={option.key} onValueChange={(v) => updateDraft(ingredient.id, { unitKey: v }, ingredient)}>
-                                <SelectTrigger className="w-36" aria-label="Unit bought">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {options.map((o) => (
-                                    <SelectItem key={o.key} value={o.key}>
-                                      {o.key === 'base' ? o.name : `${o.name} (${fmtQty(o.factor)} ${ingredient.base_unit})`}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                              <Button
-                                size="sm"
-                                disabled={computed == null || savingId === ingredient.id}
-                                onClick={() => computed != null && saveCost(ingredient, computed)}
-                              >
-                                {savingId === ingredient.id ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : 'Save'}
-                              </Button>
-                              {computed != null && (
-                                <span className="text-sm font-medium text-primary">= {fmtUnitCost(computed)} per {ingredient.base_unit}</span>
-                              )}
-                            </div>
+                            <UnitCostEntry
+                              ingredient={ingredient}
+                              units={unitsForItem(itemUnits, 'ingredient', ingredient.id)}
+                              impact={(c) => impactFor(ingredient.id, c)}
+                              onSaved={load}
+                              onUnitAdded={addUnit}
+                            />
                           ) : (
                             <p className="text-sm text-muted-foreground">Ask the owner to add this cost.</p>
                           )}
@@ -377,7 +322,8 @@ export function RecipeCostsPanel() {
           {!loading && section === 'food-cost' && (
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground">
-                Cost of the ingredients in one serving vs the menu price. Items marked <span className="font-medium text-amber-800">incomplete</span>{' '}
+                Cost of the ingredients in one serving vs the menu price. Tap a menu item to see each ingredient's cost and fix
+                any of them there. Items marked <span className="font-medium text-amber-800">incomplete</span>{' '}
                 have ingredients with no unit cost, so their real cost is higher than shown.
               </p>
               <div className="overflow-x-auto rounded-lg border">
@@ -395,28 +341,98 @@ export function RecipeCostsPanel() {
                     {costedSizes.filter(({ product }) => matches(product.name, product.category)).map(({ product, size }) => {
                       const pct = size.cost != null && size.price > 0 ? (size.cost / size.price) * 100 : null;
                       const complete = size.missing_cost.length === 0;
+                      const open = expanded === size.id;
+                      const lines = [...(size.lines ?? [])]
+                        .map((l) => ({ ...l, ingredient: ingredientById.get(l.ingredient_id) }))
+                        .filter((l) => l.ingredient)
+                        .sort((a, b) => Number(a.ingredient!.unit_cost != null) - Number(b.ingredient!.unit_cost != null)
+                          || (b.ingredient!.unit_cost ?? 0) * b.qty_per_serving - (a.ingredient!.unit_cost ?? 0) * a.qty_per_serving);
                       return (
-                        <tr key={size.id}>
-                          <td className="px-3 py-2">
-                            <p className="font-medium">{product.name}</p>
-                            <p className="text-xs text-muted-foreground">{size.size_label} · {product.category}</p>
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(size.price)}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{size.cost != null ? formatCurrency(size.cost) : '—'}</td>
-                          <td className={`px-3 py-2 text-right tabular-nums ${complete && pct != null && pct > 40 ? 'font-semibold text-destructive' : ''}`}>
-                            {pct != null && size.cost ? `${pct.toFixed(0)}%` : '—'}
-                          </td>
-                          <td className="px-3 py-2">
-                            {complete ? (
-                              <Badge variant="secondary">Complete</Badge>
-                            ) : (
-                              <span className="text-xs text-amber-800">
-                                Incomplete · no cost for {size.missing_cost.slice(0, 3).join(', ')}
-                                {size.missing_cost.length > 3 ? ` +${size.missing_cost.length - 3} more` : ''}
-                              </span>
-                            )}
-                          </td>
-                        </tr>
+                        <Fragment key={size.id}>
+                          <tr
+                            className="cursor-pointer hover:bg-muted/40"
+                            onClick={() => { setExpanded(open ? null : size.id); setEditingLine(null); }}
+                            aria-expanded={open}
+                          >
+                            <td className="px-3 py-2">
+                              <div className="flex items-start gap-1">
+                                {open ? <ChevronDown className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /> : <ChevronRight className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />}
+                                <div>
+                                  <p className="font-medium">{product.name}</p>
+                                  <p className="text-xs text-muted-foreground">{size.size_label} · {product.category}</p>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(size.price)}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{size.cost != null ? formatCurrency(size.cost) : '—'}</td>
+                            <td className={`px-3 py-2 text-right tabular-nums ${complete && pct != null && pct > 40 ? 'font-semibold text-destructive' : ''}`}>
+                              {pct != null && size.cost ? `${pct.toFixed(0)}%` : '—'}
+                            </td>
+                            <td className="px-3 py-2">
+                              {complete ? (
+                                <Badge variant="secondary">Complete</Badge>
+                              ) : (
+                                <span className="text-xs text-amber-800">
+                                  Incomplete · no cost for {size.missing_cost.slice(0, 3).join(', ')}
+                                  {size.missing_cost.length > 3 ? ` +${size.missing_cost.length - 3} more` : ''}
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                          {open && (
+                            <tr className="bg-muted/20">
+                              <td colSpan={5} className="px-3 py-3">
+                                <div className="space-y-2">
+                                  {lines.map(({ ingredient, qty_per_serving }) => {
+                                    const ing = ingredient!;
+                                    const lineKey = `${size.id}:${ing.id}`;
+                                    const lineCost = ing.unit_cost != null ? ing.unit_cost * qty_per_serving : null;
+                                    return (
+                                      <div key={lineKey} className={`rounded-md border bg-background p-2 ${ing.unit_cost == null ? 'border-amber-300' : ''}`}>
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                          <div className="min-w-0">
+                                            <p className="font-medium">{ing.name}</p>
+                                            <p className="text-xs text-muted-foreground">
+                                              {fmtQty(qty_per_serving)} {ing.base_unit} ×{' '}
+                                              {ing.unit_cost != null ? `${fmtUnitCost(ing.unit_cost)} per ${ing.base_unit}` : <span className="text-amber-800">no cost yet</span>}
+                                            </p>
+                                          </div>
+                                          <div className="flex items-center gap-2">
+                                            <span className="tabular-nums">{lineCost != null ? fmtUnitCost(lineCost) : '—'}</span>
+                                            {canEditCosts && (
+                                              <Button size="sm" variant="outline" onClick={() => setEditingLine(editingLine === lineKey ? null : lineKey)}>
+                                                {editingLine === lineKey ? 'Close' : ing.unit_cost == null ? 'Add cost' : 'Edit cost'}
+                                              </Button>
+                                            )}
+                                          </div>
+                                        </div>
+                                        {editingLine === lineKey && (
+                                          <div className="mt-2 border-t pt-2">
+                                            <UnitCostEntry
+                                              ingredient={ing}
+                                              units={unitsForItem(itemUnits, 'ingredient', ing.id)}
+                                              impact={(c) => impactFor(ing.id, c)}
+                                              onSaved={() => { setEditingLine(null); load(); }}
+                                              onUnitAdded={addUnit}
+                                            />
+                                            <p className="mt-1 text-xs text-muted-foreground">
+                                              One cost per ingredient: this updates {ing.name} in all {ing.used_in} menu item{ing.used_in === 1 ? '' : 's'} that use it.
+                                            </p>
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                  <div className="flex justify-end">
+                                    <Button size="sm" variant="ghost" onClick={() => navigate(`/menu-editing?edit=${product.id}`)}>
+                                      Change the recipe in Menu Editing
+                                    </Button>
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
                       );
                     })}
                   </tbody>

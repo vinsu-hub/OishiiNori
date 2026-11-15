@@ -3,6 +3,7 @@ from collections import defaultdict
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.auth import CurrentUser, get_current_user, require_role_or_grant
+from app.cost_log import latest_purchases
 from app.deps import get_supabase
 from app.routers.sales_insights import _page_rows
 from app.schemas import RecipeCoverageResponse, RecipeItemOut
@@ -105,7 +106,13 @@ def recipe_coverage(user: CurrentUser = Depends(get_current_user)):
             "consumption_rules": rules_by_size.get(size["id"], 0),
             "cost": round(cost, 2) if lines else None,
             "missing_cost": sorted(set(missing)),
+            "lines": [
+                {"ingredient_id": line["ingredient_id"], "qty_per_serving": float(line["qty_per_serving"])}
+                for line in lines if line["ingredient_id"] in ingredient_by_id
+            ],
         })
+
+    latest = latest_purchases(supabase)
 
     return {
         "products": [
@@ -118,6 +125,7 @@ def recipe_coverage(user: CurrentUser = Depends(get_current_user)):
                 "unit_cost": float(i["unit_cost"]) if i["unit_cost"] is not None else None,
                 "used_in": len(used_in.get(i["id"], [])),
                 "used_in_examples": used_in.get(i["id"], [])[:4],
+                "last_purchase": latest.get(i["id"]),
             }
             for i in ingredients
         ],
