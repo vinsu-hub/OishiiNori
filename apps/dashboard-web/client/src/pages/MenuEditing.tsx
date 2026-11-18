@@ -49,6 +49,8 @@ import {
   updateRecipeItem,
   uploadProductImage,
 } from '@/lib/api';
+import { STOCK_STATIONS } from '@/lib/constants';
+import type { StockStation } from '@/lib/api';
 
 const STATIONS: { value: KitchenStation; label: string }[] = [
   { value: 'sushi_bar', label: 'Sushi Bar' },
@@ -206,6 +208,7 @@ export default function MenuEditing() {
   const [newIngredientName, setNewIngredientName] = useState('');
   const [newIngredientUnit, setNewIngredientUnit] = useState('');
   const [newIngredientCategory, setNewIngredientCategory] = useState('');
+  const [newIngredientStation, setNewIngredientStation] = useState<StockStation | 'none'>('none');
   const [creatingIngredient, setCreatingIngredient] = useState(false);
 
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -393,6 +396,7 @@ export default function MenuEditing() {
     setNewIngredientName('');
     setNewIngredientUnit('');
     setNewIngredientCategory('');
+    setNewIngredientStation('none');
   }
 
   function cancelNewIngredientForm(localId: string) {
@@ -413,6 +417,8 @@ export default function MenuEditing() {
         name: newIngredientName.trim(),
         base_unit: newIngredientUnit.trim(),
         category: newIngredientCategory.trim() || undefined,
+        // Its tab on EOD Stock Count (end of the station's list); without one it's Unsorted.
+        ...(newIngredientStation !== 'none' ? { station: newIngredientStation } : {}),
       });
       setIngredients((prev) => [...prev, ingredient].sort((a, b) => a.name.localeCompare(b.name)));
       updateRecipeRow(localId, { ingredient_id: ingredient.id, unit: ingredient.base_unit });
@@ -871,6 +877,17 @@ export default function MenuEditing() {
                                   onChange={(e) => setNewIngredientCategory(e.target.value)}
                                 />
                               </div>
+                              <Select value={newIngredientStation} onValueChange={(v) => setNewIngredientStation(v as StockStation | 'none')}>
+                                <SelectTrigger aria-label="Station on EOD Stock Count">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="none">Station on EOD Stock Count: pick later (Unsorted)</SelectItem>
+                                  {STOCK_STATIONS.map((st) => (
+                                    <SelectItem key={st.value} value={st.value}>Counted at: {st.label}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
                               <div className="flex gap-2">
                                 <Button
                                   size="sm"

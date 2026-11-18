@@ -85,6 +85,17 @@ def list_inventory(user: CurrentUser = Depends(get_current_user)):
     return result.data
 
 
+def next_sort_order(supabase, station: str, section: str | None) -> int:
+    """End of that station's section on the EOD sheet: after every
+    ingredient and station item already in it (they share one order)."""
+    orders = [0]
+    for table, column in (("ingredients", "sheet_section"), ("stock_items", "category")):
+        query = supabase.table(table).select("sort_order").eq("station", station)
+        query = query.eq(column, section) if section else query.is_(column, "null")
+        orders += [r["sort_order"] for r in (query.execute().data or []) if r.get("sort_order") is not None]
+    return max(orders) + 10
+
+
 @router.post("/inventory", response_model=IngredientOut)
 def create_ingredient(body: IngredientCreate, user: CurrentUser = Depends(get_current_user)):
     """Creates a brand-new ingredient. Until now there was no path anywhere
@@ -105,19 +116,17 @@ def create_ingredient(body: IngredientCreate, user: CurrentUser = Depends(get_cu
     if existing and existing.data:
         raise HTTPException(status_code=409, detail=f"An ingredient named '{body.name}' already exists")
 
-    result = (
-        supabase.table("ingredients")
-        .insert(
-            {
-                "name": body.name,
-                "base_unit": body.base_unit,
-                "category": body.category,
-                "suggested_reorder_unit": body.suggested_reorder_unit,
-                "reorder_threshold": body.reorder_threshold,
-            }
-        )
-        .execute()
-    )
+    row = {
+        "name": body.name,
+        "base_unit": body.base_unit,
+        "category": body.category,
+        "suggested_reorder_unit": body.suggested_reorder_unit,
+        "reorder_threshold": body.reorder_threshold,
+    }
+    if body.station:
+        section = (body.sheet_section or "").strip() or None
+        row.update(station=body.station, sheet_section=section, sort_order=next_sort_order(supabase, body.station, section))
+    result = supabase.table("ingredients").insert(row).execute()
     return result.data[0]
 
 
@@ -282,11 +291,23 @@ def update_ingredient(
     """
     require_role(user, "executive")
     supabase = get_supabase()
-    existing = supabase.table("ingredients").select("id, unit_cost").eq("id", ingredient_id).maybe_single().execute()
+    existing = (
+        supabase.table("ingredients").select("id, unit_cost, station, sheet_section").eq("id", ingredient_id).maybe_single().execute()
+    )
     if not existing or not existing.data:
         raise HTTPException(status_code=404, detail="Ingredient not found")
 
     update_data = body.model_dump(exclude_unset=True)
+    if "sheet_section" in update_data:
+        update_data["sheet_section"] = (update_data["sheet_section"] or "").strip() or None
+    # Moved to a station / section without a position: put it at the end.
+    if update_data.get("station") and "sort_order" not in update_data and (
+        "sheet_section" in update_data or update_data["station"] != existing.data.get("station")
+    ):
+        section = update_data.get("sheet_section", existing.data.get("sheet_section"))
+        update_data["sort_order"] = next_sort_order(supabase, update_data["station"], section)
+    if "station" in update_data and update_data["station"] is None:
+        update_data.update(sheet_section=None, sort_order=None)
     # Purchase details go to the price history, not ingredient columns.
     purchase = {k: update_data.pop(k, None) for k in ("price_paid", "purchase_qty", "purchase_unit", "purchase_base_qty", "cost_note")}
     update_data["updated_at"] = datetime.now(timezone.utc).isoformat()

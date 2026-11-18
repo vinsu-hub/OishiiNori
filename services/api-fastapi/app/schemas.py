@@ -830,6 +830,9 @@ class IngredientOut(BaseModel):
     prep_yield: float | None = None
 
 
+StockStation = Literal["tako_snack", "cafe_drinks", "sushi_kitchen_main", "ramen_hot_line"]
+
+
 class IngredientCreate(BaseModel):
     """A brand-new ingredient, created from Menu Editing's Recipe tab (the
     "+ New ingredient..." option) when a recipe needs one that doesn't exist
@@ -843,6 +846,10 @@ class IngredientCreate(BaseModel):
     category: str | None = None
     suggested_reorder_unit: str | None = None
     reorder_threshold: float = Field(default=0, ge=0)
+    # Where it sits on the EOD Stock Count sheet (migration 0080); without
+    # a station it lands on the Unsorted tab.
+    station: StockStation | None = None
+    sheet_section: str | None = Field(default=None, max_length=80)
 
 
 class IngredientUpdate(BaseModel):
@@ -862,6 +869,11 @@ class IngredientUpdate(BaseModel):
     shelf_life_note: str | None = None
     used_in_note: str | None = None
     unit_cost: float | None = Field(default=None, ge=0)
+    # EOD Stock Count placement (0080) and the "Verify" flag.
+    station: StockStation | None = None
+    sheet_section: str | None = Field(default=None, max_length=80)
+    sort_order: int | None = None
+    needs_review: bool | None = None
     # What was paid, for the price history (not ingredient columns): "P1050
     # for 2 kg" is price_paid=1050, purchase_qty=2, purchase_unit="kg",
     # purchase_base_qty=1000 (base units in one purchase_unit).
@@ -963,10 +975,9 @@ class ItemUnitOut(BaseModel):
 
 # ---------------------------------------------------------------------------
 # Physical stock count tool (4 physical stations, digitizing the client's
-# daily New Stocks/Beginning/Usage/Ending paper sheets)
+# daily New Stocks/Beginning/Usage/Ending paper sheets). StockStation is
+# defined above IngredientCreate, which uses it too.
 # ---------------------------------------------------------------------------
-
-StockStation = Literal["tako_snack", "cafe_drinks", "sushi_kitchen_main", "ramen_hot_line"]
 
 
 class StockItemOut(BaseModel):

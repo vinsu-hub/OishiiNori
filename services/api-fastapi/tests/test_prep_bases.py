@@ -55,6 +55,14 @@ class _Query:
         self.filters.append(lambda r: r.get(col) in vals)
         return self
 
+    def is_(self, col, _null):
+        self.filters.append(lambda r: r.get(col) is None)
+        return self
+
+    def ilike(self, col, val):
+        self.filters.append(lambda r: (r.get(col) or "").lower() == val.lower())
+        return self
+
     def maybe_single(self):
         self.single = True
         return self
@@ -72,8 +80,13 @@ class _Query:
             self.db.cost_log.append(self.payload)
             return _Result([self.payload])
         if self.op == "insert":
-            new = self.payload if isinstance(self.payload, list) else [self.payload]
-            rows.extend(dict(r) for r in new)
+            new = [dict(r) for r in (self.payload if isinstance(self.payload, list) else [self.payload])]
+            if self.table == "ingredients":  # column defaults
+                for r in new:
+                    r.setdefault("id", f"new{len(rows)}")
+                    r.setdefault("current_stock", 0)
+                    r.setdefault("needs_review", False)
+            rows.extend(new)
             return _Result(new)
         match = [r for r in rows if all(f(r) for f in self.filters)]
         if self.op == "update":

@@ -35,6 +35,9 @@ import { LOSS_REASONS } from '@/lib/types';
 import { LossRecordForm } from '@/components/shared/LossRecordForm';
 import { STOCK_TABLE_CELL_CLASS, STOCK_TABLE_HEAD_CLASS, STOCK_TABLE_ROW_CLASS } from '@/components/stock/stockTableStyle';
 import { SummaryFieldCell } from '@/components/stock/SummaryFieldCell';
+import { Switch } from '@/components/ui/switch';
+import { STOCK_STATIONS } from '@/lib/constants';
+import type { StockStation } from '@/lib/api';
 
 const COST_VOLATILITY_TIERS: { value: CostVolatilityTier; label: string }[] = [
   { value: 'low', label: 'Low' },
@@ -80,6 +83,9 @@ export function IngredientsPanel({ onViewStations, focusIngredientId, onFocusIng
   const [editCostVolatilityTier, setEditCostVolatilityTier] = useState<CostVolatilityTier | 'none'>('none');
   const [editShelfLifeNote, setEditShelfLifeNote] = useState('');
   const [editUsedInNote, setEditUsedInNote] = useState('');
+  const [editStation, setEditStation] = useState<StockStation | 'none'>('none');
+  const [editSection, setEditSection] = useState('');
+  const [editNeedsReview, setEditNeedsReview] = useState(false);
   const [recipeUsage, setRecipeUsage] = useState<ApiIngredientRecipeUsage[]>([]);
   const [loadingUsage, setLoadingUsage] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
@@ -144,6 +150,9 @@ export function IngredientsPanel({ onViewStations, focusIngredientId, onFocusIng
     setEditCostVolatilityTier((ingredient.cost_volatility_tier as CostVolatilityTier | null) || 'none');
     setEditShelfLifeNote(ingredient.shelf_life_note || '');
     setEditUsedInNote(ingredient.used_in_note || '');
+    setEditStation((ingredient.station as StockStation | null) || 'none');
+    setEditSection(ingredient.sheet_section || '');
+    setEditNeedsReview(ingredient.needs_review);
     setRecipeUsage([]);
     setEditOpen(true);
     setLoadingUsage(true);
@@ -205,6 +214,11 @@ export function IngredientsPanel({ onViewStations, focusIngredientId, onFocusIng
         cost_volatility_tier: editCostVolatilityTier === 'none' ? null : editCostVolatilityTier,
         shelf_life_note: editShelfLifeNote.trim() || null,
         used_in_note: editUsedInNote.trim() || null,
+        needs_review: editNeedsReview,
+        // Only sent when changed, so the sheet position isn't reset on every save.
+        ...(editStation !== ((editingIngredient.station as StockStation | null) || 'none') || editSection.trim() !== (editingIngredient.sheet_section || '')
+          ? { station: editStation === 'none' ? null : editStation, sheet_section: editStation === 'none' ? null : editSection.trim() || null }
+          : {}),
       });
       toast.success(`${editName.trim()} saved`);
       setEditOpen(false);
@@ -549,6 +563,41 @@ export function IngredientsPanel({ onViewStations, focusIngredientId, onFocusIng
             <div className="space-y-1">
               <Label>Used in (note)</Label>
               <Input value={editUsedInNote} onChange={(e) => setEditUsedInNote(e.target.value)} />
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="edit-station">Station (EOD Stock Count tab)</Label>
+                <Select value={editStation} onValueChange={(v) => setEditStation(v as StockStation | 'none')}>
+                  <SelectTrigger id="edit-station"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Unsorted</SelectItem>
+                    {STOCK_STATIONS.map((s) => <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="edit-section">Section</Label>
+                <Input
+                  id="edit-section"
+                  list="ingredient-sections"
+                  placeholder="e.g. Proteins"
+                  value={editSection}
+                  disabled={editStation === 'none'}
+                  onChange={(e) => setEditSection(e.target.value)}
+                />
+                <datalist id="ingredient-sections">
+                  {Array.from(new Set(ingredients.filter((i) => i.station === editStation && i.sheet_section).map((i) => i.sheet_section as string))).map((sec) => (
+                    <option key={sec} value={sec} />
+                  ))}
+                </datalist>
+              </div>
+            </div>
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div>
+                <Label htmlFor="edit-verify">Needs verification</Label>
+                <p className="text-xs text-muted-foreground">Shows under Verify Needed on Stock Alerts until someone confirms the name, unit and cost.</p>
+              </div>
+              <Switch id="edit-verify" checked={editNeedsReview} onCheckedChange={setEditNeedsReview} />
             </div>
 
             {unitChanged && editingIngredient && (

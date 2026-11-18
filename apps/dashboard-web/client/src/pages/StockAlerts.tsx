@@ -23,6 +23,13 @@ import { STOCK_STATION_LABELS } from '@/lib/constants';
 import { STOCK_TABLE_CELL_CLASS, STOCK_TABLE_HEAD_CLASS, STOCK_TABLE_ROW_CLASS } from '@/components/stock/stockTableStyle';
 import { isLowIngredient, isLowStockItem } from '@/lib/stockAlerts';
 
+/** Every alert opens its row on EOD Stock Count (searched by name, on its station tab). */
+function countHref(name: string, station?: string | null) {
+  const params = new URLSearchParams({ q: name });
+  if (station) params.set('station', station);
+  return `/stock/vs?${params}`;
+}
+
 const STATION_LABELS = STOCK_STATION_LABELS;
 
 type AlertType = 'low_stock' | 'expiring' | 'verify';
@@ -88,7 +95,7 @@ export default function StockAlerts() {
           variant: 'critical',
           detail: `${ing.current_stock} ${ing.base_unit} on hand, threshold ${ing.reorder_threshold} ${ing.base_unit}`,
           source: 'Recipe Ingredient',
-          actionHref: '/stock',
+          actionHref: countHref(ing.name, ing.station),
         });
       }
       if (ing.needs_review) {
@@ -100,7 +107,7 @@ export default function StockAlerts() {
           variant: 'neutral',
           detail: 'Flagged for review',
           source: 'Recipe Ingredient',
-          actionHref: '/stock',
+          actionHref: countHref(ing.name, ing.station),
         });
       }
     }
@@ -114,19 +121,20 @@ export default function StockAlerts() {
           variant: 'critical',
           detail: `${item.current_stock} ${item.unit || ''} on hand, threshold ${item.reorder_threshold} ${item.unit || ''} -- ${STATION_LABELS[item.station]}`,
           source: 'Station Item',
-          actionHref: `/stock?tab=stations&station=${item.station}`,
+          actionHref: item.ingredient_id ? countHref(item.ingredient_name || item.name) : countHref(item.name, item.station),
         });
       }
       if (item.needs_review) {
         out.push({
           key: `verify-item-${item.id}`,
-          itemName: item.name,
+          // A linked item is counted as its ingredient on EOD Stock Count.
+          itemName: item.ingredient_id && item.ingredient_name ? `${item.name} (counted as ${item.ingredient_name})` : item.name,
           type: 'verify',
           typeLabel: TYPE_LABELS.verify,
           variant: 'neutral',
           detail: `Station: ${STATION_LABELS[item.station]}`,
           source: 'Station Item',
-          actionHref: `/stock?tab=stations&station=${item.station}`,
+          actionHref: item.ingredient_id ? countHref(item.ingredient_name || item.name) : countHref(item.name, item.station),
         });
       }
     }
@@ -140,7 +148,7 @@ export default function StockAlerts() {
         variant: expired ? 'critical' : 'warning',
         detail: expired ? `Expired ${exp.expiry_date}` : `${exp.days_until_expiry}d left (${exp.expiry_date})`,
         source: 'Recipe Ingredient',
-        actionHref: '/stock',
+        actionHref: countHref(exp.ingredient_name),
       });
     }
     return out;

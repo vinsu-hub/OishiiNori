@@ -1120,6 +1120,9 @@ export interface CreateIngredientPayload {
   category?: string;
   suggested_reorder_unit?: string;
   reorder_threshold?: number;
+  /** Where it goes on EOD Stock Count; without one it lands on Unsorted. */
+  station?: StockStation;
+  sheet_section?: string | null;
 }
 
 // Executive-only (services/api-fastapi/app/routers/inventory.py's
@@ -1186,6 +1189,12 @@ export interface UpdateIngredientRequest {
   shelf_life_note?: string | null;
   used_in_note?: string | null;
   unit_cost?: number | null;
+  /** EOD Stock Count placement (0080); station null = Unsorted. */
+  station?: StockStation | null;
+  sheet_section?: string | null;
+  sort_order?: number | null;
+  /** The "Verify" flag. */
+  needs_review?: boolean;
   /** What was paid, for the price history: "P1050 for 2 kg". */
   price_paid?: number;
   purchase_qty?: number;
