@@ -8,7 +8,7 @@ from app.auth import CurrentUser, get_current_user, require_role
 from app.cost_log import cost_log_supported_check, log_unit_cost, to_history_entry
 from app.deps import get_supabase
 from app.ph_time import today_ph
-from app.stock_alerts import counts_supported_check, is_low, with_counted
+from app.stock_alerts import active_supported_check, counts_supported_check, is_active, is_low, with_counted
 from app.schemas import (
     ExpiringIngredient,
     IngredientCostEntry,
@@ -61,7 +61,9 @@ def get_low_stock_ingredients(supabase) -> list[LowStockIngredient]:
 
 
 @router.get("/inventory", response_model=list[IngredientOut])
-def list_inventory(user: CurrentUser = Depends(get_current_user)):
+def list_inventory(include_inactive: bool = Query(False), user: CurrentUser = Depends(get_current_user)):
+    """Ingredients still in inventory; include_inactive adds the removed
+    ones (EOD Stock Count's "Removed items" list)."""
     supabase = get_supabase()
     columns = (
         "id, name, category, base_unit, suggested_reorder_unit, cost_volatility, "
@@ -77,12 +79,14 @@ def list_inventory(user: CurrentUser = Depends(get_current_user)):
 
     if counts_supported_check(supabase):
         columns += ", last_counted_at, prep_yield"
+    if active_supported_check(supabase):
+        columns += ", active"
     try:
         result = run(columns + ", station, sheet_section, sort_order", True)
     except APIError:
         # Migration 0080 (sheet placement) not run yet: alphabetical, as before.
         result = run(columns, False)
-    return result.data
+    return result.data if include_inactive else [r for r in result.data if is_active(r)]
 
 
 def next_sort_order(supabase, station: str, section: str | None) -> int:
@@ -188,7 +192,7 @@ def list_expiring_soon(days: int = Query(7, ge=1, le=90), user: CurrentUser = De
         return []
 
     ingredients_result = (
-        supabase.table("ingredients").select("id, name, base_unit").in_("id", list(upcoming.keys())).execute()
+        supabase.table("ingredients").select(with_counted(supabase, "id, name, base_unit")).in_("id", list(upcoming.keys())).execute()
     )
     today = date.today()
     rows = [
@@ -200,6 +204,7 @@ def list_expiring_soon(days: int = Query(7, ge=1, le=90), user: CurrentUser = De
             days_until_expiry=(date.fromisoformat(upcoming[i["id"]]) - today).days,
         )
         for i in ingredients_result.data
+        if is_active(i)
     ]
     rows.sort(key=lambda r: r.days_until_expiry)
     return rows
@@ -326,6 +331,59 @@ def update_ingredient(
         from app.routers.prep_bases import recompute_bases_using
         recompute_bases_using(supabase, ingredient_id, changed_by=user.id)
     return result.data[0]
+
+
+def _set_active(supabase, ingredient_id: str, active: bool) -> dict:
+    result = supabase.table("ingredients").update({"active": active}).eq("id", ingredient_id).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Ingredient not found")
+    # A linked station item is the same thing -- it goes (and comes back) with it.
+    supabase.table("stock_items").update({"active": active}).eq("ingredient_id", ingredient_id).execute()
+    clear_low_stock_cache()
+    return result.data[0]
+
+
+@router.post("/inventory/{ingredient_id}/remove", response_model=IngredientOut)
+def remove_ingredient(ingredient_id: str, user: CurrentUser = Depends(get_current_user)):
+    """"Not part of inventory any more": hidden from EOD Stock Count, Stock
+    Alerts and pickers. Nothing is deleted -- sales, counts and movements
+    keep pointing at it -- and /restore brings it back. Refused while a menu
+    recipe or a prep batch still uses it, since sales would keep deducting
+    an item nobody counts."""
+    require_role(user, "executive")
+    supabase = get_supabase()
+    if not active_supported_check(supabase):
+        raise HTTPException(status_code=503, detail="Removing ingredients needs migration 0087 -- run it in the Supabase SQL Editor first")
+    lines = (
+        supabase.table("recipe_items")
+        .select("qty_per_serving, unit, product_sizes(size_label, products(name))")
+        .eq("ingredient_id", ingredient_id)
+        .execute()
+        .data
+    ) or []
+    if lines:
+        names = sorted({f"{(l.get('product_sizes') or {}).get('products', {}).get('name', '?')} ({(l.get('product_sizes') or {}).get('size_label', '')})" for l in lines})
+        shown = ", ".join(names[:5]) + (f" and {len(names) - 5} more" if len(names) > 5 else "")
+        raise HTTPException(
+            status_code=409,
+            detail=f"Still used in {len(names)} menu recipe(s): {shown}. Remove it from those recipes in Menu Editing first.",
+        )
+    if counts_supported_check(supabase):
+        prep = supabase.table("prep_recipe_items").select("id").or_(
+            f"ingredient_id.eq.{ingredient_id},base_ingredient_id.eq.{ingredient_id}"
+        ).limit(1).execute().data
+        if prep:
+            raise HTTPException(status_code=409, detail="Still part of a prep base batch recipe (Recipes & Costs → Prep bases). Take it out there first.")
+    return _set_active(supabase, ingredient_id, False)
+
+
+@router.post("/inventory/{ingredient_id}/restore", response_model=IngredientOut)
+def restore_ingredient(ingredient_id: str, user: CurrentUser = Depends(get_current_user)):
+    require_role(user, "executive")
+    supabase = get_supabase()
+    if not active_supported_check(supabase):
+        raise HTTPException(status_code=503, detail="Needs migration 0087")
+    return _set_active(supabase, ingredient_id, True)
 
 
 @router.get("/inventory/{ingredient_id}/cost-history", response_model=list[IngredientCostEntry])

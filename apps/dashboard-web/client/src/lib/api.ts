@@ -1108,10 +1108,22 @@ export interface ApiIngredient {
   last_counted_at?: string | null;
   /** Migration 0086: set when made in batches. */
   prep_yield?: number | null;
+  /** Migration 0087: false = removed from inventory (kept for history). */
+  active?: boolean;
 }
 
-export function fetchInventory(): Promise<ApiIngredient[]> {
-  return request('/inventory');
+export function fetchInventory(opts?: { includeInactive?: boolean }): Promise<ApiIngredient[]> {
+  return request(opts?.includeInactive ? '/inventory?include_inactive=true' : '/inventory');
+}
+
+/** Not part of inventory any more (0087): hidden from counts, alerts and
+ * pickers, history kept. Refused (409) while a recipe still uses it. */
+export function removeIngredient(id: string): Promise<ApiIngredient> {
+  return request(`/inventory/${id}/remove`, { method: 'POST' });
+}
+
+export function restoreIngredient(id: string): Promise<ApiIngredient> {
+  return request(`/inventory/${id}/restore`, { method: 'POST' });
 }
 
 export interface CreateIngredientPayload {

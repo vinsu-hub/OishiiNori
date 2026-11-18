@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Check, Loader2, Printer, Search } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Loader2, Printer, RotateCcw, Search, Trash2 } from 'lucide-react';
 import {
   ApiIngredient,
   ApiIngredientDailySummary,
@@ -23,6 +23,8 @@ import {
   fetchItemUnits,
   fetchStockItems,
   overrideStockItemField,
+  removeIngredient,
+  restoreIngredient,
   updateIngredient,
   updateStockItem,
 } from '@/lib/api';
@@ -78,6 +80,30 @@ interface RowState {
   unit: string;
   saving: boolean;
   variance: number | null;
+  /** Last Save all failed for this row. */
+  error?: string | null;
+}
+
+/** The API's {"detail": "..."} out of "API /x failed: 409 {...}". */
+function apiMessage(e: unknown): string {
+  const text = e instanceof Error ? e.message : String(e);
+  const json = text.indexOf('{');
+  if (json >= 0) {
+    try {
+      const detail = JSON.parse(text.slice(json)).detail;
+      if (typeof detail === 'string') return detail;
+    } catch {
+      /* not JSON */
+    }
+  }
+  return text;
+}
+
+/** Runs fn over items, `limit` at a time. */
+async function inBatches<T>(items: T[], limit: number, fn: (item: T) => Promise<void>) {
+  for (let i = 0; i < items.length; i += limit) {
+    await Promise.all(items.slice(i, i + limit).map(fn));
+  }
 }
 
 function isStation(value: string | null | undefined): value is StockStation {
@@ -112,6 +138,9 @@ export default function StockVS() {
   const [printStation, setPrintStation] = useState<'tab' | 'all'>('tab');
   const [printSection, setPrintSection] = useState('all');
   const [printRows, setPrintRows] = useState<{ rows: PrintRow[]; title: string } | null>(null);
+  const [savingAll, setSavingAll] = useState(false);
+  const [removedOpen, setRemovedOpen] = useState(false);
+  const [removed, setRemoved] = useState<{ ingredients: ApiIngredient[]; items: ApiStockItem[] } | null>(null);
 
   const isExecutive = user?.role === 'executive';
   const canEditStockItems = ['executive', 'manager', 'stocker'].includes(user?.role ?? '');
@@ -258,60 +287,148 @@ export default function StockVS() {
   const lowCount = allRows.filter((r) => r.low).length;
   const verifyCount = allRows.filter((r) => r.verify).length;
 
-  async function handleSave(row: CountRow) {
-    if (!user) return;
+  const rowByKey = useMemo(() => new Map(allRows.map((r) => [r.key, r])), [allRows]);
+
+  function thresholdDraft(row: CountRow): number | null | undefined {
+    const raw = thresholds[row.key];
+    if (raw === undefined) return undefined;
+    const value = raw.trim() === '' ? 0 : Number(raw);
+    if (!Number.isFinite(value) || value < 0 || value === (row.threshold ?? 0)) return undefined;
+    return value;
+  }
+
+  const pendingCounts = allRows.filter((r) => (rows[r.key]?.countValue ?? '').trim() !== '');
+  const pendingThresholds = allRows.filter((r) => canEdit(r) && thresholdDraft(r) !== undefined);
+  const pendingCount = pendingCounts.length + pendingThresholds.length;
+
+  // Typed counts aren't saved until Save all -- warn before leaving the page.
+  useEffect(() => {
+    if (!pendingCount) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [pendingCount]);
+
+  async function saveCount(row: CountRow): Promise<number> {
     const state = rowState(row.key);
     const raw = Number(state.countValue);
-    if (!Number.isFinite(raw) || raw < 0) {
-      toast.error('Enter a valid count');
-      return;
-    }
+    if (!Number.isFinite(raw) || raw < 0) throw new Error('Not a valid count');
     const option = row.options.find((o) => o.key === state.unit) ?? row.options[0];
     const counted = Math.round(raw * option.factor * 10000) / 10000;
-    updateRow(row.key, { saving: true });
-    try {
-      let variance: number;
-      if (row.kind === 'ingredient') {
-        variance = (await countStock(row.id, { employee_id: user.id, counted_stock: counted })).variance;
-      } else {
-        await overrideStockItemField(row.id, { field: 'ending', corrected_value: counted, reason: 'EOD Stock Count', employee_id: user.id });
-        variance = Math.round((counted - row.systemEnding) * 10000) / 10000;
+    if (row.kind === 'ingredient') {
+      return (await countStock(row.id, { employee_id: user!.id, counted_stock: counted })).variance;
+    }
+    await overrideStockItemField(row.id, { field: 'ending', corrected_value: counted, reason: 'EOD Stock Count', employee_id: user!.id });
+    return Math.round((counted - row.systemEnding) * 10000) / 10000;
+  }
+
+  async function saveThreshold(row: CountRow, value: number) {
+    if (row.kind === 'ingredient') await updateIngredient(row.id, { reorder_threshold: value });
+    else await updateStockItem(row.id, { reorder_threshold: value > 0 ? value : null });
+  }
+
+  /** One button for the whole page: every typed count and changed Low at. */
+  async function saveAll() {
+    if (!user || !pendingCount) return;
+    setSavingAll(true);
+    let counts = 0;
+    let lows = 0;
+    const failed: string[] = [];
+    const countKeys = pendingCounts.map((r) => r.key);
+    const thresholdKeys = pendingThresholds.map((r) => r.key);
+    setRows((prev) => {
+      const next = { ...prev };
+      for (const key of countKeys) next[key] = { ...rowState(key), saving: true, error: null };
+      return next;
+    });
+    await inBatches(countKeys, 4, async (key) => {
+      const row = rowByKey.get(key)!;
+      try {
+        const variance = await saveCount(row);
+        counts += 1;
+        setRows((prev) => ({ ...prev, [key]: { ...(prev[key] ?? rowState(key)), countValue: '', saving: false, variance, error: null } }));
+      } catch (e) {
+        failed.push(row.name);
+        setRows((prev) => ({ ...prev, [key]: { ...(prev[key] ?? rowState(key)), saving: false, error: apiMessage(e) } }));
       }
-      updateRow(row.key, { saving: false, variance });
-      toast.success(`${row.name} counted -- variance ${variance >= 0 ? '+' : ''}${variance}`);
-      load();
+    });
+    await inBatches(thresholdKeys, 4, async (key) => {
+      const row = rowByKey.get(key)!;
+      try {
+        await saveThreshold(row, thresholdDraft(row)!);
+        lows += 1;
+        setThresholds((prev) => {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+      } catch (e) {
+        failed.push(`${row.name} (Low at)`);
+        setRows((prev) => ({ ...prev, [key]: { ...(prev[key] ?? rowState(key)), error: apiMessage(e) } }));
+      }
+    });
+    setSavingAll(false);
+    const parts = [counts && `${counts} count${counts === 1 ? '' : 's'}`, lows && `${lows} Low at`].filter(Boolean).join(', ');
+    if (failed.length) toast.error(`Saved ${parts || 'nothing'} · ${failed.length} failed: ${failed.slice(0, 3).join(', ')}${failed.length > 3 ? '…' : ''}`);
+    else toast.success(`Saved ${parts}`);
+    load();
+  }
+
+  async function removeRow(row: CountRow) {
+    const ok = window.confirm(
+      `Remove ${row.name} from inventory?\n\nIt won't show on EOD Stock Count or Stock Alerts any more. Past sales and counts are kept, and you can restore it under "Removed items" at the bottom of this page.`,
+    );
+    if (!ok) return;
+    try {
+      if (row.kind === 'ingredient') {
+        await removeIngredient(row.id);
+        setIngredients((prev) => prev.filter((i) => i.id !== row.id));
+        setStockItems((prev) => prev.filter((s) => s.ingredient_id !== row.id));
+      } else {
+        await updateStockItem(row.id, { active: false });
+        setStockItems((prev) => prev.filter((s) => s.id !== row.id));
+      }
+      setRemoved(null);
+      toast.success(`${row.name} removed from inventory`);
     } catch (e) {
-      updateRow(row.key, { saving: false });
-      toast.error(e instanceof Error ? e.message : 'Failed to save count');
+      toast.error(apiMessage(e), { duration: 10000 });
     }
   }
 
-  async function saveThreshold(row: CountRow) {
-    const raw = thresholds[row.key];
-    if (raw === undefined) return;
-    const value = raw.trim() === '' ? 0 : Number(raw);
-    if (!Number.isFinite(value) || value < 0) {
-      toast.error('Low-stock level must be 0 or more');
-      return;
-    }
-    const clear = () => setThresholds((prev) => {
-      const next = { ...prev };
-      delete next[row.key];
-      return next;
-    });
-    if (value === (row.threshold ?? 0)) return clear();
+  const loadRemoved = useCallback(() => {
+    Promise.all([fetchInventory({ includeInactive: true }), fetchStockItems({ active_only: false })])
+      .then(([ing, items]) => setRemoved({
+        ingredients: ing.filter((i) => i.active === false),
+        items: items.filter((s) => !s.active && !s.ingredient_id),
+      }))
+      .catch((e) => toast.error(apiMessage(e)));
+  }, []);
+
+  useEffect(() => {
+    if (removedOpen && !removed) loadRemoved();
+  }, [removedOpen, removed, loadRemoved]);
+
+  async function restoreRow(kind: 'ingredient' | 'stock_item', id: string, name: string) {
     try {
-      if (row.kind === 'ingredient') {
-        const updated = await updateIngredient(row.id, { reorder_threshold: value });
-        setIngredients((prev) => prev.map((i) => (i.id === row.id ? { ...i, reorder_threshold: updated.reorder_threshold } : i)));
-      } else {
-        const updated = await updateStockItem(row.id, { reorder_threshold: value > 0 ? value : null });
-        setStockItems((prev) => prev.map((s) => (s.id === row.id ? { ...s, reorder_threshold: updated.reorder_threshold } : s)));
-      }
-      clear();
-      toast.success(value > 0 ? `${row.name}: warns at ${fmtQty(value)} ${row.unit}` : `${row.name}: no low-stock warning`);
+      if (kind === 'ingredient') await restoreIngredient(id);
+      else await updateStockItem(id, { active: true });
+      toast.success(`${name} is back in inventory`);
+      setRemoved(null);
+      load();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to save low-stock level');
+      toast.error(apiMessage(e));
+    }
+  }
+
+  function focusNextCount(current: HTMLInputElement) {
+    const inputs = Array.from(document.querySelectorAll<HTMLInputElement>('input[data-count-input]'));
+    const next = inputs[inputs.indexOf(current) + 1];
+    if (next) {
+      next.focus();
+      next.select();
     }
   }
 
@@ -439,7 +556,8 @@ export default function StockVS() {
               converted to the item's own base unit before comparing against the system's computed ending
               (today's beginning + new stock − POS-deducted usage). <span className="font-medium text-foreground">Low at</span>{' '}
               is when it shows on Stock Alerts (leave 0 for no warning). <span className="font-medium text-foreground">Station item</span>{' '}
-              rows are packaging and supplies tracked on Station Items -- counted here too.
+              rows are packaging and supplies tracked on Station Items -- counted here too. Type all your counts, then tap
+              <span className="font-medium text-foreground"> Save all</span> at the bottom once.
             </p>
             {!loading && (notCountedCount > 0 || lowCount > 0 || verifyCount > 0) && (
               <p className="flex flex-wrap gap-x-3 text-sm">
@@ -546,9 +664,18 @@ export default function StockVS() {
                                 step="0.01"
                                 className="w-28 h-8"
                                 aria-label={`Count for ${row.name}`}
+                                data-count-input
                                 value={state.countValue}
-                                onChange={(e) => updateRow(row.key, { countValue: e.target.value })}
+                                disabled={state.saving}
+                                onChange={(e) => updateRow(row.key, { countValue: e.target.value, error: null })}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    focusNextCount(e.currentTarget);
+                                  }
+                                }}
                               />
+                              {state.error && <p className="mt-1 max-w-48 text-xs text-destructive">{state.error}</p>}
                             </TableCell>
                             <TableCell className={STOCK_TABLE_CELL_CLASS}>
                               <Select value={state.unit} onValueChange={(v) => updateRow(row.key, { unit: v })}>
@@ -581,8 +708,6 @@ export default function StockVS() {
                                     value={thresholds[row.key] ?? (row.threshold ? String(row.threshold) : '')}
                                     placeholder="0"
                                     onChange={(e) => setThresholds((prev) => ({ ...prev, [row.key]: e.target.value }))}
-                                    onBlur={() => saveThreshold(row)}
-                                    onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
                                   />
                                   <span className="text-xs text-muted-foreground">{row.unit}</span>
                                 </div>
@@ -592,10 +717,21 @@ export default function StockVS() {
                                 </span>
                               )}
                             </TableCell>
-                            <TableCell className={STOCK_TABLE_CELL_CLASS}>
-                              <Button size="sm" disabled={state.saving || !state.countValue} onClick={() => handleSave(row)}>
-                                {state.saving ? 'Saving...' : 'Save'}
-                              </Button>
+                            <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>
+                              {state.saving ? (
+                                <Loader2 className="inline h-4 w-4 animate-spin text-muted-foreground" aria-label="Saving" />
+                              ) : editable ? (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                                  aria-label={`Remove ${row.name} from inventory`}
+                                  title="Not part of inventory? Remove it"
+                                  onClick={() => removeRow(row)}
+                                >
+                                  <Trash2 className="h-4 w-4" aria-hidden />
+                                </Button>
+                              ) : null}
                             </TableCell>
                           </TableRow>
                         );
@@ -605,9 +741,86 @@ export default function StockVS() {
                 </TableBody>
               </Table>
             )}
+            {!loading && (
+              <div className="rounded-lg border">
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium"
+                  onClick={() => setRemovedOpen((o) => !o)}
+                  aria-expanded={removedOpen}
+                >
+                  {removedOpen ? <ChevronDown className="h-4 w-4" aria-hidden /> : <ChevronRight className="h-4 w-4" aria-hidden />}
+                  Removed items{removed ? ` (${removed.ingredients.length + removed.items.length})` : ''}
+                  <span className="font-normal text-muted-foreground">-- not part of inventory, kept for history</span>
+                </button>
+                {removedOpen && (
+                  <div className="border-t px-3 py-2">
+                    {!removed ? (
+                      <p className="text-sm text-muted-foreground">Loading…</p>
+                    ) : removed.ingredients.length + removed.items.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">Nothing removed.</p>
+                    ) : (
+                      <ul className="divide-y">
+                        {[
+                          ...removed.ingredients.map((i) => ({ kind: 'ingredient' as const, id: i.id, name: i.name, where: i.station && isStation(i.station) ? STOCK_STATION_LABELS[i.station] : 'Unsorted' })),
+                          ...removed.items.map((s) => ({ kind: 'stock_item' as const, id: s.id, name: s.name, where: STOCK_STATION_LABELS[s.station] })),
+                        ]
+                          .sort((a, b) => a.name.localeCompare(b.name))
+                          .map((r) => (
+                            <li key={`${r.kind}:${r.id}`} className="flex items-center justify-between gap-2 py-1.5 text-sm">
+                              <span>
+                                {r.name}{' '}
+                                <span className="text-xs text-muted-foreground">
+                                  · {r.kind === 'stock_item' ? 'Station item' : 'Ingredient'} · {r.where}
+                                </span>
+                              </span>
+                              {(r.kind === 'ingredient' ? isExecutive : canEditStockItems) && (
+                                <Button size="sm" variant="outline" onClick={() => restoreRow(r.kind, r.id, r.name)}>
+                                  <RotateCcw className="mr-1 h-3.5 w-3.5" aria-hidden /> Restore
+                                </Button>
+                              )}
+                            </li>
+                          ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
+        {pendingCount > 0 && <div className="h-16" aria-hidden />}
       </div>
+
+      {pendingCount > 0 && (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 px-4 py-3 shadow-lg backdrop-blur print:hidden">
+          <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-2">
+            <p className="text-sm">
+              <span className="font-semibold">{pendingCount} unsaved</span>
+              <span className="text-muted-foreground">
+                {' '}· {pendingCounts.length} count{pendingCounts.length === 1 ? '' : 's'}
+                {pendingThresholds.length ? `, ${pendingThresholds.length} Low at` : ''}
+              </span>
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                disabled={savingAll}
+                onClick={() => {
+                  setRows({});
+                  setThresholds({});
+                }}
+              >
+                Clear
+              </Button>
+              <Button disabled={savingAll} onClick={saveAll}>
+                {savingAll ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden /> : null}
+                {savingAll ? 'Saving…' : `Save all (${pendingCount})`}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Dialog open={printOpen} onOpenChange={setPrintOpen}>
         <DialogContent>

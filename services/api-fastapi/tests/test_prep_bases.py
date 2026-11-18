@@ -63,6 +63,11 @@ class _Query:
         self.filters.append(lambda r: (r.get(col) or "").lower() == val.lower())
         return self
 
+    def or_(self, expr):
+        parts = [p.split(".eq.") for p in expr.split(",")]
+        self.filters.append(lambda r: any(r.get(c) == v for c, v in parts))
+        return self
+
     def maybe_single(self):
         self.single = True
         return self

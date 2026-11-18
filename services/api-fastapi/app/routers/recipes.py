@@ -7,7 +7,7 @@ from app.cost_log import latest_purchases
 from app.deps import get_supabase
 from app.routers.sales_insights import _page_rows
 from app.schemas import RecipeCoverageResponse, RecipeItemOut
-from app.stock_alerts import counts_supported_check, is_counted, is_low
+from app.stock_alerts import active_supported_check, counts_supported_check, is_active, is_counted, is_low
 
 router = APIRouter(tags=["recipes"])
 
@@ -73,7 +73,9 @@ def recipe_coverage(user: CurrentUser = Depends(get_current_user)):
     columns = "id, name, category, base_unit, unit_cost, current_stock, reorder_threshold"
     if counts_supported_check(supabase):
         columns += ", last_counted_at, prep_yield"
-    ingredients = _page_rows(supabase.table("ingredients").select(columns).order("name"))
+    if active_supported_check(supabase):
+        columns += ", active"
+    ingredients = [i for i in _page_rows(supabase.table("ingredients").select(columns).order("name")) if is_active(i)]
     ingredient_by_id = {i["id"]: i for i in ingredients}
 
     product_by_id = {p["id"]: p for p in products}

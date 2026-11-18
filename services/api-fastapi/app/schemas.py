@@ -828,6 +828,8 @@ class IngredientOut(BaseModel):
     # this ingredient is a prep base (null = bought, not made).
     last_counted_at: str | None = None
     prep_yield: float | None = None
+    # Migration 0087: false = removed from inventory (kept for history).
+    active: bool = True
 
 
 StockStation = Literal["tako_snack", "cafe_drinks", "sushi_kitchen_main", "ramen_hot_line"]
