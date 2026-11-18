@@ -1126,6 +1126,12 @@ export function restoreIngredient(id: string): Promise<ApiIngredient> {
   return request(`/inventory/${id}/restore`, { method: 'POST' });
 }
 
+/** The ingredient a Station Items row is (linking or creating it), so it can
+ * go into a menu recipe without typing it in again. */
+export function stockItemAsIngredient(stockItemId: string): Promise<ApiIngredient> {
+  return request(`/stock-items/${stockItemId}/as-ingredient`, { method: 'POST' });
+}
+
 export interface CreateIngredientPayload {
   name: string;
   base_unit: string;

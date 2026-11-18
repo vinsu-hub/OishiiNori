@@ -10,6 +10,10 @@ export interface PrintRow {
   threshold: number | null;
   kind: 'ingredient' | 'stock_item';
   countedToday: boolean;
+  /** Count boxes: its sizes (pack, box...) then the base unit. */
+  units: string[];
+  /** Prep base printed under its ingredient as "Base". */
+  nested?: boolean;
 }
 
 /** The paper EOD count sheet: per station, one table per category (sheet
@@ -55,9 +59,9 @@ export function StockCountPrint({ rows, title, date }: { rows: PrintRow[]; title
               <table>
                 <thead>
                   <tr>
-                    <th style={{ width: '34%' }}>Item</th>
+                    <th style={{ width: '30%' }}>Item</th>
                     <th style={{ width: '14%' }}>System</th>
-                    <th style={{ width: '16%' }}>Counted</th>
+                    <th style={{ width: '22%' }}>Counted</th>
                     <th style={{ width: '9%' }}>Unit</th>
                     <th style={{ width: '9%' }}>Low at</th>
                     <th>Notes</th>
@@ -66,13 +70,16 @@ export function StockCountPrint({ rows, title, date }: { rows: PrintRow[]; title
                 <tbody>
                   {items.map((r) => (
                     <tr key={r.key}>
-                      <td>
+                      <td style={r.nested ? { paddingLeft: 18 } : undefined}>
+                        {r.nested ? '↳ Base: ' : ''}
                         {r.name}
                         {r.kind === 'stock_item' ? ' (station item)' : ''}
                         {r.countedToday ? ' ✓' : ''}
                       </td>
                       <td>{fmtQty(r.systemEnding)} {r.unit}</td>
-                      <td />
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {r.units.length > 1 ? r.units.map((u) => `____ ${u}`).join('  ') : ''}
+                      </td>
                       <td>{r.unit}</td>
                       <td>{r.threshold ? fmtQty(r.threshold) : ''}</td>
                       <td />

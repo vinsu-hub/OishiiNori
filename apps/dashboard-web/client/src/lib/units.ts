@@ -51,6 +51,18 @@ export function unitOptionsFor(baseUnit: string | null | undefined, saved: ApiIt
   return opts;
 }
 
+/** Boxes for counting one item in all its units at once (EOD Stock Count):
+ * each saved size (pack, box... largest first) gets its own box, then the
+ * base unit, whose box can also take kg / L for weight and volume items.
+ * Total in base units = sum of qty x factor. */
+export function countUnitsFor(baseUnit: string | null | undefined, saved: ApiItemUnit[]): { sizes: UnitOption[]; baseOptions: UnitOption[] } {
+  const all = unitOptionsFor(baseUnit, saved);
+  return {
+    sizes: all.filter((o) => o.savedId).sort((a, b) => b.factor - a.factor),
+    baseOptions: all.filter((o) => !o.savedId),
+  };
+}
+
 export function unitsForItem(saved: ApiItemUnit[], kind: 'ingredient' | 'stock_item', id: string): ApiItemUnit[] {
   return saved.filter((u) => (kind === 'ingredient' ? u.ingredient_id === id : u.stock_item_id === id));
 }

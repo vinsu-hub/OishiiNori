@@ -19,6 +19,7 @@ import {
 import { fmtQty, unitOptionsFor, unitsForItem, type UnitOption } from '@/lib/units';
 import { formatCurrency } from '@/lib/utils';
 import { UnitSelect } from '@/components/stock/UnitPicker';
+import { IngredientPicker } from '@/components/stock/IngredientPicker';
 import { type CostImpact, UnitCostEntry, fmtUnitCost } from '@/components/stock/UnitCostEntry';
 
 interface Props {
@@ -324,14 +325,14 @@ export function PrepBasesPanel({ ingredients, itemUnits, canEdit, canMake, impac
               const ing = byId.get(row.ingredient_id);
               return (
                 <div key={i} className="grid grid-cols-[6rem_minmax(0,1fr)_auto] items-center gap-2 border-b pb-2 last:border-0 sm:grid-cols-[minmax(0,1fr)_6rem_minmax(0,9rem)_auto] sm:border-0 sm:pb-0">
-                  <Select value={row.ingredient_id} onValueChange={(v) => setRow(i, { ingredient_id: v, unitKey: 'base' })}>
-                    <SelectTrigger className="col-span-3 w-full sm:col-span-1" aria-label={`Ingredient ${i + 1}`}><SelectValue placeholder="Ingredient" /></SelectTrigger>
-                    <SelectContent>
-                      {sortedIngredients
-                        .filter((x) => x.id !== draft.baseId && !baseIds.has(x.id))
-                        .map((x) => <SelectItem key={x.id} value={x.id}>{x.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                  <div className="col-span-3 sm:col-span-1">
+                    <IngredientPicker
+                      ariaLabel={`Ingredient ${i + 1}`}
+                      value={row.ingredient_id}
+                      ingredients={sortedIngredients.filter((x) => x.id !== draft.baseId && !baseIds.has(x.id))}
+                      onPick={(v) => setRow(i, { ingredient_id: v, unitKey: 'base' })}
+                    />
+                  </div>
                   <Input
                     inputMode="decimal"
                     aria-label={`Amount of ingredient ${i + 1}`}

@@ -37,6 +37,9 @@ import {
   deleteProductSize,
   deleteRecipeItem,
   fetchInventory,
+  fetchStockItems,
+  stockItemAsIngredient,
+  type ApiStockItem,
   fetchItemUnits,
   type ApiItemUnit,
   fetchProducts,
@@ -51,6 +54,7 @@ import {
 } from '@/lib/api';
 import { STOCK_STATIONS } from '@/lib/constants';
 import type { StockStation } from '@/lib/api';
+import { IngredientPicker } from '@/components/stock/IngredientPicker';
 
 const STATIONS: { value: KitchenStation; label: string }[] = [
   { value: 'sushi_bar', label: 'Sushi Bar' },
@@ -138,6 +142,7 @@ export default function MenuEditing() {
   const [products, setProducts] = useState<ApiProduct[]>([]);
   const [pendingDeductions, setPendingDeductions] = useState<PendingBundleDeduction[]>([]);
   const [ingredients, setIngredients] = useState<ApiIngredient[]>([]);
+  const [stockItems, setStockItems] = useState<ApiStockItem[]>([]);
   const [itemUnits, setItemUnits] = useState<ApiItemUnit[]>([]);
   const [newUnitRow, setNewUnitRow] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -156,6 +161,31 @@ export default function MenuEditing() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // The recipe picker re-reads ingredients and station items every time an
+  // item is opened, so anything added meanwhile (another tab, EOD Stock
+  // Count, Prep bases) is there without reloading the page.
+  const refreshIngredients = useCallback(() => {
+    Promise.all([fetchInventory(), fetchStockItems({ active_only: true }).catch(() => [] as ApiStockItem[]), fetchItemUnits().catch(() => null)])
+      .then(([ing, items, units]) => {
+        setIngredients([...ing].sort((a, b) => a.name.localeCompare(b.name)));
+        setStockItems(items);
+        if (units) setItemUnits(units);
+      })
+      .catch(() => { /* keep the list already loaded */ });
+  }, []);
+
+  async function addStockItemToRow(localId: string, item: ApiStockItem) {
+    try {
+      const ingredient = await stockItemAsIngredient(item.id);
+      setIngredients((prev) => (prev.some((i) => i.id === ingredient.id) ? prev : [...prev, ingredient].sort((a, b) => a.name.localeCompare(b.name))));
+      setStockItems((prev) => prev.map((s) => (s.id === item.id ? { ...s, ingredient_id: ingredient.id } : s)));
+      updateRecipeRow(localId, { ingredient_id: ingredient.id, unitKey: 'base', unit: '' });
+      toast.success(`${item.name} added as an ingredient (linked to its station item) -- one stock count for both`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not add that station item');
+    }
+  }
 
   const loadPending = useCallback(() => {
     if (!canPublishBundleRecipe) return;
@@ -246,6 +276,7 @@ export default function MenuEditing() {
     setImagePreview(null);
 
     setEditOpen(true);
+    refreshIngredients();
   }
 
   // Stock -> Recipes & Costs links here with ?edit=<productId> to open that
@@ -829,32 +860,18 @@ export default function MenuEditing() {
                       <div key={row.localId} className="grid grid-cols-12 gap-2 items-end">
                         <div className={creatingIngredientFor === row.localId ? 'col-span-12 space-y-1' : 'col-span-4 space-y-1'}>
                           <Label className="text-xs">Ingredient</Label>
-                          <Select
-                            value={row.ingredient_id}
-                            onValueChange={(v) => {
-                              if (v === NEW_INGREDIENT_VALUE) {
-                                openNewIngredientForm(row.localId);
-                                updateRecipeRow(row.localId, { ingredient_id: v, unitKey: 'base', unit: '' });
-                              } else {
-                                updateRecipeRow(row.localId, { ingredient_id: v, unitKey: 'base', unit: '' });
-                              }
+                          <IngredientPicker
+                            ariaLabel="Ingredient"
+                            value={row.ingredient_id === NEW_INGREDIENT_VALUE ? '' : row.ingredient_id}
+                            ingredients={ingredients}
+                            stockItems={stockItems}
+                            onPick={(id) => updateRecipeRow(row.localId, { ingredient_id: id, unitKey: 'base', unit: '' })}
+                            onPickStockItem={(item) => addStockItemToRow(row.localId, item)}
+                            onNew={() => {
+                              openNewIngredientForm(row.localId);
+                              updateRecipeRow(row.localId, { ingredient_id: NEW_INGREDIENT_VALUE, unitKey: 'base', unit: '' });
                             }}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select ingredient" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value={NEW_INGREDIENT_VALUE} className="font-medium text-primary">
-                                <Plus className="w-3.5 h-3.5 inline mr-1" />
-                                New ingredient...
-                              </SelectItem>
-                              {ingredients.map((ing) => (
-                                <SelectItem key={ing.id} value={ing.id}>
-                                  {ing.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          />
                           {creatingIngredientFor === row.localId && (
                             <div className="mt-2 space-y-2 rounded-md border p-3 bg-muted/40">
                               <p className="text-xs text-muted-foreground">

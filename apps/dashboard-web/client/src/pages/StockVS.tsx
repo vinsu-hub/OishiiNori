@@ -21,6 +21,7 @@ import {
   fetchIngredientCountEntries,
   fetchInventory,
   fetchItemUnits,
+  fetchPrepBases,
   fetchStockItems,
   overrideStockItemField,
   removeIngredient,
@@ -29,7 +30,7 @@ import {
   updateStockItem,
 } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
-import { describeUnit, fmtQty, type UnitOption, unitOptionsFor, unitsForItem } from '@/lib/units';
+import { countUnitsFor, fmtQty, type UnitOption, unitsForItem } from '@/lib/units';
 import { isCounted, isLowIngredient, isLowStockItem } from '@/lib/stockAlerts';
 import { STOCK_TABLE_CELL_CLASS, STOCK_TABLE_HEAD_CLASS, STOCK_TABLE_ROW_CLASS } from '@/components/stock/stockTableStyle';
 import { groupBySection, sectionAnchor } from '@/components/stock/StationsPanel';
@@ -71,13 +72,19 @@ interface CountRow {
   countedToday: boolean;
   low: boolean;
   verify: boolean;
-  options: UnitOption[];
+  /** One count box each (pack, box... largest first). */
+  sizes: UnitOption[];
+  /** The base unit box's choices: base, plus kg / L for weight and volume. */
+  baseOptions: UnitOption[];
+  /** Prep base shown right under the ingredient it's made from ("Base"). */
+  nested?: boolean;
 }
 
 interface RowState {
-  countValue: string;
-  /** UnitOption key: 'base', 'std:kg', or an item_units id. */
-  unit: string;
+  /** Typed count per unit box, keyed by UnitOption key ('base' box holds the base-unit count). */
+  counts: Record<string, string>;
+  /** Unit of the base box: 'base' or 'std:kg' / 'std:L'. */
+  baseKey: string;
   saving: boolean;
   variance: number | null;
   /** Last Save all failed for this row. */
@@ -141,6 +148,8 @@ export default function StockVS() {
   const [savingAll, setSavingAll] = useState(false);
   const [removedOpen, setRemovedOpen] = useState(false);
   const [removed, setRemoved] = useState<{ ingredients: ApiIngredient[]; items: ApiStockItem[] } | null>(null);
+  /** prep base id -> its component ingredient ids, to show a base under its ingredient. */
+  const [prepComponents, setPrepComponents] = useState<Map<string, Set<string>>>(new Map());
 
   const isExecutive = user?.role === 'executive';
   const canEditStockItems = ['executive', 'manager', 'stocker'].includes(user?.role ?? '');
@@ -153,8 +162,10 @@ export default function StockVS() {
       fetchIngredientCountEntries(),
       fetchItemUnits().catch(() => [] as ApiItemUnit[]),
       fetchStockItems({ active_only: true }).catch(() => [] as ApiStockItem[]),
+      fetchPrepBases().catch(() => []),
     ])
-      .then(([ing, sum, units, items]) => {
+      .then(([ing, sum, units, items, bases]) => {
+        setPrepComponents(new Map(bases.map((b) => [b.ingredient_id, new Set(b.components.map((c) => c.ingredient_id))])));
         setIngredients(ing);
         setSummaries(sum);
         setItemUnits(units);
@@ -197,7 +208,7 @@ export default function StockVS() {
       countedToday: !!i.last_counted_at && phDate(i.last_counted_at) === today,
       low: isLowIngredient(i),
       verify: i.needs_review || flaggedLinks.has(i.id),
-      options: unitOptionsFor(i.base_unit, unitsForItem(itemUnits, 'ingredient', i.id)),
+      ...countUnitsFor(i.base_unit, unitsForItem(itemUnits, 'ingredient', i.id)),
     }));
     for (const s of stockItems) {
       if (s.ingredient_id) continue; // counted as its ingredient
@@ -216,13 +227,19 @@ export default function StockVS() {
         countedToday: false,
         low: isLowStockItem(s),
         verify: s.needs_review,
-        options: unitOptionsFor(s.unit || 'pcs', unitsForItem(itemUnits, 'stock_item', s.id)),
+        ...countUnitsFor(s.unit || 'pcs', unitsForItem(itemUnits, 'stock_item', s.id)),
       });
     }
-    return out.sort(
-      (a, b) => (a.sortOrder ?? 1e9) - (b.sortOrder ?? 1e9) || a.name.localeCompare(b.name),
-    );
-  }, [ingredients, stockItems, summaries, itemUnits, today, flaggedLinks]);
+    out.sort((a, b) => (a.sortOrder ?? 1e9) - (b.sortOrder ?? 1e9) || a.name.localeCompare(b.name));
+    // A prep base right after one of its own ingredients, in the same section,
+    // is that ingredient's "Base" (Black tea: Pack, Sachet, then Base ml).
+    return out.map((r, i) => {
+      const prev = out[i - 1];
+      const nested = !!prev && prev.kind === 'ingredient' && prev.station === r.station && prev.section === r.section
+        && !!prepComponents.get(r.id)?.has(prev.id);
+      return nested ? { ...r, nested } : r;
+    });
+  }, [ingredients, stockItems, summaries, itemUnits, today, flaggedLinks, prepComponents]);
 
   const ingredientCount = allRows.filter((r) => r.kind === 'ingredient').length;
   const stockItemCount = allRows.length - ingredientCount;
@@ -276,7 +293,7 @@ export default function StockVS() {
   }
 
   function rowState(key: string): RowState {
-    return rows[key] ?? { countValue: '', unit: 'base', saving: false, variance: null };
+    return rows[key] ?? { counts: {}, baseKey: 'base', saving: false, variance: null };
   }
 
   function updateRow(key: string, patch: Partial<RowState>) {
@@ -297,7 +314,7 @@ export default function StockVS() {
     return value;
   }
 
-  const pendingCounts = allRows.filter((r) => (rows[r.key]?.countValue ?? '').trim() !== '');
+  const pendingCounts = allRows.filter((r) => Object.values(rows[r.key]?.counts ?? {}).some((v) => v.trim() !== ''));
   const pendingThresholds = allRows.filter((r) => canEdit(r) && thresholdDraft(r) !== undefined);
   const pendingCount = pendingCounts.length + pendingThresholds.length;
 
@@ -312,12 +329,28 @@ export default function StockVS() {
     return () => window.removeEventListener('beforeunload', warn);
   }, [pendingCount]);
 
+  /** Sum of every box in base units; null when nothing valid is typed. */
+  function countedTotal(row: CountRow, state: RowState): number | null {
+    let total = 0;
+    let any = false;
+    const boxes: [string, number][] = [
+      ...row.sizes.map((o) => [o.key, o.factor] as [string, number]),
+      ['base', (row.baseOptions.find((o) => o.key === state.baseKey) ?? row.baseOptions[0]).factor],
+    ];
+    for (const [key, factor] of boxes) {
+      const raw = (state.counts[key] ?? '').trim();
+      if (!raw) continue;
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n < 0) return null;
+      total += n * factor;
+      any = true;
+    }
+    return any ? Math.round(total * 10000) / 10000 : null;
+  }
+
   async function saveCount(row: CountRow): Promise<number> {
-    const state = rowState(row.key);
-    const raw = Number(state.countValue);
-    if (!Number.isFinite(raw) || raw < 0) throw new Error('Not a valid count');
-    const option = row.options.find((o) => o.key === state.unit) ?? row.options[0];
-    const counted = Math.round(raw * option.factor * 10000) / 10000;
+    const counted = countedTotal(row, rowState(row.key));
+    if (counted == null) throw new Error('Not a valid count');
     if (row.kind === 'ingredient') {
       return (await countStock(row.id, { employee_id: user!.id, counted_stock: counted })).variance;
     }
@@ -349,7 +382,7 @@ export default function StockVS() {
       try {
         const variance = await saveCount(row);
         counts += 1;
-        setRows((prev) => ({ ...prev, [key]: { ...(prev[key] ?? rowState(key)), countValue: '', saving: false, variance, error: null } }));
+        setRows((prev) => ({ ...prev, [key]: { ...(prev[key] ?? rowState(key)), counts: {}, saving: false, variance, error: null } }));
       } catch (e) {
         failed.push(row.name);
         setRows((prev) => ({ ...prev, [key]: { ...(prev[key] ?? rowState(key)), saving: false, error: apiMessage(e) } }));
@@ -485,6 +518,7 @@ export default function StockVS() {
       rows: chosen.map((r) => ({
         key: r.key, name: r.name, stationLabel: stationLabel(r.station), section: r.section || 'Other items',
         systemEnding: r.systemEnding, unit: r.unit, threshold: r.threshold, kind: r.kind, countedToday: r.countedToday,
+        units: [...r.sizes.map((o) => o.name), r.unit], nested: r.nested,
       })),
     });
     setPrintOpen(false);
@@ -583,7 +617,6 @@ export default function StockVS() {
                     <TableHead className={STOCK_TABLE_HEAD_CLASS}>Item</TableHead>
                     <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>System Ending</TableHead>
                     <TableHead className={STOCK_TABLE_HEAD_CLASS}>Manual Count</TableHead>
-                    <TableHead className={STOCK_TABLE_HEAD_CLASS}>Unit</TableHead>
                     <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Variance</TableHead>
                     <TableHead className={STOCK_TABLE_HEAD_CLASS}>Low at</TableHead>
                     <TableHead className={STOCK_TABLE_HEAD_CLASS} />
@@ -592,7 +625,7 @@ export default function StockVS() {
                 <TableBody>
                   {sections.length === 0 && (
                     <TableRow className={STOCK_TABLE_ROW_CLASS}>
-                      <TableCell colSpan={7} className="py-6 text-center text-sm text-muted-foreground">
+                      <TableCell colSpan={6} className="py-6 text-center text-sm text-muted-foreground">
                         {query ? `Nothing matches “${search.trim()}”.` : 'Nothing at this station.'}
                       </TableCell>
                     </TableRow>
@@ -602,7 +635,7 @@ export default function StockVS() {
                       {group.section && (
                         <TableRow className="bg-muted/60 hover:bg-muted/60">
                           <TableCell
-                            colSpan={7}
+                            colSpan={6}
                             id={sectionAnchor(`vs-${activeTab}`, group.section)}
                             className="scroll-mt-20 py-2 text-xs font-bold uppercase tracking-wide text-foreground"
                           >
@@ -617,9 +650,11 @@ export default function StockVS() {
                         const state = rowState(row.key);
                         const editable = canEdit(row);
                         return (
-                          <TableRow key={row.key} className={`${STOCK_TABLE_ROW_CLASS} ${row.verify ? 'bg-warning-bg/40' : ''}`}>
-                            <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-medium`}>
+                          <TableRow key={row.key} className={`${STOCK_TABLE_ROW_CLASS} ${row.verify ? 'bg-warning-bg/40' : ''} ${row.nested ? 'border-t-0' : ''}`}>
+                            <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-medium ${row.nested ? 'pl-8' : ''}`}>
                               <span className="flex flex-wrap items-center gap-1.5">
+                                {row.nested && <span className="text-muted-foreground" aria-hidden>↳</span>}
+                                {row.nested && <Badge variant="outline" className="font-normal">Base</Badge>}
                                 {row.name}
                                 {row.kind === 'stock_item' && <Badge variant="secondary" className="font-normal">Station item</Badge>}
                                 {row.low && <Badge variant="destructive">Low</Badge>}
@@ -658,36 +693,76 @@ export default function StockVS() {
                               {fmtQty(row.systemEnding)} {row.unit}
                             </TableCell>
                             <TableCell className={STOCK_TABLE_CELL_CLASS}>
-                              <Input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                className="w-28 h-8"
-                                aria-label={`Count for ${row.name}`}
-                                data-count-input
-                                value={state.countValue}
-                                disabled={state.saving}
-                                onChange={(e) => updateRow(row.key, { countValue: e.target.value, error: null })}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') {
-                                    e.preventDefault();
-                                    focusNextCount(e.currentTarget);
-                                  }
-                                }}
-                              />
+                              <div className="flex flex-wrap items-end gap-2">
+                                {row.sizes.map((o) => (
+                                  <label key={o.key} className="flex flex-col text-[11px] text-muted-foreground">
+                                    <span>{o.name} <span className="opacity-70">×{fmtQty(o.factor)}</span></span>
+                                    <Input
+                                      type="number"
+                                      min="0"
+                                      step="any"
+                                      inputMode="decimal"
+                                      className="h-8 w-20 text-sm text-foreground"
+                                      aria-label={`${row.name} count in ${o.name}`}
+                                      data-count-input
+                                      value={state.counts[o.key] ?? ''}
+                                      disabled={state.saving}
+                                      onChange={(e) => updateRow(row.key, { counts: { ...state.counts, [o.key]: e.target.value }, error: null })}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          e.preventDefault();
+                                          focusNextCount(e.currentTarget);
+                                        }
+                                      }}
+                                    />
+                                  </label>
+                                ))}
+                                <label className="flex flex-col text-[11px] text-muted-foreground">
+                                  <span>{row.sizes.length ? (row.baseOptions.find((o) => o.key === state.baseKey) ?? row.baseOptions[0]).name : 'Count'}</span>
+                                  <span className="flex items-center gap-1">
+                                    <Input
+                                      type="number"
+                                      min="0"
+                                      step="any"
+                                      inputMode="decimal"
+                                      className="h-8 w-20 text-sm text-foreground"
+                                      aria-label={row.sizes.length ? `${row.name} count in ${row.unit}` : `Count for ${row.name}`}
+                                      data-count-input
+                                      value={state.counts.base ?? ''}
+                                      disabled={state.saving}
+                                      onChange={(e) => updateRow(row.key, { counts: { ...state.counts, base: e.target.value }, error: null })}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          e.preventDefault();
+                                          focusNextCount(e.currentTarget);
+                                        }
+                                      }}
+                                    />
+                                    {row.baseOptions.length > 1 ? (
+                                      <Select value={state.baseKey} onValueChange={(v) => updateRow(row.key, { baseKey: v })}>
+                                        <SelectTrigger className="h-8 w-24 text-foreground" aria-label={`Unit counted for ${row.name}`}>
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          {row.baseOptions.map((o) => (
+                                            <SelectItem key={o.key} value={o.key}>{o.name}</SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    ) : (
+                                      !row.sizes.length && <span className="text-xs">{row.unit}</span>
+                                    )}
+                                  </span>
+                                </label>
+                              </div>
+                              {(() => {
+                                const total = countedTotal(row, state);
+                                const multi = row.sizes.length > 0 || state.baseKey !== 'base';
+                                return total != null && multi ? (
+                                  <p className="mt-1 text-xs">= <span className="font-semibold">{fmtQty(total)} {row.unit}</span></p>
+                                ) : null;
+                              })()}
                               {state.error && <p className="mt-1 max-w-48 text-xs text-destructive">{state.error}</p>}
-                            </TableCell>
-                            <TableCell className={STOCK_TABLE_CELL_CLASS}>
-                              <Select value={state.unit} onValueChange={(v) => updateRow(row.key, { unit: v })}>
-                                <SelectTrigger className="w-40 h-8" aria-label={`Unit counted for ${row.name}`}>
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {row.options.map((o) => (
-                                    <SelectItem key={o.key} value={o.key}>{describeUnit(o, row.unit)}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
                             </TableCell>
                             <TableCell
                               className={`${STOCK_TABLE_CELL_CLASS} text-right font-semibold ${

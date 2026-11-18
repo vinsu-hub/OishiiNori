@@ -386,6 +386,53 @@ def restore_ingredient(ingredient_id: str, user: CurrentUser = Depends(get_curre
     return _set_active(supabase, ingredient_id, True)
 
 
+@router.post("/stock-items/{stock_item_id}/as-ingredient", response_model=IngredientOut)
+def stock_item_as_ingredient(stock_item_id: str, user: CurrentUser = Depends(get_current_user)):
+    """Lets a Station Items row (cups, liners, boxes...) go into a menu
+    recipe: recipes can only use ingredients, so this returns the linked
+    ingredient -- the one already linked, an existing ingredient with the
+    same name (then linked), or a new one made from the station item (same
+    name, unit, station, section and sheet position). Linking makes them one
+    thing: the stock lives on the ingredient from then on, so the station
+    item's current stock is carried over. Used by Menu Editing's ingredient
+    picker, instead of typing the item in again as a duplicate."""
+    require_role(user, "executive")
+    supabase = get_supabase()
+    found = (
+        supabase.table("stock_items")
+        .select("id, name, station, category, unit, ingredient_id, current_stock, sort_order")
+        .eq("id", stock_item_id)
+        .maybe_single()
+        .execute()
+    )
+    if not found or not found.data:
+        raise HTTPException(status_code=404, detail="Station item not found")
+    item = found.data
+    if item.get("ingredient_id"):
+        return supabase.table("ingredients").select("*").eq("id", item["ingredient_id"]).maybe_single().execute().data
+
+    same = supabase.table("ingredients").select("*").ilike("name", item["name"]).limit(1).execute().data
+    if same:
+        ingredient = same[0]
+    else:
+        row = {
+            "name": item["name"],
+            "base_unit": (item.get("unit") or "pcs").strip() or "pcs",
+            "category": item.get("category"),
+            "current_stock": float(item.get("current_stock") or 0),
+            "reorder_threshold": 0,
+            "station": item["station"],
+            "sheet_section": item.get("category"),
+            "sort_order": item.get("sort_order"),
+        }
+        ingredient = supabase.table("ingredients").insert(row).execute().data[0]
+    supabase.table("stock_items").update(
+        {"ingredient_id": ingredient["id"], "updated_at": datetime.now(timezone.utc).isoformat()}
+    ).eq("id", stock_item_id).execute()
+    clear_low_stock_cache()
+    return ingredient
+
+
 @router.get("/inventory/{ingredient_id}/cost-history", response_model=list[IngredientCostEntry])
 def get_ingredient_cost_history(ingredient_id: str, user: CurrentUser = Depends(get_current_user)):
     """Price history for one ingredient, newest first (migration 0085).

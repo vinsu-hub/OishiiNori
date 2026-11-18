@@ -90,5 +90,23 @@ class PlacementTests(unittest.TestCase):
         self.assertTrue(is_low({"current_stock": 0, "reorder_threshold": 5, "last_counted_at": "x", "active": True}))
 
 
+    def test_station_item_becomes_a_linked_ingredient(self):
+        self.db.rows["stock_items"].append({"id": "s3", "name": "Liner", "station": "tako_snack", "category": "Packaging",
+                                            "unit": "pcs", "ingredient_id": None, "current_stock": 40, "sort_order": 30})
+        r = self.client.post("/stock-items/s3/as-ingredient")
+        self.assertEqual(r.status_code, 200, r.text)
+        ing = self.db.rows["ingredients"][-1]
+        self.assertEqual((ing["name"], ing["station"], ing["sheet_section"], ing["sort_order"], ing["current_stock"]),
+                         ("Liner", "tako_snack", "Packaging", 30, 40.0))
+        self.assertEqual(self.db.rows["stock_items"][-1]["ingredient_id"], ing["id"])
+        again = self.client.post("/stock-items/s3/as-ingredient").json()  # already linked: same one
+        self.assertEqual(again["id"], ing["id"])
+        self.assertEqual(len([i for i in self.db.rows["ingredients"] if i["name"] == "Liner"]), 1)
+
+    def test_station_item_links_to_an_ingredient_with_the_same_name(self):
+        r = self.client.post("/stock-items/s1/as-ingredient")  # "Royal"
+        self.assertEqual(r.status_code, 200, r.text)
+
+
 if __name__ == "__main__":
     unittest.main()
