@@ -29,10 +29,20 @@ QUESTIONS = [
     ("Angus beef", "Naka-save: ₱450 per GRAM (₱45,000 bawat Angus Ramen). Mukhang ₱450 per kg o per pack. "
                    "Magkano po at ilang grams ang laman? (I-type sa dashboard: ₱___ for ___ kg.)"),
     ("Salmon", "Naka-save: ₱500 per GRAM. Mukhang ₱500 per kg o per pack. Magkano po at ilang grams?"),
-    ("Crab stick", "Crazy Maki (8 pcs) recipe: 60 crab sticks. Ilang piraso po talaga? (60 grams ba yan?)"),
+    ("Crab stick", "Crazy Maki (8 pcs) recipe: '60 g' crab stick. Ilang cut pieces po (1 stick = 3 cut pieces)? "
+                   "Ang ibang recipe ginawa naming cut pieces: California Maki 2, Baked Kani S/M/L 3/6/9, Kani Salad 3."),
     ("Chicken (cutlet)", "Torikatsu Maki (8 pcs) recipe: 60 chicken cutlets. Ilang piraso o ilang grams po talaga?"),
     ("Breaded prawn", "Dragon Maki at Oishii Maki: dati 60 g at 50 g, ginawa naming 2 piraso (gaya ng Tempura Maki). Tama po ba?"),
     ("Steamed rice", "Ginamit namin: 1 kg bigas (₱65) = mga 2.2 kg na luto. Tama po ba?"),
+    # Prep bases (2026-11-18)
+    ("Mousse base", "Ilang scoops po ang nagagawa ng isang batch (300 g powder + 2 Nestle cream + 600 ml full cream + 80 g fructose)? "
+                    "Ginamit namin: 58 scoops."),
+    ("Mousse powder", "Magkano po at ilang grams ang isang pack? (Ginamit namin ang lumang ₱550 per kg - hula lang.)"),
+    ("Nestle cream", "Magkano po ang isang pack/lata at ilang ml?"),
+    ("Tea bag", "Magkano po ang 1 pack ng tea bag (yung ginagamit sa 5 L na milk tea base)?"),
+    ("Creamer (milk tea)", "Magkano po at ilang grams ang isang pack ng creamer para sa milk tea base?"),
+    ("Fructose", "Sa mousse: '80 grams' na fructose. Ginawa naming 62 ml (mas mabigat ang syrup). Tama po ba, o 80 ml?"),
+    ("Hot Mayo", "Ilang grams po ang isang drizzle ng Hot Mayo sa isang maki? (Para ma-set ang 'drizzle'.)"),
 ]
 
 BLUE = "1F4E78"

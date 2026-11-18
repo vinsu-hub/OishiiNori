@@ -51,6 +51,7 @@ from app.schemas import (
     StockItemUpdate,
     StockStation,
 )
+from app.stock_alerts import is_low_stock_item
 
 router = APIRouter(tags=["stock-items"])
 
@@ -139,7 +140,7 @@ def get_low_stock_stock_items(supabase) -> list[LowStockStockItem]:
             unit=i["unit"],
         )
         for i in result.data
-        if float(i["current_stock"]) <= float(i["reorder_threshold"])
+        if is_low_stock_item(i)
     ]
 
 

@@ -12,10 +12,16 @@ import { Loader2, Search } from 'lucide-react';
 import {
   ApiIngredient,
   ApiIngredientDailySummary,
+  type ApiItemUnit,
   countStock,
   fetchIngredientCountEntries,
   fetchInventory,
+  fetchItemUnits,
+  updateIngredient,
 } from '@/lib/api';
+import { Badge } from '@/components/ui/badge';
+import { describeUnit, fmtQty, unitOptionsFor, unitsForItem } from '@/lib/units';
+import { isCounted, isLowIngredient } from '@/lib/stockAlerts';
 import { STOCK_TABLE_CELL_CLASS, STOCK_TABLE_HEAD_CLASS, STOCK_TABLE_ROW_CLASS } from '@/components/stock/stockTableStyle';
 import { groupBySection, sectionAnchor } from '@/components/stock/StationsPanel';
 import { STOCK_STATIONS, STOCK_STATION_LABELS } from '@/lib/constants';
@@ -29,25 +35,9 @@ import { STOCK_STATIONS, STOCK_STATION_LABELS } from '@/lib/constants';
 // audit trail -- this page's own contribution is the unit dropdown +
 // side-by-side layout, not new counting logic.
 //
-// Conversion is intentionally limited to plain mass/volume (g<->kg,
-// ml<->L) -- the nori-specific pack/sheet/quarter graph from the original
-// spec is a distinct, product-specific ratio this pass doesn't model; an
-// unsupported from-unit is rejected with a clear message rather than
-// silently mis-converted.
-const UNIT_OPTIONS = ['pcs', 'g', 'kg', 'ml', 'L'];
-
-const CONVERSION: Record<string, number> = {
-  'kg->g': 1000,
-  'g->kg': 0.001,
-  'L->ml': 1000,
-  'ml->L': 0.001,
-};
-
-function convertToBase(value: number, fromUnit: string, baseUnit: string): number | null {
-  if (fromUnit === baseUnit) return value;
-  const factor = CONVERSION[`${fromUnit}->${baseUnit}`];
-  return factor != null ? value * factor : null;
-}
+// Units: the ingredient's base unit, kg/L for g/ml, and its saved sizes
+// (item_units: pack, box, bottle ...), so a pack of crab sticks can be
+// counted as "3 pack" and saved as 96 pcs.
 
 // Rows follow the client's stock sheet like Station Items: a tab per
 // station, the sheet's sections, its row order (ingredients.station /
@@ -73,6 +63,7 @@ function initialTab(): StationTab {
 
 interface RowState {
   countValue: string;
+  /** UnitOption key: 'base', 'std:kg', or an item_units id. */
   unit: string;
   saving: boolean;
   variance: number | null;
@@ -86,13 +77,17 @@ export default function StockVS() {
   const [rows, setRows] = useState<Record<string, RowState>>({});
   const [tab, setTab] = useState<StationTab>(initialTab);
   const [ingredientSearch, setIngredientSearch] = useState('');
+  const [itemUnits, setItemUnits] = useState<ApiItemUnit[]>([]);
+  const [thresholds, setThresholds] = useState<Record<string, string>>({});
+  const canSetThreshold = user?.role === 'executive';
 
   const load = useCallback(() => {
     setLoading(true);
-    Promise.all([fetchInventory(), fetchIngredientCountEntries()])
-      .then(([ing, sum]) => {
+    Promise.all([fetchInventory(), fetchIngredientCountEntries(), fetchItemUnits().catch(() => [] as ApiItemUnit[])])
+      .then(([ing, sum, units]) => {
         setIngredients(ing);
         setSummaries(sum);
+        setItemUnits(units);
       })
       .catch((e) => toast.error(e instanceof Error ? e.message : 'Failed to load stock VS data'))
       .finally(() => setLoading(false));
@@ -148,8 +143,38 @@ export default function StockVS() {
     window.history.replaceState(null, '', `${window.location.pathname}?${params}`);
   }
 
-  function rowState(id: string, baseUnit: string): RowState {
-    return rows[id] ?? { countValue: '', unit: baseUnit, saving: false, variance: null };
+  function rowState(id: string, _baseUnit: string): RowState {
+    return rows[id] ?? { countValue: '', unit: 'base', saving: false, variance: null };
+  }
+
+  function optionsFor(ingredient: ApiIngredient) {
+    return unitOptionsFor(ingredient.base_unit, unitsForItem(itemUnits, 'ingredient', ingredient.id));
+  }
+
+  const notCountedCount = ingredients.filter((i) => !isCounted(i)).length;
+  const lowCount = ingredients.filter(isLowIngredient).length;
+
+  async function saveThreshold(ingredient: ApiIngredient) {
+    const raw = thresholds[ingredient.id];
+    if (raw === undefined) return;
+    const value = raw.trim() === '' ? 0 : Number(raw);
+    if (!Number.isFinite(value) || value < 0) {
+      toast.error('Low-stock level must be 0 or more');
+      return;
+    }
+    if (value === ingredient.reorder_threshold) return;
+    try {
+      const updated = await updateIngredient(ingredient.id, { reorder_threshold: value });
+      setIngredients((prev) => prev.map((i) => (i.id === ingredient.id ? { ...i, reorder_threshold: updated.reorder_threshold } : i)));
+      setThresholds((prev) => {
+        const next = { ...prev };
+        delete next[ingredient.id];
+        return next;
+      });
+      toast.success(value > 0 ? `${ingredient.name}: warns at ${fmtQty(value)} ${ingredient.base_unit}` : `${ingredient.name}: no low-stock warning`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save low-stock level');
+    }
   }
 
   function updateRow(id: string, patch: Partial<RowState>, baseUnit: string) {
@@ -164,11 +189,8 @@ export default function StockVS() {
       toast.error('Enter a valid count');
       return;
     }
-    const converted = convertToBase(raw, row.unit, ingredient.base_unit);
-    if (converted == null) {
-      toast.error(`Can't convert ${row.unit} to ${ingredient.base_unit} for ${ingredient.name}`);
-      return;
-    }
+    const option = optionsFor(ingredient).find((o) => o.key === row.unit) ?? optionsFor(ingredient)[0];
+    const converted = Math.round(raw * option.factor * 10000) / 10000;
     updateRow(ingredient.id, { saving: true }, ingredient.base_unit);
     try {
       const result = await countStock(ingredient.id, { employee_id: user.id, counted_stock: converted });
@@ -241,8 +263,17 @@ export default function StockVS() {
             <p className="text-xs text-muted-foreground">
               Enter today's physical count per ingredient, in whatever unit you actually measured in -- it's
               converted to the ingredient's own base unit before comparing against the system's computed ending
-              (today's beginning + new stock − POS-deducted usage).
+              (today's beginning + new stock − POS-deducted usage). <span className="font-medium text-foreground">Low at</span>{' '}
+              is when it shows on Stock Alerts (leave 0 for no warning).
             </p>
+            {!loading && (notCountedCount > 0 || lowCount > 0) && (
+              <p className="text-sm">
+                {notCountedCount > 0 && (
+                  <span className="mr-3"><span className="font-semibold">{notCountedCount}</span> not counted yet</span>
+                )}
+                {lowCount > 0 && <span className="text-destructive"><span className="font-semibold">{lowCount}</span> low on stock</span>}
+              </p>
+            )}
             {loading ? (
               <div className="flex items-center justify-center py-8 text-muted-foreground">
                 <Loader2 className="w-5 h-5 mr-2 animate-spin" />
@@ -257,13 +288,14 @@ export default function StockVS() {
                     <TableHead className={STOCK_TABLE_HEAD_CLASS}>Manual Count</TableHead>
                     <TableHead className={STOCK_TABLE_HEAD_CLASS}>Unit</TableHead>
                     <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Variance</TableHead>
+                    <TableHead className={STOCK_TABLE_HEAD_CLASS}>Low at</TableHead>
                     <TableHead className={STOCK_TABLE_HEAD_CLASS} />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {sections.length === 0 && (
                     <TableRow className={STOCK_TABLE_ROW_CLASS}>
-                      <TableCell colSpan={6} className="py-6 text-center text-sm text-muted-foreground">
+                      <TableCell colSpan={7} className="py-6 text-center text-sm text-muted-foreground">
                         {query ? `No ingredient matches “${ingredientSearch.trim()}”.` : 'No ingredients at this station.'}
                       </TableCell>
                     </TableRow>
@@ -273,7 +305,7 @@ export default function StockVS() {
                       {group.section && (
                         <TableRow className="bg-muted/60 hover:bg-muted/60">
                           <TableCell
-                            colSpan={6}
+                            colSpan={7}
                             id={sectionAnchor(`vs-${activeTab}`, group.section)}
                             className="scroll-mt-20 py-2 text-xs font-bold uppercase tracking-wide text-foreground"
                           >
@@ -290,7 +322,13 @@ export default function StockVS() {
                     const row = rowState(ingredient.id, ingredient.base_unit);
                     return (
                       <TableRow key={ingredient.id} className={STOCK_TABLE_ROW_CLASS}>
-                        <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-medium`}>{ingredient.name}</TableCell>
+                        <TableCell className={`${STOCK_TABLE_CELL_CLASS} font-medium`}>
+                          <span className="flex flex-wrap items-center gap-1.5">
+                            {ingredient.name}
+                            {isLowIngredient(ingredient) && <Badge variant="destructive">Low</Badge>}
+                            {!isCounted(ingredient) && <Badge variant="outline" className="font-normal text-muted-foreground">Not counted yet</Badge>}
+                          </span>
+                        </TableCell>
                         <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>
                           {systemEnding} {ingredient.base_unit}
                         </TableCell>
@@ -311,13 +349,13 @@ export default function StockVS() {
                             value={row.unit}
                             onValueChange={(v) => updateRow(ingredient.id, { unit: v }, ingredient.base_unit)}
                           >
-                            <SelectTrigger className="w-24 h-8">
+                            <SelectTrigger className="w-40 h-8" aria-label={`Unit counted for ${ingredient.name}`}>
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              {Array.from(new Set([ingredient.base_unit, ...UNIT_OPTIONS])).map((u) => (
-                                <SelectItem key={u} value={u}>
-                                  {u}
+                              {optionsFor(ingredient).map((o) => (
+                                <SelectItem key={o.key} value={o.key}>
+                                  {describeUnit(o, ingredient.base_unit)}
                                 </SelectItem>
                               ))}
                             </SelectContent>
@@ -329,6 +367,29 @@ export default function StockVS() {
                           }`}
                         >
                           {row.variance != null ? `${row.variance >= 0 ? '+' : ''}${row.variance}` : '--'}
+                        </TableCell>
+                        <TableCell className={STOCK_TABLE_CELL_CLASS}>
+                          {canSetThreshold ? (
+                            <div className="flex items-center gap-1">
+                              <Input
+                                type="number"
+                                min="0"
+                                step="any"
+                                className="h-8 w-24"
+                                aria-label={`Low-stock level for ${ingredient.name}`}
+                                value={thresholds[ingredient.id] ?? (ingredient.reorder_threshold ? String(ingredient.reorder_threshold) : '')}
+                                placeholder="0"
+                                onChange={(e) => setThresholds((prev) => ({ ...prev, [ingredient.id]: e.target.value }))}
+                                onBlur={() => saveThreshold(ingredient)}
+                                onKeyDown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
+                              />
+                              <span className="text-xs text-muted-foreground">{ingredient.base_unit}</span>
+                            </div>
+                          ) : (
+                            <span className="text-sm text-muted-foreground">
+                              {ingredient.reorder_threshold > 0 ? `${fmtQty(ingredient.reorder_threshold)} ${ingredient.base_unit}` : '--'}
+                            </span>
+                          )}
                         </TableCell>
                         <TableCell className={STOCK_TABLE_CELL_CLASS}>
                           <Button

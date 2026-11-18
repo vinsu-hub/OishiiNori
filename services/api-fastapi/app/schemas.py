@@ -184,6 +184,10 @@ class RecipeCoverageIngredient(BaseModel):
     used_in_examples: list[str] = Field(default_factory=list)
     # Newest price-history row: "P1050 for 1 box", who and when.
     last_purchase: IngredientCostEntry | None = None
+    # Migration 0086: set when this ingredient is made in batches.
+    prep_yield: float | None = None
+    # ok / low / not_counted (counted since the stock reset?), same rule as Stock Alerts.
+    stock_status: str = "ok"
 
 
 class RecipeCoverageResponse(BaseModel):
@@ -819,6 +823,11 @@ class IngredientOut(BaseModel):
     station: str | None = None
     sheet_section: str | None = None
     sort_order: int | None = None
+    # Migration 0086: when the stock was last physically counted (null =
+    # not counted since the stock reset), and how much one batch makes when
+    # this ingredient is a prep base (null = bought, not made).
+    last_counted_at: str | None = None
+    prep_yield: float | None = None
 
 
 class IngredientCreate(BaseModel):

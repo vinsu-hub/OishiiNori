@@ -21,6 +21,7 @@ import {
 import { StockStatusBadge, StockStatusVariant } from '@/components/stock/StockStatusBadge';
 import { STOCK_STATION_LABELS } from '@/lib/constants';
 import { STOCK_TABLE_CELL_CLASS, STOCK_TABLE_HEAD_CLASS, STOCK_TABLE_ROW_CLASS } from '@/components/stock/stockTableStyle';
+import { isLowIngredient, isLowStockItem } from '@/lib/stockAlerts';
 
 const STATION_LABELS = STOCK_STATION_LABELS;
 
@@ -78,7 +79,7 @@ export default function StockAlerts() {
   const rows = useMemo<AlertRow[]>(() => {
     const out: AlertRow[] = [];
     for (const ing of ingredients) {
-      if (ing.current_stock <= ing.reorder_threshold) {
+      if (isLowIngredient(ing)) {
         out.push({
           key: `low-ing-${ing.id}`,
           itemName: ing.name,
@@ -104,7 +105,7 @@ export default function StockAlerts() {
       }
     }
     for (const item of stockItems) {
-      if (item.reorder_threshold != null && item.current_stock <= item.reorder_threshold) {
+      if (isLowStockItem(item)) {
         out.push({
           key: `low-item-${item.id}`,
           itemName: item.name,

@@ -32,6 +32,7 @@ from app.routers import (
     order_history,
     payment_methods,
     pnl,
+    prep_bases,
     products,
     recipes,
     refunds,
@@ -175,6 +176,7 @@ app.include_router(login_lookup.router)
 app.include_router(item_units.router)
 app.include_router(override_key.router)
 app.include_router(events.router)
+app.include_router(prep_bases.router)
 
 
 @app.get("/health")

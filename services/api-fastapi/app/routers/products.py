@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.auth import CurrentUser, get_current_user, require_role
 from app.deps import get_supabase
 from app.schemas import ProductOut, UpdateProductImageRequest
+from app.stock_alerts import is_counted, is_low, with_counted
 
 router = APIRouter(tags=["products"])
 
@@ -69,7 +70,7 @@ def _compute_size_availability(supabase, product_size_ids: list[str]) -> dict[st
     ingredient_ids = {r["ingredient_id"] for r in recipe_rows}
     ingredients_result = (
         supabase.table("ingredients")
-        .select("id, current_stock, reorder_threshold")
+        .select(with_counted(supabase, "id, current_stock, reorder_threshold"))
         .in_("id", list(ingredient_ids))
         .execute()
     )
@@ -89,15 +90,16 @@ def _compute_size_availability(supabase, product_size_ids: list[str]) -> dict[st
         status = "available"
         for item in recipe:
             ingredient = stock_by_ingredient.get(item["ingredient_id"])
-            if not ingredient:
+            # Not counted since the stock reset: its stock number means
+            # nothing yet, so it can't make the item unavailable or low.
+            if not ingredient or not is_counted(ingredient):
                 continue
             current_stock = float(ingredient["current_stock"])
             needed = float(item["qty_per_serving"])
-            reorder_threshold = float(ingredient["reorder_threshold"])
             if current_stock < needed:
                 status = "unavailable"
                 break
-            if current_stock <= reorder_threshold:
+            if is_low(ingredient):
                 status = "low_stock"
         availability[psid] = status
 

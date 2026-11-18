@@ -7,6 +7,7 @@ from app.cost_log import latest_purchases
 from app.deps import get_supabase
 from app.routers.sales_insights import _page_rows
 from app.schemas import RecipeCoverageResponse, RecipeItemOut
+from app.stock_alerts import counts_supported_check, is_counted, is_low
 
 router = APIRouter(tags=["recipes"])
 
@@ -69,7 +70,10 @@ def recipe_coverage(user: CurrentUser = Depends(get_current_user)):
         supabase.table("stock_consumption_rules").select("product_size_id")
         .eq("active", True).eq("trigger_type", "per_product_unit").order("id")
     )
-    ingredients = _page_rows(supabase.table("ingredients").select("id, name, category, base_unit, unit_cost").order("name"))
+    columns = "id, name, category, base_unit, unit_cost, current_stock, reorder_threshold"
+    if counts_supported_check(supabase):
+        columns += ", last_counted_at, prep_yield"
+    ingredients = _page_rows(supabase.table("ingredients").select(columns).order("name"))
     ingredient_by_id = {i["id"]: i for i in ingredients}
 
     product_by_id = {p["id"]: p for p in products}
@@ -126,6 +130,8 @@ def recipe_coverage(user: CurrentUser = Depends(get_current_user)):
                 "used_in": len(used_in.get(i["id"], [])),
                 "used_in_examples": used_in.get(i["id"], [])[:4],
                 "last_purchase": latest.get(i["id"]),
+                "prep_yield": float(i["prep_yield"]) if i.get("prep_yield") is not None else None,
+                "stock_status": "not_counted" if not is_counted(i) else ("low" if is_low(i) else "ok"),
             }
             for i in ingredients
         ],

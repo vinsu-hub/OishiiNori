@@ -49,11 +49,11 @@ UNITS = {"Ramen noodles": "pack", "Shrimp / Prawn (raw)": "pcs", "Breaded prawn"
 FOLD_FIRST = {"Spring onion": "Scallion", "EGG": "Egg (Tamago / soft-boiled)"}
 
 # name (after renames) -> (price paid, recipe units it buys, note, estimate?)
+# Milk tea base, Mousse base and Hot Mayo are prep bases now (apply_prep_bases.py):
+# their cost comes from their batch recipe, not from here.
 COSTS = {
     "Fructose (Drip Tea)": (1500, 20000, "20 L per gallon", False),
     "Pearl (tapioca)": (100, 40, "1 kg raw = 40 scoops (25 g each)", True),
-    "Milktea base (batch-prepped)": (23.5, 5000, "5 L per batch", False),
-    "Mousse mix (Drip Tea)": (550, 40, "1 kg = 40 scoops (25 g each)", True),
     "Cocoa / Creamer": (4500, 1000, "25 kg sack = 1,000 scoops (25 g each)", True),
     "Yogurt Syrup": (350, 1000, "pack size not given; assumed 1 L", True),
     "Matcha Powder (Drip Tea)": (450, 40, "1 kg = 40 scoops (25 g each)", True),
@@ -75,7 +75,6 @@ COSTS = {
     "Ramen noodles": (17, 1, "per pack, 1 pack per bowl", False),
     "Rice vinegar seasoning mix": (93, 1000, "1 L per bottle", False),
     "Special mayo (house)": (300, 1000, "1 kg per pack (1 g = 1 ml)", False),
-    "Spicy mayo": (350, 1000, "1 kg per pack (1 g = 1 ml)", False),
     "Yakiniku sauce": (290, 1000, "1 L per bottle", False),
     "Gyoza dipping sauce": (1900, 20000, "20 L per box", False),
     "Katsu sauce": (278, 3785, "1 gallon = 3,785 ml", False),
@@ -133,10 +132,10 @@ RECIPE_FIXES = [
 PACKS = [
     ("Cream cheese", "box", 2000), ("Mozzarella cheese", "box", 2000), ("Parmesan cheese", "bottle", 250),
     ("Fructose (Drip Tea)", "container", 20000), ("W.M Syrup", "container", 7000),
-    ("Milktea base (batch-prepped)", "batch", 5000), ("B.S Syrup", "batch", 2000), ("C.D Syrup", "bottle", 1000),
+    ("Milk tea base", "batch", 5000), ("B.S Syrup", "batch", 2000), ("C.D Syrup", "bottle", 1000),
     ("Charcoal Powder", "pack", 100), ("Full Cream Milk", "pack", 1000), ("Yakiniku sauce", "bottle", 1000),
     ("Gyoza dipping sauce", "box", 20000), ("Oishii salad sauce (house)", "bottle", 1000),
-    ("Rice vinegar seasoning mix", "bottle", 1000), ("Special mayo (house)", "pack", 1000), ("Spicy mayo", "pack", 1000),
+    ("Rice vinegar seasoning mix", "bottle", 1000), ("Special mayo (house)", "pack", 1000),
     ("Ebiko (fish roe)", "tub", 500), ("Tanuki", "pack", 100), ("Panko bread crumbs", "pack", 2000),
     ("Cucumber", "bundle", 10000), ("Cabbage (slaw)", "bundle", 10000), ("Crispy potato string", "bundle", 10000),
     ("Spring onion", "pack", 1000), ("Mango", "pack", 1000), ("Sushi rice (raw)", "pack", 1000),
@@ -146,7 +145,7 @@ PACKS = [
     ("Chopsticks", "pack", 100), ("Chasu", "pack", 20), ("Ice", "sack", 25000), ("Japanese Mayo", "bottle", 1000),
     ("Yogurt Syrup", "bottle", 1000),
     # scoop / stirrer counted, from the 25 g (10 g) per scoop estimate
-    ("Pearl (tapioca)", "kg", 40), ("Mousse mix (Drip Tea)", "kg", 40), ("Matcha Powder (Drip Tea)", "kg", 40),
+    ("Pearl (tapioca)", "kg", 40), ("Matcha Powder (Drip Tea)", "kg", 40),
     ("Thai Flavor", "kg", 40), ("Taro Flavor", "kg", 40), ("Hokkaido Flavor", "kg", 40), ("Okinawa Flavor", "kg", 40),
     ("Red Choco", "kg", 40), ("Cocoa / Creamer", "sack", 1000), ("Cookie Crumble", "pack", 50), ("Oreo Crumble", "pack", 50),
     ("Nutella Sauce", "bottle", 90),

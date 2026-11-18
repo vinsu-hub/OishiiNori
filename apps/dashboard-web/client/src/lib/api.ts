@@ -310,6 +310,61 @@ export interface RecipeCoverageIngredient {
   used_in_examples: string[];
   /** Newest price-history row; null/absent before migration 0085. */
   last_purchase?: IngredientCostEntry | null;
+  /** Set when this ingredient is made in batches (a prep base, migration 0086). */
+  prep_yield?: number | null;
+  /** Same rule as Stock Alerts; not_counted = not counted since the stock reset. */
+  stock_status?: 'ok' | 'low' | 'not_counted';
+}
+
+// --- Prep bases: ingredients made in batches (migration 0086) ---
+
+export interface PrepComponent {
+  ingredient_id: string;
+  name: string;
+  base_unit: string;
+  /** In the component's base unit. */
+  qty: number;
+  /** What it was typed in (kg, pack...), display only. */
+  unit: string | null;
+  unit_cost: number | null;
+  line_cost: number | null;
+}
+
+export interface PrepBase {
+  ingredient_id: string;
+  name: string;
+  category: string | null;
+  base_unit: string;
+  /** How much one batch makes, in base_unit. */
+  prep_yield: number | null;
+  unit_cost: number | null;
+  current_stock: number;
+  components: PrepComponent[];
+  batch_cost: number;
+  /** batch_cost / prep_yield; null while a component has no cost. */
+  cost_per_unit: number | null;
+  missing_cost: string[];
+}
+
+export interface SavePrepBaseRequest {
+  prep_yield: number;
+  components: { ingredient_id: string; qty: number; unit?: string | null }[];
+}
+
+export function fetchPrepBases(): Promise<PrepBase[]> {
+  return request('/prep-bases');
+}
+
+export function savePrepBase(ingredientId: string, body: SavePrepBaseRequest): Promise<PrepBase> {
+  return request(`/prep-bases/${ingredientId}`, { method: 'PUT', body: JSON.stringify(body) });
+}
+
+export function removePrepBase(ingredientId: string): Promise<void> {
+  return request(`/prep-bases/${ingredientId}`, { method: 'DELETE' });
+}
+
+export function makePrepBatch(ingredientId: string, batches: number, note?: string): Promise<{ base: PrepBase; added: number; deducted: PrepComponent[] }> {
+  return request(`/prep-bases/${ingredientId}/make`, { method: 'POST', body: JSON.stringify({ batches, note }) });
 }
 
 export function fetchRecipeCoverage(): Promise<{ products: RecipeCoverageProduct[]; ingredients: RecipeCoverageIngredient[] }> {
@@ -1049,6 +1104,10 @@ export interface ApiIngredient {
   station?: string | null;
   sheet_section?: string | null;
   sort_order?: number | null;
+  /** Migration 0086: last physical count (null = not counted since the stock reset). */
+  last_counted_at?: string | null;
+  /** Migration 0086: set when made in batches. */
+  prep_yield?: number | null;
 }
 
 export function fetchInventory(): Promise<ApiIngredient[]> {

@@ -16,6 +16,7 @@ from app.routers.pnl import get_pnl
 from app.routers.settings import get_business_settings
 from app.routers.stock_items import get_low_stock_stock_items
 from app.schemas import OishiAiQueryRequest, OishiAiQueryResponse
+from app.stock_alerts import is_low, with_counted
 
 router = APIRouter(tags=["oishi-ai"])
 
@@ -424,12 +425,12 @@ def _inventory_analysis(supabase, low_stock_limit: int = 15) -> dict:
     total-valuation figure here."""
     ingredients_result = (
         supabase.table("ingredients")
-        .select("name, category, base_unit, current_stock, reorder_threshold, needs_review")
+        .select(with_counted(supabase, "name, category, base_unit, current_stock, reorder_threshold, needs_review"))
         .execute()
     )
     rows = ingredients_result.data
 
-    low_stock = [r for r in rows if float(r["current_stock"]) <= float(r["reorder_threshold"])]
+    low_stock = [r for r in rows if is_low(r)]
     low_stock.sort(key=lambda r: float(r["current_stock"]) - float(r["reorder_threshold"]))
 
     by_category: dict[str, int] = defaultdict(int)

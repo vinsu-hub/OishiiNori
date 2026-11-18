@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'wouter';
 import { toast } from 'sonner';
-import { CheckCircle2, ChevronDown, ChevronRight, Download, RefreshCw, Search } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChefHat, ChevronDown, ChevronRight, Download, RefreshCw, Search } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -20,8 +20,9 @@ import { fmtQty, unitsForItem } from '@/lib/units';
 import { formatCurrency } from '@/lib/utils';
 import { StockStatTile } from '@/components/stock/StockStatTile';
 import { type CostImpact, UnitCostEntry, fmtUnitCost } from '@/components/stock/UnitCostEntry';
+import { PrepBasesPanel } from '@/components/stock/PrepBasesPanel';
 
-type Section = 'costs' | 'recipes' | 'food-cost';
+type Section = 'costs' | 'recipes' | 'food-cost' | 'prep';
 
 /** A menu size counts as set up when sales deduct something for it: a recipe,
  * or a per-item stock rule (e.g. a bottled drink). */
@@ -39,6 +40,7 @@ function csvCell(value: string | number) {
 export function RecipeCostsPanel() {
   const { user } = useAuth();
   const canEditCosts = user?.role === 'executive';
+  const canMakeBatches = ['executive', 'manager', 'stocker'].includes(user?.role ?? '');
   const [, navigate] = useLocation();
   const [section, setSection] = useState<Section>('costs');
   const [products, setProducts] = useState<RecipeCoverageProduct[]>([]);
@@ -72,6 +74,9 @@ export function RecipeCostsPanel() {
   const bundles = products.filter((p) => p.is_bundle);
   const costedSizes = products.flatMap((p) => p.sizes.filter((s) => s.recipe_lines > 0).map((s) => ({ product: p, size: s })));
   const fullyCosted = costedSizes.filter(({ size }) => size.missing_cost.length === 0);
+  const lowStock = ingredients.filter((i) => i.stock_status === 'low');
+  const notCounted = ingredients.filter((i) => i.stock_status === 'not_counted');
+  const prepCount = ingredients.filter((i) => i.prep_yield != null).length;
 
   const costGroups = useMemo(() => {
     const rows = ingredients
@@ -148,6 +153,26 @@ export function RecipeCostsPanel() {
 
   return (
     <div className="space-y-4">
+      {!loading && (lowStock.length > 0 || notCounted.length > 0) && (
+        <button
+          type="button"
+          onClick={() => navigate('/stock/alerts')}
+          className="flex w-full flex-wrap items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-left text-sm text-amber-900 hover:bg-amber-100"
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden />
+          {lowStock.length > 0 && (
+            <span>
+              <span className="font-semibold">{lowStock.length} low on stock</span>: {lowStock.slice(0, 4).map((i) => i.name).join(', ')}
+              {lowStock.length > 4 ? '…' : ''}
+            </span>
+          )}
+          {lowStock.length > 0 && notCounted.length > 0 && <span aria-hidden>·</span>}
+          {notCounted.length > 0 && (
+            <span>{notCounted.length} not counted yet since the stock reset (no low-stock warning until counted)</span>
+          )}
+          <span className="ml-auto text-xs underline">Stock Alerts</span>
+        </button>
+      )}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StockStatTile
           label="Ingredients with no unit cost"
@@ -190,6 +215,7 @@ export function RecipeCostsPanel() {
               <TabsTrigger value="costs">1 · Unit costs ({missingCost.length})</TabsTrigger>
               <TabsTrigger value="recipes">2 · Recipes to add ({recipeProducts.length})</TabsTrigger>
               <TabsTrigger value="food-cost">3 · Food cost per item</TabsTrigger>
+              <TabsTrigger value="prep">4 · Prep bases ({prepCount})</TabsTrigger>
             </TabsList>
           </Tabs>
           <div className="flex flex-wrap items-center gap-2">
@@ -236,7 +262,11 @@ export function RecipeCostsPanel() {
                       return (
                         <div key={ingredient.id} className="grid gap-2 p-3 md:grid-cols-[minmax(0,1.3fr)_minmax(0,2fr)] md:items-center">
                           <div className="min-w-0">
-                            <p className="font-medium">{ingredient.name}</p>
+                            <p className="flex flex-wrap items-center gap-1 font-medium">
+                              {ingredient.name}
+                              {ingredient.prep_yield != null && <Badge variant="secondary" className="gap-1"><ChefHat className="h-3 w-3" aria-hidden /> Prep base</Badge>}
+                              {ingredient.stock_status === 'low' && <Badge variant="destructive">Low stock</Badge>}
+                            </p>
                             <p className="text-xs text-muted-foreground" title={ingredient.used_in_examples.join(', ')}>
                               {ingredient.used_in > 0
                                 ? `Used in ${ingredient.used_in} menu item${ingredient.used_in === 1 ? '' : 's'} · ${ingredient.used_in_examples.slice(0, 2).join(', ')}${ingredient.used_in > 2 ? '…' : ''}`
@@ -251,7 +281,12 @@ export function RecipeCostsPanel() {
                               )}
                             </p>
                           </div>
-                          {canEditCosts ? (
+                          {ingredient.prep_yield != null ? (
+                            <p className="text-sm text-muted-foreground">
+                              Made in batches: its cost comes from what one batch takes.{' '}
+                              <Button size="sm" variant="link" className="h-auto p-0" onClick={() => setSection('prep')}>Open Prep bases</Button>
+                            </p>
+                          ) : canEditCosts ? (
                             <UnitCostEntry
                               ingredient={ingredient}
                               units={unitsForItem(itemUnits, 'ingredient', ingredient.id)}
@@ -317,6 +352,18 @@ export function RecipeCostsPanel() {
                 </p>
               )}
             </div>
+          )}
+
+          {!loading && section === 'prep' && (
+            <PrepBasesPanel
+              ingredients={ingredients}
+              itemUnits={itemUnits}
+              canEdit={canEditCosts}
+              canMake={canMakeBatches}
+              impactFor={impactFor}
+              onUnitAdded={addUnit}
+              onChanged={load}
+            />
           )}
 
           {!loading && section === 'food-cost' && (
@@ -399,7 +446,10 @@ export function RecipeCostsPanel() {
                                           </div>
                                           <div className="flex items-center gap-2">
                                             <span className="tabular-nums">{lineCost != null ? fmtUnitCost(lineCost) : '—'}</span>
-                                            {canEditCosts && (
+                                            {canEditCosts && ing.prep_yield != null && (
+                                              <Button size="sm" variant="outline" onClick={() => setSection('prep')}>Batch recipe</Button>
+                                            )}
+                                            {canEditCosts && ing.prep_yield == null && (
                                               <Button size="sm" variant="outline" onClick={() => setEditingLine(editingLine === lineKey ? null : lineKey)}>
                                                 {editingLine === lineKey ? 'Close' : ing.unit_cost == null ? 'Add cost' : 'Edit cost'}
                                               </Button>

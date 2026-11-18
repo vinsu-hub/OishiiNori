@@ -8,6 +8,7 @@ from app.auth import CurrentUser, get_current_user, require_role
 from app.cost_log import cost_log_supported_check, log_unit_cost, to_history_entry
 from app.deps import get_supabase
 from app.ph_time import today_ph
+from app.stock_alerts import counts_supported_check, is_low, with_counted
 from app.schemas import (
     ExpiringIngredient,
     IngredientCostEntry,
@@ -30,13 +31,21 @@ LOW_STOCK_CACHE_SECONDS = 300
 _low_stock_cache: TTLCache = TTLCache(maxsize=1, ttl=LOW_STOCK_CACHE_SECONDS)
 
 
+def clear_low_stock_cache() -> None:
+    """After a count, a threshold change or a batch made, so the Alerts
+    badge doesn't lag up to LOW_STOCK_CACHE_SECONDS behind."""
+    _low_stock_cache.clear()
+
+
 def get_low_stock_ingredients(supabase) -> list[LowStockIngredient]:
     """Ingredients at or below their reorder threshold. Extracted so both
     the executive-only Command Center rollup (dashboard_summary.py) and the
     all-roles low-stock-summary endpoint below share one query/filter
     instead of two copies drifting apart."""
     ingredients_result = (
-        supabase.table("ingredients").select("id, name, current_stock, reorder_threshold, base_unit").execute()
+        supabase.table("ingredients")
+        .select(with_counted(supabase, "id, name, current_stock, reorder_threshold, base_unit"))
+        .execute()
     )
     return [
         LowStockIngredient(
@@ -47,7 +56,7 @@ def get_low_stock_ingredients(supabase) -> list[LowStockIngredient]:
             base_unit=i["base_unit"],
         )
         for i in ingredients_result.data
-        if float(i["current_stock"]) <= float(i["reorder_threshold"])
+        if is_low(i)
     ]
 
 
@@ -66,6 +75,8 @@ def list_inventory(user: CurrentUser = Depends(get_current_user)):
             query = query.order("sort_order", nullsfirst=False)
         return query.order("name").execute()
 
+    if counts_supported_check(supabase):
+        columns += ", last_counted_at, prep_yield"
     try:
         result = run(columns + ", station, sheet_section, sort_order", True)
     except APIError:
@@ -282,12 +293,17 @@ def update_ingredient(
     result = supabase.table("ingredients").update(update_data).eq("id", ingredient_id).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Ingredient not found")
+    if "reorder_threshold" in update_data:
+        clear_low_stock_cache()
     if update_data.get("unit_cost") is not None:
         log_unit_cost(
             supabase, ingredient_id, update_data["unit_cost"], existing.data.get("unit_cost"),
             price_paid=purchase["price_paid"], qty=purchase["purchase_qty"], unit_name=purchase["purchase_unit"],
             base_qty=purchase["purchase_base_qty"], note=purchase["cost_note"], changed_by=user.id,
         )
+        # Prep bases made from this ingredient follow its new cost.
+        from app.routers.prep_bases import recompute_bases_using
+        recompute_bases_using(supabase, ingredient_id, changed_by=user.id)
     return result.data[0]
 
 
@@ -364,10 +380,12 @@ def apply_ingredient_count(
     previous_stock = float(existing.data["current_stock"])
     variance = round(counted_stock - previous_stock, 4)
 
-    result = (
-        supabase.table("ingredients").update({"current_stock": counted_stock}).eq("id", ingredient_id).execute()
-    )
+    update = {"current_stock": counted_stock}
+    if counts_supported_check(supabase):
+        update["last_counted_at"] = datetime.now(timezone.utc).isoformat()
+    result = supabase.table("ingredients").update(update).eq("id", ingredient_id).execute()
     updated_ingredient = result.data[0]
+    clear_low_stock_cache()
 
     movement = None
     if variance != 0:
