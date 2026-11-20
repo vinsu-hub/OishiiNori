@@ -2,11 +2,11 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { createItemUnit, type ApiItemUnit } from '@/lib/api';
-import { COMMON_UNIT_NAMES, describeUnit, fmtQty, type UnitOption } from '@/lib/units';
+import { COMMON_UNIT_NAMES, describeSize, describeUnit, fmtQty, type UnitOption } from '@/lib/units';
+import { EMPTY_SIZE, SizeFields, sizeDraftFactor, type SizeDraft } from './SizeFields';
 
 const NEW_UNIT = '__new__';
 
@@ -82,27 +82,26 @@ export function NewUnitDialog({
   target: { kind: 'ingredient' | 'stock_item'; id: string } | null;
   onCreated: (unit: ApiItemUnit) => void;
 }) {
-  const [name, setName] = useState('');
-  const [baseQty, setBaseQty] = useState('');
+  const [draft, setDraft] = useState<SizeDraft>(EMPTY_SIZE);
   const [saving, setSaving] = useState(false);
 
-  const n = Number(baseQty);
-  const valid = name.trim().length > 0 && Number.isFinite(n) && n > 0;
+  const name = draft.name;
+  const factor = sizeDraftFactor(draft);
+  const valid = factor != null;
 
   async function save() {
-    if (!target || !valid) return;
+    if (!target || factor == null) return;
     setSaving(true);
     try {
       const unit = await createItemUnit({
         ingredient_id: target.kind === 'ingredient' ? target.id : undefined,
         stock_item_id: target.kind === 'stock_item' ? target.id : undefined,
         name: name.trim(),
-        base_qty: n,
+        base_qty: factor,
       });
-      toast.success(`Saved: 1 ${unit.name} = ${fmtQty(unit.base_qty)} ${baseUnit}`);
+      toast.success(`Saved: ${describeSize(unit.name, unit.base_qty, baseUnit)}`);
       onCreated(unit);
-      setName('');
-      setBaseQty('');
+      setDraft(EMPTY_SIZE);
       onOpenChange(false);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not save the unit');
@@ -117,49 +116,32 @@ export function NewUnitDialog({
         <DialogHeader>
           <DialogTitle>New unit for {itemName}</DialogTitle>
           <DialogDescription>
-            Stock is counted in <b>{baseUnit}</b>. Say how many {baseUnit} are in one of the new unit — next time just
-            log “2 packs” and the {baseUnit} fill in automatically.
+            Stock is counted in <b>{baseUnit}</b>. Say how the new unit compares to one {baseUnit} — next time just
+            log “2 packs” (or “500 g”) and the {baseUnit} fill in automatically.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="unit-name">Unit name</Label>
-            <Input id="unit-name" placeholder="e.g. pack" value={name} onChange={(e) => setName(e.target.value)} />
-            <div className="flex flex-wrap gap-1.5">
-              {COMMON_UNIT_NAMES.map((u) => (
-                <button
-                  key={u}
-                  type="button"
-                  onClick={() => setName(u)}
-                  className={`rounded-full border px-2.5 py-1 text-xs ${
-                    name.trim().toLowerCase() === u ? 'border-primary bg-primary/10 text-primary' : 'hover:bg-muted'
-                  }`}
-                >
-                  {u}
-                </button>
-              ))}
-            </div>
+          <div className="flex flex-wrap gap-1.5">
+            {COMMON_UNIT_NAMES.map((u) => (
+              <button
+                key={u}
+                type="button"
+                onClick={() => setDraft({ ...draft, name: u, direction: 'up' })}
+                className={`rounded-full border px-2.5 py-1 text-xs ${
+                  name.trim().toLowerCase() === u ? 'border-primary bg-primary/10 text-primary' : 'hover:bg-muted'
+                }`}
+              >
+                {u}
+              </button>
+            ))}
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="unit-qty">
-              How many {baseUnit} in 1 {name.trim() || 'unit'}?
-            </Label>
-            <Input
-              id="unit-qty"
-              type="number"
-              min={0}
-              step="any"
-              placeholder={baseUnit === 'sheet' ? 'e.g. 100' : 'e.g. 12'}
-              value={baseQty}
-              onChange={(e) => setBaseQty(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Smaller than the base unit works too — e.g. a nori sheet cut in 4: “mini sheet” = 0.25 sheet.
-            </p>
-          </div>
-          {valid && (
+          <SizeFields draft={draft} onChange={setDraft} baseUnit={baseUnit} />
+          <p className="text-xs text-muted-foreground">
+            Smaller works too — a nori sheet cut in 4 is “1 sheet = 4 mini sheet”; a piece that weighs 120 g is “1 pcs = 120 g”.
+          </p>
+          {factor != null && (
             <p className="rounded-md bg-muted px-3 py-2 text-sm">
-              1 {name.trim()} = <b>{fmtQty(n)} {baseUnit}</b>
+              <b>{describeSize(name.trim(), factor, baseUnit)}</b>
             </p>
           )}
         </div>

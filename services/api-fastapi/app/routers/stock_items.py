@@ -33,11 +33,13 @@ from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from postgrest.exceptions import APIError
 
-from app.auth import CurrentUser, get_current_user, require_role_or_grant
+from app.edit_log import log_item_edit
+from app.auth import CurrentUser, get_current_user, require_role, require_role_or_grant
 from app.deps import get_supabase
 from app.ph_time import ph_day_bounds_utc, today_ph
 from app.routers.inventory_movements import apply_inventory_movement
 from app.schemas import (
+    BaseUnitChange,
     FieldOverride,
     LowStockStockItem,
     StockConsumptionRuleCreate,
@@ -208,15 +210,52 @@ def update_stock_item(stock_item_id: str, body: StockItemUpdate, user: CurrentUs
         raise HTTPException(status_code=404, detail="Stock item not found")
 
     update_data = body.model_dump(exclude_unset=True)
+    if "name" in update_data:
+        update_data["name"] = " ".join((update_data["name"] or "").split())
+        if not update_data["name"]:
+            raise HTTPException(status_code=400, detail="Name can't be empty")
     update_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+    try:
+        result = (
+            supabase.table("stock_items")
+            .update(update_data)
+            .eq("id", stock_item_id)
+            .select(
+                "id, name, station, category, unit, ingredient_id, current_stock, reorder_threshold, "
+                "active, needs_review, created_at, updated_at, ingredients(name, current_stock)"
+            )
+            .execute()
+        )
+    except APIError as e:
+        if e.code == "23505":
+            raise HTTPException(status_code=409, detail=f"Another item at this station is already called '{update_data.get('name')}'")
+        raise
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Stock item not found")
+    return _to_stock_item_out(result.data[0])
+
+
+@router.post("/stock-items/{stock_item_id}/change-unit", response_model=StockItemOut)
+def change_stock_item_unit(stock_item_id: str, body: BaseUnitChange, user: CurrentUser = Depends(get_current_user)):
+    """Unlinked station item version of POST /inventory/{id}/change-unit."""
+    require_role(user, "manager", "executive")
+    supabase = get_supabase()
+    try:
+        supabase.rpc(
+            "change_item_base_unit",
+            {"p_kind": "stock_item", "p_id": stock_item_id, "p_new_unit": body.new_unit,
+             "p_factor": body.factor, "p_keep_old_as_size": body.keep_old_as_size},
+        ).execute()
+    except APIError as e:
+        raise HTTPException(status_code=400, detail=e.message or "Could not change the unit")
+    log_item_edit(supabase, "unit", None, {"unit": body.new_unit, "factor": body.factor}, user.id, stock_item_id=stock_item_id)
     result = (
         supabase.table("stock_items")
-        .update(update_data)
-        .eq("id", stock_item_id)
         .select(
             "id, name, station, category, unit, ingredient_id, current_stock, reorder_threshold, "
             "active, needs_review, created_at, updated_at, ingredients(name, current_stock)"
         )
+        .eq("id", stock_item_id)
         .execute()
     )
     if not result.data:
@@ -328,7 +367,10 @@ def _sum_new_stocks_and_usage(movements: list[dict], losses: list[dict]) -> tupl
     sale_usage = sum(float(m["quantity"]) for m in movements if m["type"] == "sale_consumption")
     sale_reversal = sum(float(m["quantity"]) for m in movements if m["type"] == "sale_consumption_reversal")
     loss_usage = sum(float(l["quantity"]) for l in losses if not l.get("skip_stock_deduction"))
-    usage = sale_usage - sale_reversal + loss_usage
+    # Taken out by hand, mostly for a batch ("Made a batch" takes the raw
+    # rice out as trans_out). It left the shelf, so it's usage.
+    taken_out = sum(float(m["quantity"]) for m in movements if m["type"] == "trans_out")
+    usage = sale_usage - sale_reversal + loss_usage + taken_out
     return new_stocks, usage
 
 

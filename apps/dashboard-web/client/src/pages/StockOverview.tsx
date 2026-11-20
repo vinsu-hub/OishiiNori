@@ -20,6 +20,8 @@ import {
 } from '@/lib/api';
 import { formatDateTime12h } from '@/lib/utils';
 import { StockStatTile } from '@/components/stock/StockStatTile';
+import { SuggestionsCard } from '@/components/stock/SmartPanel';
+import { ItemSheet } from '@/components/stock/ItemSheet';
 import { STOCK_STATIONS } from '@/lib/constants';
 import { STOCK_TABLE_CELL_CLASS, STOCK_TABLE_HEAD_CLASS, STOCK_TABLE_ROW_CLASS } from '@/components/stock/stockTableStyle';
 
@@ -40,6 +42,7 @@ export default function StockOverview() {
   const { lowStockCount } = useInventoryAlerts();
 
   const [ingredients, setIngredients] = useState<ApiIngredient[]>([]);
+  const [itemPage, setItemPage] = useState<string | null>(null);
   const [expiringSoon, setExpiringSoon] = useState<ApiExpiringIngredient[]>([]);
   const [stockItems, setStockItems] = useState<ApiStockItem[]>([]);
   const [movements, setMovements] = useState<ApiInventoryMovement[]>([]);
@@ -135,6 +138,9 @@ export default function StockOverview() {
                 onClick={() => navigate('/stock')}
               />
             </div>
+
+            <SuggestionsCard onOpenItem={setItemPage} />
+            <ItemSheet ingredientId={itemPage} onOpenChange={(open) => !open && setItemPage(null)} />
 
             <Card>
               <CardHeader>

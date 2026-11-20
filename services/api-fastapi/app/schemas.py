@@ -884,9 +884,15 @@ class IngredientUpdate(BaseModel):
     purchase_unit: str | None = Field(default=None, max_length=40)
     purchase_base_qty: float | None = Field(default=None, gt=0)
     cost_note: str | None = Field(default=None, max_length=200)
-    station: str | None = None
-    sheet_section: str | None = None
-    sort_order: int | None = None
+
+
+class BaseUnitChange(BaseModel):
+    """Switch an item's main unit, converting everything stored in it:
+    1 old unit = factor new units ("1 pcs = 120 g" -> new_unit="g",
+    factor=120)."""
+    new_unit: str = Field(min_length=1, max_length=30)
+    factor: float = Field(gt=0)
+    keep_old_as_size: bool = True
 
 
 class ExpiringIngredient(BaseModel):
@@ -907,6 +913,9 @@ class IngredientRecipeUsage(BaseModel):
 class InventoryCountRequest(BaseModel):
     employee_id: str
     counted_stock: float = Field(ge=0)
+    # EOD Count spotted batches of this prep base that nobody logged (0089):
+    # record them first, so only the true remainder shows as variance.
+    batches_made: float | None = Field(default=None, gt=0, le=100)
 
 
 class InventoryCountResponse(BaseModel):

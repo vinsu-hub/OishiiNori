@@ -18,6 +18,7 @@ from app.bundles import atomic_bundles_available, bundle_rpc, completed_bundle_i
 from app.deps import get_supabase
 from app.idempotency import check_idempotency_key, record_idempotency_key
 from app.ph_time import ph_day_bounds_utc, today_ph
+from app.prep_chain import expand as expand_prep_chain
 from app.routers.reservations import _blocking_reservation, _now_ph, _table_by_pos_number
 from app.routers.sales_insights import _page_rows, ID_BATCH_SIZE
 from app.routers.stock_items import adjust_stock_items_for_product_unit, adjust_stock_items_for_transaction
@@ -635,9 +636,14 @@ def _adjust_ingredients_for_size(
     deltas: dict[str, float] = {}
     movement_rows: list[dict] = []
     movement_type = "sale_consumption" if sign < 0 else "sale_consumption_reversal"
-    for recipe_item in recipe_rows:
-        ingredient_id = recipe_item["ingredient_id"]
-        delta_qty = float(recipe_item["qty_per_serving"]) * quantity * sign
+    # 'auto' prep bases (0089) are opened up into what they're made of, down
+    # the chain -- after the held filter, so holding "Kikoman mix" still
+    # holds its Kikoman and water. A void recomputes the same way.
+    per_serving = expand_prep_chain(
+        supabase, [(r["ingredient_id"], float(r["qty_per_serving"])) for r in recipe_rows]
+    )
+    for ingredient_id, qty_per_serving in per_serving.items():
+        delta_qty = qty_per_serving * quantity * sign
         supabase.rpc("adjust_ingredient_stock", {"p_id": ingredient_id, "p_delta": delta_qty}).execute()
         deltas[ingredient_id] = delta_qty
         if delta_qty != 0:

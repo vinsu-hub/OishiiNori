@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'wouter';
 import { toast } from 'sonner';
-import { AlertTriangle, CheckCircle2, ChefHat, ChevronDown, ChevronRight, Download, RefreshCw, Search } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ChefHat, ChevronDown, ChevronRight, Download, Pencil, RefreshCw, Search } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -21,6 +21,8 @@ import { formatCurrency } from '@/lib/utils';
 import { StockStatTile } from '@/components/stock/StockStatTile';
 import { type CostImpact, UnitCostEntry, fmtUnitCost } from '@/components/stock/UnitCostEntry';
 import { PrepBasesPanel } from '@/components/stock/PrepBasesPanel';
+import { EditItemDialog, type EditableItem } from '@/components/stock/EditItemDialog';
+import { ItemSheet } from '@/components/stock/ItemSheet';
 
 type Section = 'costs' | 'recipes' | 'food-cost' | 'prep';
 
@@ -41,6 +43,9 @@ export function RecipeCostsPanel() {
   const { user } = useAuth();
   const canEditCosts = user?.role === 'executive';
   const canMakeBatches = ['executive', 'manager', 'stocker'].includes(user?.role ?? '');
+  const canEditItem = ['executive', 'manager'].includes(user?.role ?? '');
+  const [editing, setEditing] = useState<EditableItem | null>(null);
+  const [itemPage, setItemPage] = useState<string | null>(null);
   const [, navigate] = useLocation();
   const [section, setSection] = useState<Section>('costs');
   const [products, setProducts] = useState<RecipeCoverageProduct[]>([]);
@@ -263,7 +268,26 @@ export function RecipeCostsPanel() {
                         <div key={ingredient.id} className="grid gap-2 p-3 md:grid-cols-[minmax(0,1.3fr)_minmax(0,2fr)] md:items-center">
                           <div className="min-w-0">
                             <p className="flex flex-wrap items-center gap-1 font-medium">
-                              {ingredient.name}
+                              <button
+                                type="button"
+                                className="text-left underline-offset-2 hover:underline"
+                                title="Open item page"
+                                onClick={() => setItemPage(ingredient.id)}
+                              >
+                                {ingredient.name}
+                              </button>
+                              {canEditItem && (
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-6 w-6 text-muted-foreground"
+                                  aria-label={`Edit ${ingredient.name}`}
+                                  title="Edit name, unit and sizes"
+                                  onClick={() => setEditing({ kind: 'ingredient', id: ingredient.id, name: ingredient.name, unit: ingredient.base_unit || 'pcs' })}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" aria-hidden />
+                                </Button>
+                              )}
                               {ingredient.prep_yield != null && <Badge variant="secondary" className="gap-1"><ChefHat className="h-3 w-3" aria-hidden /> Prep base</Badge>}
                               {ingredient.stock_status === 'low' && <Badge variant="destructive">Low stock</Badge>}
                             </p>
@@ -363,6 +387,7 @@ export function RecipeCostsPanel() {
               impactFor={impactFor}
               onUnitAdded={addUnit}
               onChanged={load}
+              onOpenItem={setItemPage}
             />
           )}
 
@@ -492,6 +517,13 @@ export function RecipeCostsPanel() {
           )}
         </CardContent>
       </Card>
+      <ItemSheet ingredientId={itemPage} onOpenChange={(open) => !open && setItemPage(null)} onChanged={load} />
+      <EditItemDialog
+        item={editing}
+        sizes={editing ? unitsForItem(itemUnits, 'ingredient', editing.id) : []}
+        onOpenChange={(open) => !open && setEditing(null)}
+        onSaved={load}
+      />
     </div>
   );
 }

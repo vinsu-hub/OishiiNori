@@ -339,6 +339,8 @@ export interface PrepBase {
   prep_yield: number | null;
   unit_cost: number | null;
   current_stock: number;
+  /** 'batch': staff press Made a batch, a sale takes the base. 'auto': a sale takes the components. */
+  deduct_mode?: 'batch' | 'auto';
   components: PrepComponent[];
   batch_cost: number;
   /** batch_cost / prep_yield; null while a component has no cost. */
@@ -361,6 +363,86 @@ export function savePrepBase(ingredientId: string, body: SavePrepBaseRequest): P
 
 export function removePrepBase(ingredientId: string): Promise<void> {
   return request(`/prep-bases/${ingredientId}`, { method: 'DELETE' });
+}
+
+export interface ChainNode {
+  ingredient_id: string;
+  name: string;
+  base_unit: string;
+  current_stock: number;
+  /** made_from: how much one batch of the parent takes. goes_into: how much one batch of this node takes of the child. */
+  qty: number;
+  prep_yield: number | null;
+  deduct_mode: 'batch' | 'auto';
+  children: ChainNode[];
+}
+
+export interface ItemOverview {
+  id: string;
+  name: string;
+  base_unit: string;
+  category: string | null;
+  station: string | null;
+  sheet_section: string | null;
+  current_stock: number;
+  reorder_threshold: number;
+  /** Executives only. */
+  unit_cost: number | null;
+  prep_yield: number | null;
+  deduct_mode: 'batch' | 'auto';
+  sizes: { id: string; name: string; base_qty: number }[];
+  made_from: ChainNode[];
+  goes_into: ChainNode[];
+  recipes: { product_name: string; size_label: string; qty_per_serving: number; unit: string | null }[];
+  /** Last 14 PH days, oldest first. */
+  usage: { date: string; used: number }[];
+  avg_daily_use: number | null;
+  days_left: number | null;
+  batches_possible: number | null;
+  movements: { type: string; quantity: number; signed_qty: number | null; reason: string | null; created_at: string; by: string | null }[];
+  batches: { batches: number; yield_qty: number; source: 'manual' | 'eod'; note: string | null; created_at: string; by: string | null }[];
+  edits: { field: string; before: unknown; after: unknown; created_at: string; by: string | null }[];
+}
+
+export function fetchItemOverview(ingredientId: string): Promise<ItemOverview> {
+  return request(`/inventory/${ingredientId}/overview`);
+}
+
+export interface Suggestion {
+  key: string;
+  kind: 'yield' | 'usage' | 'mode';
+  ingredient_id: string;
+  title: string;
+  detail: string;
+  /** What Accept changes; null = for a person to check. */
+  action: { prep_yield?: number; deduct_mode?: 'auto' | 'batch' } | null;
+}
+
+export interface PrepList {
+  for_date: string;
+  items: { ingredient_id: string; name: string; unit: string; expected_use: number; in_stock: number; batches: number; makes: number }[];
+  pull: { ingredient_id: string; name: string; unit: string; qty: number; in_stock: number }[];
+}
+
+export interface SuggestionsResponse {
+  suggestions: Suggestion[];
+  prep_list: PrepList | null;
+}
+
+export function fetchSuggestions(): Promise<SuggestionsResponse> {
+  return request('/suggestions');
+}
+
+export function acceptSuggestion(key: string): Promise<SuggestionsResponse> {
+  return request('/suggestions/accept', { method: 'POST', body: JSON.stringify({ key }) });
+}
+
+export function dismissSuggestion(key: string): Promise<void> {
+  return request('/suggestions/dismiss', { method: 'POST', body: JSON.stringify({ key }) });
+}
+
+export function setPrepBaseMode(ingredientId: string, deduct_mode: 'batch' | 'auto'): Promise<PrepBase> {
+  return request(`/prep-bases/${ingredientId}/mode`, { method: 'PATCH', body: JSON.stringify({ deduct_mode }) });
 }
 
 export function makePrepBatch(ingredientId: string, batches: number, note?: string): Promise<{ base: PrepBase; added: number; deducted: PrepComponent[] }> {
@@ -1189,7 +1271,8 @@ export function fetchLowStockSummary(): Promise<ApiLowStockSummary> {
 
 export function countStock(
   ingredientId: string,
-  body: { employee_id: string; counted_stock: number }
+  /** batches_made: batches spotted at the EOD count, recorded before the count. */
+  body: { employee_id: string; counted_stock: number; batches_made?: number }
 ): Promise<{ ingredient: ApiIngredient; movement: unknown; variance: number }> {
   return request(`/inventory/${ingredientId}/count`, { method: 'POST', body: JSON.stringify(body) });
 }
@@ -1342,6 +1425,17 @@ export function createItemUnit(body: {
   base_qty: number;
 }): Promise<ApiItemUnit> {
   return request('/item-units', { method: 'POST', body: JSON.stringify(body) });
+}
+
+/** Switch an item's main unit and convert its stock, sizes, recipe and batch
+ * lines and count history: 1 old unit = factor new units (migration 0088). */
+export function changeItemBaseUnit(
+  kind: 'ingredient' | 'stock_item',
+  id: string,
+  body: { new_unit: string; factor: number; keep_old_as_size?: boolean }
+): Promise<unknown> {
+  const path = kind === 'ingredient' ? `/inventory/${id}/change-unit` : `/stock-items/${id}/change-unit`;
+  return request(path, { method: 'POST', body: JSON.stringify(body) });
 }
 
 export function deleteItemUnit(id: string): Promise<{ status: string }> {

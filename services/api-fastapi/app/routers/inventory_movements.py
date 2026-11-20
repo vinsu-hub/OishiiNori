@@ -20,6 +20,7 @@ def apply_inventory_movement(
     reference_id: str | None = None,
     unit_cost_snapshot: float | None = None,
     expiry_date=None,
+    extra: dict | None = None,
 ) -> InventoryMovementResponse:
     """Adjusts ingredients.current_stock (or, since 0028, stock_items.
     current_stock for an unlinked stock item) for a movement and logs it.
@@ -87,6 +88,8 @@ def apply_inventory_movement(
                 "employee_id": employee_id,
                 "unit_cost_snapshot": unit_cost_snapshot,
                 "expiry_date": expiry_date.isoformat() if expiry_date else None,
+                # 0089 columns (batch_id, signed_qty), only when given.
+                **(extra or {}),
             }
         )
         .execute()

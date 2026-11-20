@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Check, ChevronDown, ChevronRight, Loader2, Printer, RotateCcw, Search, Trash2 } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Loader2, Pencil, Printer, RotateCcw, Search, Trash2 } from 'lucide-react';
 import {
   ApiIngredient,
   ApiIngredientDailySummary,
@@ -23,6 +23,7 @@ import {
   fetchItemUnits,
   fetchPrepBases,
   fetchStockItems,
+  type PrepBase,
   overrideStockItemField,
   removeIngredient,
   restoreIngredient,
@@ -35,6 +36,9 @@ import { isCounted, isLowIngredient, isLowStockItem } from '@/lib/stockAlerts';
 import { STOCK_TABLE_CELL_CLASS, STOCK_TABLE_HEAD_CLASS, STOCK_TABLE_ROW_CLASS } from '@/components/stock/stockTableStyle';
 import { groupBySection, sectionAnchor } from '@/components/stock/StationsPanel';
 import { type PrintRow, StockCountPrint } from '@/components/stock/StockCountPrint';
+import { EditItemDialog, type EditableItem } from '@/components/stock/EditItemDialog';
+import { ItemSheet } from '@/components/stock/ItemSheet';
+import { PrepListCard } from '@/components/stock/SmartPanel';
 import { STOCK_STATIONS, STOCK_STATION_LABELS } from '@/lib/constants';
 
 // EOD Stock Count (VS): one row per thing on the client's stock sheet -- every
@@ -87,6 +91,9 @@ interface RowState {
   baseKey: string;
   saving: boolean;
   variance: number | null;
+  /** Prep base counted higher than expected: batches to record on save
+   * (undefined = the suggestion, 0 = "just the count"). */
+  batches?: number;
   /** Last Save all failed for this row. */
   error?: string | null;
 }
@@ -149,11 +156,19 @@ export default function StockVS() {
   const [removedOpen, setRemovedOpen] = useState(false);
   const [removed, setRemoved] = useState<{ ingredients: ApiIngredient[]; items: ApiStockItem[] } | null>(null);
   /** prep base id -> its component ingredient ids, to show a base under its ingredient. */
-  const [prepComponents, setPrepComponents] = useState<Map<string, Set<string>>>(new Map());
+  const [prepBases, setPrepBases] = useState<Map<string, PrepBase>>(new Map());
+  const prepComponents = useMemo(
+    () => new Map(Array.from(prepBases.values(), (b) => [b.ingredient_id, new Set(b.components.map((c) => c.ingredient_id))] as const)),
+    [prepBases],
+  );
 
   const isExecutive = user?.role === 'executive';
   const canEditStockItems = ['executive', 'manager', 'stocker'].includes(user?.role ?? '');
   const canEdit = (row: CountRow) => (row.kind === 'ingredient' ? isExecutive : canEditStockItems);
+  // Rename / change unit / sizes (Edit button): managers and executives.
+  const canEditItem = ['executive', 'manager'].includes(user?.role ?? '');
+  const [editing, setEditing] = useState<EditableItem | null>(null);
+  const [itemPage, setItemPage] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -165,7 +180,7 @@ export default function StockVS() {
       fetchPrepBases().catch(() => []),
     ])
       .then(([ing, sum, units, items, bases]) => {
-        setPrepComponents(new Map(bases.map((b) => [b.ingredient_id, new Set(b.components.map((c) => c.ingredient_id))])));
+        setPrepBases(new Map(bases.map((b) => [b.ingredient_id, b])));
         setIngredients(ing);
         setSummaries(sum);
         setItemUnits(units);
@@ -348,11 +363,45 @@ export default function StockVS() {
     return any ? Math.round(total * 10000) / 10000 : null;
   }
 
+  /** A batch-made prep base counted at least half a batch above the system:
+   * how many batches that looks like, and how many will be recorded. */
+  function batchHint(row: CountRow, state: RowState): { base: PrepBase; suggested: number; chosen: number } | null {
+    if (row.kind !== 'ingredient') return null;
+    const base = prepBases.get(row.id);
+    if (!base?.prep_yield || !base.components.length || base.deduct_mode === 'auto') return null;
+    const counted = countedTotal(row, state);
+    if (counted == null) return null;
+    const extra = counted - row.systemEnding;
+    if (extra < base.prep_yield / 2) return null;
+    const suggested = Math.max(1, Math.round(extra / base.prep_yield));
+    return { base, suggested, chosen: state.batches ?? suggested };
+  }
+
+  /** What batches about to be recorded will take from this row (a component). */
+  const batchTakes = useMemo(() => {
+    const takes = new Map<string, { qty: number; from: string[] }>();
+    for (const row of allRows) {
+      const state = rows[row.key];
+      if (!state) continue;
+      const hint = batchHint(row, state);
+      if (!hint || !hint.chosen) continue;
+      for (const c of hint.base.components) {
+        const t = takes.get(c.ingredient_id) ?? { qty: 0, from: [] };
+        t.qty += c.qty * hint.chosen;
+        t.from.push(hint.base.name);
+        takes.set(c.ingredient_id, t);
+      }
+    }
+    return takes;
+  }, [rows, allRows, prepBases]);
+
   async function saveCount(row: CountRow): Promise<number> {
-    const counted = countedTotal(row, rowState(row.key));
+    const state = rowState(row.key);
+    const counted = countedTotal(row, state);
     if (counted == null) throw new Error('Not a valid count');
     if (row.kind === 'ingredient') {
-      return (await countStock(row.id, { employee_id: user!.id, counted_stock: counted })).variance;
+      const batches = batchHint(row, state)?.chosen || undefined;
+      return (await countStock(row.id, { employee_id: user!.id, counted_stock: counted, batches_made: batches })).variance;
     }
     await overrideStockItemField(row.id, { field: 'ending', corrected_value: counted, reason: 'EOD Stock Count', employee_id: user!.id });
     return Math.round((counted - row.systemEnding) * 10000) / 10000;
@@ -377,17 +426,24 @@ export default function StockVS() {
       for (const key of countKeys) next[key] = { ...rowState(key), saving: true, error: null };
       return next;
     });
-    await inBatches(countKeys, 4, async (key) => {
+    // Bases recording batches go first: their batches take stock off the
+    // raw items, which must happen before those items' own counts.
+    const withBatches = new Set(countKeys.filter((key) => batchHint(rowByKey.get(key)!, rowState(key))?.chosen));
+    let batchesRecorded = 0;
+    const saveOne = async (key: string) => {
       const row = rowByKey.get(key)!;
       try {
         const variance = await saveCount(row);
         counts += 1;
-        setRows((prev) => ({ ...prev, [key]: { ...(prev[key] ?? rowState(key)), counts: {}, saving: false, variance, error: null } }));
+        if (withBatches.has(key)) batchesRecorded += batchHint(row, rowState(key))!.chosen;
+        setRows((prev) => ({ ...prev, [key]: { ...(prev[key] ?? rowState(key)), counts: {}, batches: undefined, saving: false, variance, error: null } }));
       } catch (e) {
         failed.push(row.name);
         setRows((prev) => ({ ...prev, [key]: { ...(prev[key] ?? rowState(key)), saving: false, error: apiMessage(e) } }));
       }
-    });
+    };
+    await inBatches(countKeys.filter((k) => withBatches.has(k)), 4, saveOne);
+    await inBatches(countKeys.filter((k) => !withBatches.has(k)), 4, saveOne);
     await inBatches(thresholdKeys, 4, async (key) => {
       const row = rowByKey.get(key)!;
       try {
@@ -404,7 +460,11 @@ export default function StockVS() {
       }
     });
     setSavingAll(false);
-    const parts = [counts && `${counts} count${counts === 1 ? '' : 's'}`, lows && `${lows} Low at`].filter(Boolean).join(', ');
+    const parts = [
+      counts && `${counts} count${counts === 1 ? '' : 's'}`,
+      batchesRecorded && `${fmtQty(batchesRecorded)} batch${batchesRecorded === 1 ? '' : 'es'}`,
+      lows && `${lows} Low at`,
+    ].filter(Boolean).join(', ');
     if (failed.length) toast.error(`Saved ${parts || 'nothing'} · ${failed.length} failed: ${failed.slice(0, 3).join(', ')}${failed.length > 3 ? '…' : ''}`);
     else toast.success(`Saved ${parts}`);
     load();
@@ -538,6 +598,7 @@ export default function StockVS() {
   return (
     <DashboardLayout title="EOD Stock Count (VS)">
       <div className="p-6 space-y-4 print:hidden">
+        <PrepListCard onOpenItem={setItemPage} />
         <Card>
           <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
             <CardTitle className="font-corp-display text-base">
@@ -655,7 +716,30 @@ export default function StockVS() {
                               <span className="flex flex-wrap items-center gap-1.5">
                                 {row.nested && <span className="text-muted-foreground" aria-hidden>↳</span>}
                                 {row.nested && <Badge variant="outline" className="font-normal">Base</Badge>}
-                                {row.name}
+                                {row.kind === 'ingredient' ? (
+                                  <button
+                                    type="button"
+                                    className="text-left underline-offset-2 hover:underline print:no-underline"
+                                    title="Open item page"
+                                    onClick={() => setItemPage(row.id)}
+                                  >
+                                    {row.name}
+                                  </button>
+                                ) : (
+                                  row.name
+                                )}
+                                {canEditItem && (
+                                  <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-6 w-6 text-muted-foreground"
+                                    aria-label={`Edit ${row.name}`}
+                                    title="Edit name, unit and sizes"
+                                    onClick={() => setEditing({ kind: row.kind, id: row.id, name: row.name, unit: row.unit })}
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" aria-hidden />
+                                  </Button>
+                                )}
                                 {row.kind === 'stock_item' && <Badge variant="secondary" className="font-normal">Station item</Badge>}
                                 {row.low && <Badge variant="destructive">Low</Badge>}
                                 {!row.counted && <Badge variant="outline" className="font-normal text-muted-foreground">Not counted yet</Badge>}
@@ -691,12 +775,20 @@ export default function StockVS() {
                             </TableCell>
                             <TableCell className={`${STOCK_TABLE_CELL_CLASS} text-right`}>
                               {fmtQty(row.systemEnding)} {row.unit}
+                              {(() => {
+                                const take = row.kind === 'ingredient' ? batchTakes.get(row.id) : undefined;
+                                return take ? (
+                                  <p className="mt-0.5 text-xs font-normal text-amber-800" title={`Batches of ${take.from.join(', ')}`}>
+                                    −{fmtQty(take.qty)} for batches → {fmtQty(row.systemEnding - take.qty)} {row.unit}
+                                  </p>
+                                ) : null;
+                              })()}
                             </TableCell>
                             <TableCell className={STOCK_TABLE_CELL_CLASS}>
                               <div className="flex flex-wrap items-end gap-2">
                                 {row.sizes.map((o) => (
                                   <label key={o.key} className="flex flex-col text-[11px] text-muted-foreground">
-                                    <span>{o.name} <span className="opacity-70">×{fmtQty(o.factor)}</span></span>
+                                    <span>{o.name} <span className="opacity-70">{o.factor >= 1 ? `×${fmtQty(o.factor)}` : `${fmtQty(1 / o.factor)}/${row.unit}`}</span></span>
                                     <Input
                                       type="number"
                                       min="0"
@@ -763,6 +855,43 @@ export default function StockVS() {
                                 ) : null;
                               })()}
                               {state.error && <p className="mt-1 max-w-48 text-xs text-destructive">{state.error}</p>}
+                              {(() => {
+                                const hint = batchHint(row, state);
+                                if (!hint) return null;
+                                const { base, suggested, chosen } = hint;
+                                const takes = base.components
+                                  .map((c) => `${fmtQty(c.qty * Math.max(chosen, 1))} ${c.base_unit} ${c.name}`)
+                                  .join(' + ');
+                                return (
+                                  <div className="mt-2 max-w-md whitespace-normal rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-950 print:hidden">
+                                    {chosen ? (
+                                      <>
+                                        <p>
+                                          Looks like <b>{fmtQty(chosen)} batch{chosen === 1 ? '' : 'es'}</b> were made
+                                          ({fmtQty(base.prep_yield! * chosen)} {row.unit}). On save, it takes {takes}.
+                                        </p>
+                                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                                          <Button size="icon" variant="outline" className="h-6 w-6 bg-white" aria-label="One batch fewer"
+                                            disabled={chosen <= 1} onClick={() => updateRow(row.key, { batches: chosen - 1 })}>−</Button>
+                                          <span className="w-6 text-center font-semibold">{fmtQty(chosen)}</span>
+                                          <Button size="icon" variant="outline" className="h-6 w-6 bg-white" aria-label="One batch more"
+                                            onClick={() => updateRow(row.key, { batches: chosen + 1 })}>+</Button>
+                                          <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => updateRow(row.key, { batches: 0 })}>
+                                            No batches, just the count
+                                          </Button>
+                                        </div>
+                                      </>
+                                    ) : (
+                                      <p>
+                                        Counted only, no batches recorded.{' '}
+                                        <button type="button" className="underline" onClick={() => updateRow(row.key, { batches: suggested })}>
+                                          Record {fmtQty(suggested)} batch{suggested === 1 ? '' : 'es'} instead
+                                        </button>
+                                      </p>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </TableCell>
                             <TableCell
                               className={`${STOCK_TABLE_CELL_CLASS} text-right font-semibold ${
@@ -937,6 +1066,13 @@ export default function StockVS() {
       </Dialog>
 
       {printRows && <StockCountPrint rows={printRows.rows} title={printRows.title} date={today} />}
+      <EditItemDialog
+        item={editing}
+        sizes={editing ? unitsForItem(itemUnits, editing.kind, editing.id) : []}
+        onOpenChange={(open) => !open && setEditing(null)}
+        onSaved={load}
+      />
+      <ItemSheet ingredientId={itemPage} onOpenChange={(open) => !open && setItemPage(null)} onChanged={load} />
     </DashboardLayout>
   );
 }

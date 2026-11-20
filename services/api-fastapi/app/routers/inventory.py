@@ -8,8 +8,11 @@ from app.auth import CurrentUser, get_current_user, require_role
 from app.cost_log import cost_log_supported_check, log_unit_cost, to_history_entry
 from app.deps import get_supabase
 from app.ph_time import today_ph
+from app.edit_log import log_item_edit
+from app.prep_chain import batches_supported
 from app.stock_alerts import active_supported_check, counts_supported_check, is_active, is_low, with_counted
 from app.schemas import (
+    BaseUnitChange,
     ExpiringIngredient,
     IngredientCostEntry,
     IngredientCreate,
@@ -273,6 +276,9 @@ def get_ingredient(ingredient_id: str, user: CurrentUser = Depends(get_current_u
     return result.data
 
 
+_MANAGER_EDITABLE = {"name", "category", "station", "sheet_section", "sort_order", "reorder_threshold", "needs_review"}
+
+
 @router.patch("/inventory/{ingredient_id}", response_model=IngredientOut)
 def update_ingredient(
     ingredient_id: str,
@@ -294,15 +300,31 @@ def update_ingredient(
     before letting them change it, but this endpoint itself has no way to
     know whether "g" -> "pack" is intentional and correct.
     """
-    require_role(user, "executive")
+    require_role(user, "manager", "executive")
+    update_data = body.model_dump(exclude_unset=True)
+    # Managers can tidy the catalog (Edit button on EOD Stock Count /
+    # Unit costs); money and the bare unit label stay executive-only.
+    if user.role != "executive":
+        blocked = sorted(set(update_data) - _MANAGER_EDITABLE)
+        if blocked:
+            raise HTTPException(status_code=403, detail=f"Only an executive can change: {', '.join(blocked)}")
     supabase = get_supabase()
     existing = (
-        supabase.table("ingredients").select("id, unit_cost, station, sheet_section").eq("id", ingredient_id).maybe_single().execute()
+        supabase.table("ingredients").select("id, name, unit_cost, station, sheet_section, reorder_threshold, category")
+        .eq("id", ingredient_id).maybe_single().execute()
     )
     if not existing or not existing.data:
         raise HTTPException(status_code=404, detail="Ingredient not found")
 
-    update_data = body.model_dump(exclude_unset=True)
+    if "name" in update_data:
+        update_data["name"] = " ".join((update_data["name"] or "").split())
+        if not update_data["name"]:
+            raise HTTPException(status_code=400, detail="Name can't be empty")
+        clash = (
+            supabase.table("ingredients").select("id").ilike("name", update_data["name"].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")).neq("id", ingredient_id).limit(1).execute()
+        ).data
+        if clash:
+            raise HTTPException(status_code=409, detail=f"Another item is already called '{update_data['name']}'")
     if "sheet_section" in update_data:
         update_data["sheet_section"] = (update_data["sheet_section"] or "").strip() or None
     # Moved to a station / section without a position: put it at the end.
@@ -319,6 +341,10 @@ def update_ingredient(
     result = supabase.table("ingredients").update(update_data).eq("id", ingredient_id).execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Ingredient not found")
+    # Item page history. Cost changes have their own price history.
+    for field in ("name", "category", "station", "sheet_section", "reorder_threshold"):
+        if field in update_data:
+            log_item_edit(supabase, field, existing.data.get(field), update_data[field], user.id, ingredient_id=ingredient_id)
     if "reorder_threshold" in update_data:
         clear_low_stock_cache()
     if update_data.get("unit_cost") is not None:
@@ -331,6 +357,27 @@ def update_ingredient(
         from app.routers.prep_bases import recompute_bases_using
         recompute_bases_using(supabase, ingredient_id, changed_by=user.id)
     return result.data[0]
+
+
+@router.post("/inventory/{ingredient_id}/change-unit", response_model=IngredientOut)
+def change_ingredient_unit(ingredient_id: str, body: BaseUnitChange, user: CurrentUser = Depends(get_current_user)):
+    """Change the main unit and convert stock, sizes, recipe and batch lines,
+    count history and costs with it (migration 0088). 1 old = factor new."""
+    require_role(user, "manager", "executive")
+    supabase = get_supabase()
+    try:
+        supabase.rpc(
+            "change_item_base_unit",
+            {"p_kind": "ingredient", "p_id": ingredient_id, "p_new_unit": body.new_unit,
+             "p_factor": body.factor, "p_keep_old_as_size": body.keep_old_as_size},
+        ).execute()
+    except APIError as e:
+        raise HTTPException(status_code=400, detail=e.message or "Could not change the unit")
+    log_item_edit(supabase, "unit", None, {"unit": body.new_unit, "factor": body.factor}, user.id, ingredient_id=ingredient_id)
+    clear_low_stock_cache()
+    from app.routers.prep_bases import recompute_bases_using
+    recompute_bases_using(supabase, ingredient_id, changed_by=user.id)
+    return get_ingredient(ingredient_id, user)
 
 
 def _set_active(supabase, ingredient_id: str, active: bool) -> dict:
@@ -518,20 +565,27 @@ def apply_ingredient_count(
         reason = f"Stock count: {previous_stock} -> {counted_stock} (variance {variance:+})"
         if note:
             reason = f"{note} -- {reason}"
-        movement_result = (
-            supabase.table("inventory_movements")
-            .insert(
-                {
-                    "ingredient_id": ingredient_id,
-                    "type": "count_adjustment",
-                    "quantity": abs(variance),
-                    "reason": reason,
-                    "employee_id": employee_id,
-                }
-            )
-            .execute()
-        )
+        row = {
+            "ingredient_id": ingredient_id,
+            "type": "count_adjustment",
+            "quantity": abs(variance),
+            "reason": reason,
+            "employee_id": employee_id,
+        }
+        if batches_supported(supabase):
+            row["signed_qty"] = variance  # 0089: the sign, for suggestions
+        movement_result = supabase.table("inventory_movements").insert(row).execute()
         movement = movement_result.data[0]
+    if batches_supported(supabase):
+        # Every count, a perfect one too: what the suggestions learn from.
+        try:
+            supabase.table("ingredient_counts").insert({
+                "ingredient_id": ingredient_id, "expected": previous_stock, "counted": counted_stock,
+                "variance": variance, "counted_by": employee_id,
+            }).execute()
+        except Exception:  # pragma: no cover - never fail a count over its log line
+            import logging
+            logging.getLogger(__name__).exception("could not log count for %s", ingredient_id)
 
     return InventoryCountResponse(ingredient=updated_ingredient, movement=movement, variance=variance)
 
@@ -545,7 +599,20 @@ def count_inventory(
     if body.employee_id != user.id:
         raise HTTPException(status_code=403, detail="Cannot log a count under another employee's id")
     supabase = get_supabase()
-    return apply_ingredient_count(supabase, ingredient_id, body.counted_stock, body.employee_id)
+    if body.batches_made:
+        # Batches first, then the count: recorded after, the batch's yield
+        # would push stock above what was just counted.
+        from app.routers.prep_bases import _load, record_batches
+
+        found = _load(supabase, [ingredient_id])
+        if not found or not found[0].prep_yield or not found[0].components:
+            raise HTTPException(status_code=400, detail="This item has no batch recipe")
+        record_batches(supabase, found[0], body.batches_made, body.employee_id, source="eod")
+        clear_low_stock_cache()
+    result = apply_ingredient_count(supabase, ingredient_id, body.counted_stock, body.employee_id)
+    from app.routers.suggestions import clear_suggestions_cache  # the prep list follows the new stock
+    clear_suggestions_cache()
+    return result
 
 
 @router.post("/inventory/{ingredient_id}/field-override", response_model=IngredientDailySummary)

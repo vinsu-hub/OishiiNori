@@ -72,8 +72,26 @@ export function fmtQty(n: number): string {
   return String(Math.round(n * 1000) / 1000);
 }
 
+/** Which way a size is typed: "1 pack = 10 sachet" (up) or "1 pc = 120 g"
+ * (down, for a size SMALLER than the main unit, like grams of a pcs item). */
+export type SizeDirection = 'up' | 'down';
+
+/** Main units in ONE of the size (item_units.base_qty), from what was typed. */
+export function sizeFromInput(direction: SizeDirection, n: number): number {
+  return direction === 'up' ? n : 1 / n;
+}
+
+/** Reads a size the natural way round: "1 pack = 10 sachet", but
+ * "1 pcs = 120 g" instead of "1 g = 0.008 pcs". */
+export function describeSize(name: string, factor: number, baseUnit: string): string {
+  return factor >= 1 || factor <= 0
+    ? `1 ${name} = ${fmtQty(factor)} ${baseUnit}`
+    : `1 ${baseUnit} = ${fmtQty(1 / factor)} ${name}`;
+}
+
 export function describeUnit(o: UnitOption, baseUnit: string): string {
-  return o.key === 'base' ? o.name : `${o.name} · ${fmtQty(o.factor)} ${baseUnit}`;
+  if (o.key === 'base') return o.name;
+  return o.factor >= 1 ? `${o.name} · ${fmtQty(o.factor)} ${baseUnit}` : `${o.name} · ${describeSize(o.name, o.factor, baseUnit)}`;
 }
 
 // Common containers offered when creating a unit.

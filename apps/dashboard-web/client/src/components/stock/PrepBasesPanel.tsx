@@ -21,6 +21,7 @@ import { formatCurrency } from '@/lib/utils';
 import { UnitSelect } from '@/components/stock/UnitPicker';
 import { IngredientPicker } from '@/components/stock/IngredientPicker';
 import { type CostImpact, UnitCostEntry, fmtUnitCost } from '@/components/stock/UnitCostEntry';
+import { DeductModeSwitch } from '@/components/stock/DeductModeSwitch';
 
 interface Props {
   ingredients: RecipeCoverageIngredient[];
@@ -33,6 +34,10 @@ interface Props {
   onUnitAdded: (unit: ApiItemUnit) => void;
   /** Costs changed -- the parent reloads recipes & food cost. */
   onChanged: () => void;
+  /** Item page: show (or set up) only this item's batch recipe. */
+  onlyBaseId?: string;
+  /** Tapping a name opens its item page. */
+  onOpenItem?: (ingredientId: string) => void;
 }
 
 interface DraftRow {
@@ -65,7 +70,7 @@ function describeQty(qty: number, baseUnit: string, unit: string | null, options
  * gives the cost per scoop / ml, which every menu recipe using the base
  * then picks up. "Made a batch" takes the components off stock and adds the
  * batch to the base. */
-export function PrepBasesPanel({ ingredients, itemUnits, canEdit, canMake, impactFor, onUnitAdded, onChanged }: Props) {
+export function PrepBasesPanel({ ingredients, itemUnits, canEdit, canMake, impactFor, onUnitAdded, onChanged, onlyBaseId, onOpenItem }: Props) {
   const [bases, setBases] = useState<PrepBase[]>([]);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -77,16 +82,15 @@ export function PrepBasesPanel({ ingredients, itemUnits, canEdit, canMake, impac
   const load = useCallback(() => {
     setLoading(true);
     fetchPrepBases()
-      .then(setBases)
+      .then((all) => setBases(onlyBaseId ? all.filter((b) => b.ingredient_id === onlyBaseId) : all))
       .catch((e) => toast.error(`Could not load prep bases: ${e instanceof Error ? e.message : e}`))
       .finally(() => setLoading(false));
-  }, []);
+  }, [onlyBaseId]);
   useEffect(load, [load]);
 
   const byId = useMemo(() => new Map(ingredients.map((i) => [i.id, i])), [ingredients]);
   const optionsFor = (id: string) => unitOptionsFor(byId.get(id)?.base_unit, unitsForItem(itemUnits, 'ingredient', id));
   const baseIds = new Set(bases.map((b) => b.ingredient_id));
-  const componentIds = new Set(bases.flatMap((b) => b.components.map((c) => c.ingredient_id)));
   const sortedIngredients = useMemo(() => [...ingredients].sort((a, b) => a.name.localeCompare(b.name)), [ingredients]);
 
   function startEdit(base: PrepBase | null) {
@@ -180,15 +184,30 @@ export function PrepBasesPanel({ ingredients, itemUnits, canEdit, canMake, impac
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
+      {!onlyBaseId && <p className="text-sm text-muted-foreground">
         Things the kitchen makes in batches: milk tea base, mousse, hot mayo. List what <span className="font-medium text-foreground">one batch</span>{' '}
         takes and how much it makes, and the cost per scoop or ml is worked out from the ingredients' own costs. Menu
         recipes keep using the base, so their food cost follows. When a batch is made, tap{' '}
         <span className="font-medium text-foreground">Made a batch</span>: its ingredients come off stock and the batch is added.
-      </p>
+      </p>}
 
-      {bases.length === 0 && !draft && (
+      {bases.length === 0 && !draft && !onlyBaseId && (
         <p className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">No prep bases yet.</p>
+      )}
+      {bases.length === 0 && !draft && onlyBaseId && (
+        <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+          <p>Bought as it is, not made in batches.</p>
+          {canEdit && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="mt-2"
+              onClick={() => setDraft({ baseId: onlyBaseId, yieldQty: '', yieldKey: 'base', rows: [{ ingredient_id: '', qty: '', unitKey: 'base' }] })}
+            >
+              <Plus className="mr-1 h-4 w-4" aria-hidden /> It's made in batches: set what one batch takes
+            </Button>
+          )}
+        </div>
       )}
 
       {bases.map((base) => {
@@ -199,12 +218,26 @@ export function PrepBasesPanel({ ingredients, itemUnits, canEdit, canMake, impac
             <div className="flex flex-wrap items-start justify-between gap-2 border-b p-3">
               <div className="min-w-0">
                 <p className="flex items-center gap-2 font-semibold">
-                  <ChefHat className="h-4 w-4 text-primary" aria-hidden /> {base.name}
+                  <ChefHat className="h-4 w-4 text-primary" aria-hidden />{' '}
+                  {onOpenItem ? (
+                    <button type="button" className="text-left underline-offset-2 hover:underline" onClick={() => onOpenItem(base.ingredient_id)}>
+                      {base.name}
+                    </button>
+                  ) : base.name}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   One batch makes <span className={base.prep_yield ? 'font-medium text-foreground' : 'text-amber-800'}>{yieldText}</span>
                   {' · '}In stock: {fmtQty(base.current_stock)} {base.base_unit}
                 </p>
+                {base.prep_yield != null && base.components.length > 0 && !onlyBaseId && (
+                  <div className="mt-2">
+                    <DeductModeSwitch
+                      base={base}
+                      canEdit={canEdit}
+                      onChanged={(u) => setBases((prev) => prev.map((b) => (b.ingredient_id === u.ingredient_id ? u : b)))}
+                    />
+                  </div>
+                )}
               </div>
               <div className="text-right">
                 {base.cost_per_unit != null ? (
@@ -227,7 +260,13 @@ export function PrepBasesPanel({ ingredients, itemUnits, canEdit, canMake, impac
                   <div key={c.ingredient_id} className={`p-2 px-3 ${c.unit_cost == null ? 'bg-amber-50/60' : ''}`}>
                     <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                       <div className="min-w-0">
-                        <p className="font-medium">{c.name}</p>
+                        <p className="font-medium">
+                          {onOpenItem ? (
+                            <button type="button" className="text-left underline-offset-2 hover:underline" onClick={() => onOpenItem(c.ingredient_id)}>
+                              {c.name}
+                            </button>
+                          ) : c.name}
+                        </p>
                         <p className="text-xs text-muted-foreground">
                           {describeQty(c.qty, c.base_unit, c.unit, optionsFor(c.ingredient_id))} ×{' '}
                           {c.unit_cost != null ? `${fmtUnitCost(c.unit_cost)} per ${c.base_unit}` : <span className="text-amber-800">no cost yet</span>}
@@ -267,7 +306,7 @@ export function PrepBasesPanel({ ingredients, itemUnits, canEdit, canMake, impac
                 {canEdit && (
                   <Button size="sm" variant="ghost" onClick={() => startEdit(base)}>Edit batch recipe</Button>
                 )}
-                {canMake && base.prep_yield != null && base.components.length > 0 && (
+                {canMake && base.prep_yield != null && base.components.length > 0 && base.deduct_mode !== 'auto' && (
                   <Button size="sm" onClick={() => { setBatches('1'); setMaking(base); }}>Made a batch</Button>
                 )}
               </div>
@@ -281,14 +320,14 @@ export function PrepBasesPanel({ ingredients, itemUnits, canEdit, canMake, impac
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
               <Label htmlFor="prep-base">This batch makes</Label>
-              {baseIds.has(draft.baseId) ? (
+              {baseIds.has(draft.baseId) || onlyBaseId ? (
                 <p id="prep-base" className="pt-2 font-semibold">{draftBase?.name}</p>
               ) : (
                 <Select value={draft.baseId} onValueChange={(v) => setDraft({ ...draft, baseId: v, yieldKey: 'base' })}>
                   <SelectTrigger id="prep-base" className="w-full" aria-label="Prep base ingredient"><SelectValue placeholder="Pick the ingredient (e.g. Hot Mayo)" /></SelectTrigger>
                   <SelectContent>
                     {sortedIngredients
-                      .filter((i) => !baseIds.has(i.id) && !componentIds.has(i.id))
+                      .filter((i) => !baseIds.has(i.id))
                       .map((i) => <SelectItem key={i.id} value={i.id}>{i.name} ({i.base_unit})</SelectItem>)}
                   </SelectContent>
                 </Select>
@@ -329,7 +368,7 @@ export function PrepBasesPanel({ ingredients, itemUnits, canEdit, canMake, impac
                     <IngredientPicker
                       ariaLabel={`Ingredient ${i + 1}`}
                       value={row.ingredient_id}
-                      ingredients={sortedIngredients.filter((x) => x.id !== draft.baseId && !baseIds.has(x.id))}
+                      ingredients={sortedIngredients.filter((x) => x.id !== draft.baseId)}
                       onPick={(v) => setRow(i, { ingredient_id: v, unitKey: 'base' })}
                     />
                   </div>
@@ -372,7 +411,7 @@ export function PrepBasesPanel({ ingredients, itemUnits, canEdit, canMake, impac
         </div>
       )}
 
-      {canEdit && !draft && (
+      {canEdit && !draft && !onlyBaseId && (
         <Button variant="outline" onClick={() => startEdit(null)}>
           <Plus className="mr-1 h-4 w-4" aria-hidden /> New prep base
         </Button>

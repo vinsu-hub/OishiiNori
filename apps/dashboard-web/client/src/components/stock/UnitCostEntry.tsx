@@ -13,7 +13,8 @@ import {
   fetchIngredientCostHistory,
   updateIngredient,
 } from '@/lib/api';
-import { fmtQty, isCountUnit, measureOf, unitOptionsFor, type UnitOption } from '@/lib/units';
+import { describeSize, describeUnit, fmtQty, isCountUnit, measureOf, unitOptionsFor, type UnitOption } from '@/lib/units';
+import { EMPTY_SIZE, SizeFields, sizeDraftFactor, type SizeDraft } from './SizeFields';
 import { formatCurrency } from '@/lib/utils';
 
 /** Food-cost effect of a new unit cost, worked out by the parent from the
@@ -82,8 +83,7 @@ export function UnitCostEntry({ ingredient, units, impact, onSaved, onUnitAdded 
   const [qty, setQty] = useState('');
   const [unitKey, setUnitKey] = useState<string | null>(null);
   const [weight, setWeight] = useState('');
-  const [newName, setNewName] = useState('');
-  const [newQty, setNewQty] = useState('');
+  const [newSize, setNewSize] = useState<SizeDraft>(EMPTY_SIZE);
   const [confirming, setConfirming] = useState(false);
   const [saving, setSaving] = useState(false);
   const [history, setHistory] = useState<IngredientCostEntry[] | null>(null);
@@ -118,15 +118,14 @@ export function UnitCostEntry({ ingredient, units, impact, onSaved, onUnitAdded 
   }
 
   async function addSize() {
-    const n = Number(newQty);
-    if (!newName.trim() || !(n > 0)) return;
+    const factor = sizeDraftFactor(newSize);
+    if (factor == null) return;
     try {
-      const unit = await createItemUnit({ ingredient_id: ingredient.id, name: newName.trim(), base_qty: n });
+      const unit = await createItemUnit({ ingredient_id: ingredient.id, name: newSize.name.trim(), base_qty: factor });
       onUnitAdded(unit);
       setUnitKey(unit.id);
-      setNewName('');
-      setNewQty('');
-      toast.success(`Added: 1 ${unit.name} = ${fmtQty(unit.base_qty)} ${base}`);
+      setNewSize(EMPTY_SIZE);
+      toast.success(`Added: ${describeSize(unit.name, unit.base_qty, base)}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not add the size');
     }
@@ -210,7 +209,7 @@ export function UnitCostEntry({ ingredient, units, impact, onSaved, onUnitAdded 
           <SelectContent>
             {options.map((o) => (
               <SelectItem key={o.key} value={o.key}>
-                {o.key === 'base' ? o.name : `${o.name} (${fmtQty(o.factor)} ${base})`}
+                {describeUnit(o, base)}
               </SelectItem>
             ))}
             {countUnit && !options.some((o) => o.name.toLowerCase() === 'kg') && (
@@ -254,23 +253,9 @@ export function UnitCostEntry({ ingredient, units, impact, onSaved, onUnitAdded 
       )}
 
       {key === NEW_SIZE && (
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="text-muted-foreground">1</span>
-          <Input className="w-28" placeholder="e.g. box" value={newName} onChange={(e) => setNewName(e.target.value)} aria-label="Size name" />
-          <span className="text-muted-foreground">=</span>
-          <Input
-            className="w-24"
-            inputMode="decimal"
-            type="number"
-            min={0}
-            step="any"
-            placeholder="e.g. 2000"
-            value={newQty}
-            onChange={(e) => setNewQty(e.target.value)}
-            aria-label={`How many ${base} in one`}
-          />
-          <span className="text-muted-foreground">{base}</span>
-          <Button size="sm" variant="outline" disabled={!newName.trim() || !(Number(newQty) > 0)} onClick={addSize}>
+        <div className="flex flex-wrap items-end gap-2">
+          <SizeFields draft={newSize} onChange={setNewSize} baseUnit={base} />
+          <Button size="sm" variant="outline" disabled={sizeDraftFactor(newSize) == null} onClick={addSize}>
             Add size
           </Button>
         </div>
