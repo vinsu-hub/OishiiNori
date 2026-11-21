@@ -41,6 +41,9 @@ import { ItemSheet } from '@/components/stock/ItemSheet';
 import { PrepListCard } from '@/components/stock/SmartPanel';
 import { STOCK_STATIONS, STOCK_STATION_LABELS } from '@/lib/constants';
 
+/** Column header cells pinned under the frozen toolbar (see pinRef). */
+const PINNED_HEAD = `${STOCK_TABLE_HEAD_CLASS} sticky top-[var(--vs-top,0px)] z-20 bg-card`;
+
 // EOD Stock Count (VS): one row per thing on the client's stock sheet -- every
 // ingredient AND every station item that has its own stock (packaging,
 // supplies, chiller/freezer rows...), so anything Stock Alerts mentions can
@@ -504,6 +507,26 @@ export default function StockVS() {
     if (removedOpen && !removed) loadRemoved();
   }, [removedOpen, removed, loadRemoved]);
 
+  // Frozen top: the toolbar, column headers and current section label stay
+  // pinned while rows scroll. Their heights change as chips wrap, so measure
+  // them into CSS vars the sticky offsets read from.
+  const pinRef = React.useRef<HTMLDivElement>(null);
+  const toolbarRef = React.useRef<HTMLDivElement>(null);
+  const headRef = React.useRef<HTMLTableRowElement>(null);
+  useEffect(() => {
+    const wrap = pinRef.current;
+    if (!wrap) return;
+    const compute = () => {
+      wrap.style.setProperty('--vs-top', `${toolbarRef.current?.offsetHeight ?? 0}px`);
+      wrap.style.setProperty('--vs-head', `${headRef.current?.offsetHeight ?? 0}px`);
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    if (toolbarRef.current) ro.observe(toolbarRef.current);
+    if (headRef.current) ro.observe(headRef.current);
+    return () => ro.disconnect();
+  }, [loading]);
+
   async function restoreRow(kind: 'ingredient' | 'stock_item', id: string, name: string) {
     try {
       if (kind === 'ingredient') await restoreIngredient(id);
@@ -609,6 +632,16 @@ export default function StockVS() {
             </Button>
           </CardHeader>
           <CardContent className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Enter today's physical count per item, in whatever unit you actually measured in -- it's
+              converted to the item's own base unit before comparing against the system's computed ending
+              (today's beginning + new stock − POS-deducted usage). <span className="font-medium text-foreground">Low at</span>{' '}
+              is when it shows on Stock Alerts (leave 0 for no warning). <span className="font-medium text-foreground">Station item</span>{' '}
+              rows are packaging and supplies tracked on Station Items -- counted here too. Type all your counts, then tap
+              <span className="font-medium text-foreground"> Save all</span> at the bottom once.
+            </p>
+            <div ref={pinRef} className="space-y-3">
+            <div ref={toolbarRef} className="sticky top-0 z-30 -mx-6 space-y-2 border-b bg-card px-6 py-2">
             {!loading && hasLayout && (
               <div className="space-y-2">
                 <Tabs value={activeTab} onValueChange={(v) => selectTab(v as StationTab)}>
@@ -646,14 +679,6 @@ export default function StockVS() {
                 )}
               </div>
             )}
-            <p className="text-xs text-muted-foreground">
-              Enter today's physical count per item, in whatever unit you actually measured in -- it's
-              converted to the item's own base unit before comparing against the system's computed ending
-              (today's beginning + new stock − POS-deducted usage). <span className="font-medium text-foreground">Low at</span>{' '}
-              is when it shows on Stock Alerts (leave 0 for no warning). <span className="font-medium text-foreground">Station item</span>{' '}
-              rows are packaging and supplies tracked on Station Items -- counted here too. Type all your counts, then tap
-              <span className="font-medium text-foreground"> Save all</span> at the bottom once.
-            </p>
             {!loading && (notCountedCount > 0 || lowCount > 0 || verifyCount > 0) && (
               <p className="flex flex-wrap gap-x-3 text-sm">
                 {notCountedCount > 0 && <span><span className="font-semibold">{notCountedCount}</span> not counted yet</span>}
@@ -661,6 +686,7 @@ export default function StockVS() {
                 {verifyCount > 0 && <span className="text-amber-800"><span className="font-semibold">{verifyCount}</span> to verify</span>}
               </p>
             )}
+            </div>
             {activeTab === UNSORTED && !query && (
               <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
                 These ingredients aren't on a station sheet yet. Use <span className="font-medium">Move to</span> to put each one in its station and section.
@@ -672,15 +698,15 @@ export default function StockVS() {
                 Loading...
               </div>
             ) : (
-              <Table>
+              <Table containerClassName="md:overflow-visible">
                 <TableHeader>
-                  <TableRow className={STOCK_TABLE_ROW_CLASS}>
-                    <TableHead className={STOCK_TABLE_HEAD_CLASS}>Item</TableHead>
-                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>System Ending</TableHead>
-                    <TableHead className={STOCK_TABLE_HEAD_CLASS}>Manual Count</TableHead>
-                    <TableHead className={`${STOCK_TABLE_HEAD_CLASS} text-right`}>Variance</TableHead>
-                    <TableHead className={STOCK_TABLE_HEAD_CLASS}>Low at</TableHead>
-                    <TableHead className={STOCK_TABLE_HEAD_CLASS} />
+                  <TableRow ref={headRef} className={STOCK_TABLE_ROW_CLASS}>
+                    <TableHead className={PINNED_HEAD}>Item</TableHead>
+                    <TableHead className={`${PINNED_HEAD} text-right`}>System Ending</TableHead>
+                    <TableHead className={PINNED_HEAD}>Manual Count</TableHead>
+                    <TableHead className={`${PINNED_HEAD} text-right`}>Variance</TableHead>
+                    <TableHead className={PINNED_HEAD}>Low at</TableHead>
+                    <TableHead className={PINNED_HEAD} />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -694,11 +720,11 @@ export default function StockVS() {
                   {sections.map((group) => (
                     <React.Fragment key={group.section}>
                       {group.section && (
-                        <TableRow className="bg-muted/60 hover:bg-muted/60">
+                        <TableRow className="hover:bg-transparent">
                           <TableCell
                             colSpan={6}
                             id={sectionAnchor(`vs-${activeTab}`, group.section)}
-                            className="scroll-mt-20 py-2 text-xs font-bold uppercase tracking-wide text-foreground"
+                            className="sticky top-[calc(var(--vs-top,0px)+var(--vs-head,0px))] z-10 scroll-mt-[calc(var(--vs-top,0px)+var(--vs-head,0px))] bg-muted py-2 text-xs font-bold uppercase tracking-wide text-foreground"
                           >
                             {group.section}{' '}
                             <span className="font-normal normal-case text-muted-foreground">
@@ -945,6 +971,7 @@ export default function StockVS() {
                 </TableBody>
               </Table>
             )}
+            </div>
             {!loading && (
               <div className="rounded-lg border">
                 <button
