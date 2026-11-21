@@ -19,12 +19,16 @@
 
 create table if not exists bundle_default_mix (
   product_size_id uuid not null references product_sizes(id) on delete cascade,
-  roll_product_id uuid not null references products(id) on delete restrict,
+  -- No FK to products on purpose: with one, PostgREST sees a second
+  -- product_sizes<->products path (many-to-many through this table) and
+  -- every product_sizes(products(...)) embed fails as ambiguous.
+  roll_product_id uuid not null,
   pieces integer not null check (pieces > 0),
   updated_by uuid references profiles(id) on delete set null,
   updated_at timestamptz not null default now(),
   primary key (product_size_id, roll_product_id)
 );
+alter table bundle_default_mix drop constraint if exists bundle_default_mix_roll_product_id_fkey;
 alter table bundle_default_mix enable row level security;
 grant all on bundle_default_mix to service_role;
 
