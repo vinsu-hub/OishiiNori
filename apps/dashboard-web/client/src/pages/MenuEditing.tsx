@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { PendingPlatterCard, PlatterMixCard } from '@/components/stock/PlatterMixPanel';
 import { toast } from 'sonner';
 import { DashboardLayout } from '@/components/DashboardLayout';
 import { useAuth } from '@/contexts/AuthContext';
@@ -679,19 +680,17 @@ export default function MenuEditing() {
           <Button onClick={openCreate}>Add menu item</Button>
         </div>
 
-        {canPublishBundleRecipe && pendingDeductions.length > 0 && (
-          <Card className="border-amber-300 bg-amber-50">
-            <CardContent className="pt-4 space-y-2">
-              <p className="font-semibold text-amber-950">Platter stock deductions awaiting verified recipes ({pendingDeductions.length})</p>
-              <p className="text-sm text-amber-900">Kitchen rolls are logged. Correct each affected maki recipe in its ingredient stock unit to apply stock once. Do not guess a conversion.</p>
-              {pendingDeductions.map((pending) => (
-                <p key={pending.transaction_item_id} className="text-sm text-amber-950">
-                  Order {pending.order_number ?? pending.transaction_id.slice(0, 8)} · {pending.product_name}: {pending.reason}
-                </p>
-              ))}
-            </CardContent>
-          </Card>
+        {canPublishBundleRecipe && (
+          <PendingPlatterCard
+            pending={pendingDeductions}
+            onChanged={loadPending}
+            onOpenRoll={(name) => {
+              const product = products.find((p) => p.name === name);
+              if (product) openEdit(product);
+            }}
+          />
         )}
+        <PlatterMixCard />
 
         {loading && <p className="text-sm text-muted-foreground">Loading menu...</p>}
         {!loading && (

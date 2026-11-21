@@ -22,6 +22,8 @@ import {
   KitchenStatus,
   fetchDigitalOrders,
   fetchProducts,
+  fetchPlatterMixes,
+  type PlatterMix,
   fetchAdvanceOrders,
   fetchTransactions,
   fulfillTransaction,
@@ -183,6 +185,8 @@ interface ChecklistTarget {
   item: ApiTransactionItem;
   product: ApiProduct;
   size: ApiProductSize;
+  /** Changing a mix already taken at sale. */
+  replace?: boolean;
 }
 
 export default function KitchenDisplay() {
@@ -195,6 +199,7 @@ export default function KitchenDisplay() {
   const [dateFilter, setDateFilter] = useState<'today' | 'all'>('all');
   const [fulfilledItemIds, setFulfilledItemIds] = useState<Set<string>>(new Set());
   const [checklistTarget, setChecklistTarget] = useState<ChecklistTarget | null>(null);
+  const [platterMixes, setPlatterMixes] = useState<Map<string, PlatterMix>>(new Map());
   const [extraUsageTarget, setExtraUsageTarget] = useState<{ size: ApiProductSize; product: ApiProduct } | null>(
     null
   );
@@ -241,6 +246,10 @@ export default function KitchenDisplay() {
     fetchProducts(false)
       .then(setProducts)
       .catch((e) => toast.error(`Failed to load products: ${e instanceof Error ? e.message : 'Unknown error'}`));
+    // Standard platter mixes pre-fill "Log rolls used" (0090). Optional.
+    fetchPlatterMixes()
+      .then((mixes) => setPlatterMixes(new Map(mixes.map((m) => [m.product_size_id, m]))))
+      .catch(() => { /* before 0090: start empty */ });
   }, []);
 
   const load = useCallback(() => {
@@ -349,6 +358,10 @@ export default function KitchenDisplay() {
     for (const t of transactions) map.set(t.id, t);
     return map;
   }, [transactions]);
+
+  const rollNames = useMemo(() => new Map(products.map((p) => [p.id, p.name])), [products]);
+  const rollSummary = (lines?: { maki_roll_product_id: string; quantity: number }[] | null) =>
+    (lines ?? []).map((l) => `${rollNames.get(l.maki_roll_product_id) ?? 'Roll'} ${l.quantity}`).join(' · ');
 
   const eligibleRolls = useMemo(
     () => products.filter((p) => p.active && p.category === ROLL_CATEGORY && !p.is_bundle),
@@ -782,7 +795,18 @@ export default function KitchenDisplay() {
                                       Log extra usage
                                     </Button>
                                   )}
-                                  {product.is_bundle &&
+                                  {product.is_bundle && fulfilled && item.bundle_auto_mix ? (
+                                    <span className="flex items-center gap-1">
+                                      <Badge variant="default" title={rollSummary(item.bundle_lines)}>Standard mix taken</Badge>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => setChecklistTarget({ transactionId: order.id, item, product, size, replace: true })}
+                                      >
+                                        Change
+                                      </Button>
+                                    </span>
+                                  ) : product.is_bundle &&
                                     (fulfilled ? (
                                       <Badge variant={item.bundle_deduction_status === 'pending_recipe' ? 'secondary' : 'default'}>
                                         {item.bundle_deduction_status === 'pending_recipe' ? 'Rolls logged · stock pending' : 'Logged'}
@@ -800,6 +824,9 @@ export default function KitchenDisplay() {
                                     ))}
                                 </div>
                               </div>
+                              {item.bundle_auto_mix && item.bundle_lines?.length ? (
+                                <p className="text-xs text-muted-foreground">{rollSummary(item.bundle_lines)}</p>
+                              ) : null}
                               {item.held_ingredients.length > 0 && (
                                 <p className="text-xs text-destructive">-- hold: {item.held_ingredients.join(', ')}</p>
                               )}
@@ -1126,6 +1153,12 @@ export default function KitchenDisplay() {
           bundleSize={checklistTarget.size}
           itemQuantity={checklistTarget.item.quantity}
           eligibleRolls={eligibleRolls}
+          replace={checklistTarget.replace}
+          initialLines={checklistTarget.replace
+            ? checklistTarget.item.bundle_lines
+            : platterMixes.get(checklistTarget.size.id)?.lines.map((l) => ({
+                maki_roll_product_id: l.roll_product_id, quantity: l.pieces * checklistTarget.item.quantity,
+              }))}
           onFulfilled={() => {
             setFulfilledItemIds((prev) => new Set(prev).add(checklistTarget.item.id));
             load();

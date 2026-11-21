@@ -28,6 +28,10 @@ interface Props {
   itemQuantity: number;
   eligibleRolls: ApiProduct[];
   onFulfilled: () => void;
+  /** Start from these rolls (the standard mix, or what was already taken). */
+  initialLines?: { maki_roll_product_id: string; quantity: number }[] | null;
+  /** The platter already took stock: changing puts the old mix back first. */
+  replace?: boolean;
 }
 
 export function BundleFulfillmentChecklist({
@@ -40,8 +44,11 @@ export function BundleFulfillmentChecklist({
   itemQuantity,
   eligibleRolls,
   onFulfilled,
+  initialLines,
+  replace = false,
 }: Props) {
-  const [quantities, setQuantities] = useState<Record<string, number>>({});
+  const [quantities, setQuantities] = useState<Record<string, number>>(() =>
+    Object.fromEntries((initialLines ?? []).map((l) => [l.maki_roll_product_id, l.quantity])));
   const [submitting, setSubmitting] = useState(false);
 
   const isSushiBoat = bundleProduct.name.includes('Sushi Boat');
@@ -68,11 +75,11 @@ export function BundleFulfillmentChecklist({
       .map(([maki_roll_product_id, quantity]) => ({ maki_roll_product_id, quantity }));
     setSubmitting(true);
     try {
-      const result = await submitBundleFulfillment(transactionId, itemId, lines);
+      const result = await submitBundleFulfillment(transactionId, itemId, lines, replace);
       if (result.stock_deduction_status === 'pending_recipe') {
         toast.warning(`${bundleProduct.name} rolls logged. Stock deduction is pending a verified recipe; the ticket can move on.`);
       } else {
-        toast.success(`${bundleProduct.name} rolls logged and stock deducted`);
+        toast.success(replace ? `${bundleProduct.name} mix changed, stock fixed` : `${bundleProduct.name} rolls logged and stock deducted`);
       }
       setQuantities({});
       onFulfilled();
@@ -94,7 +101,9 @@ export function BundleFulfillmentChecklist({
           <DialogTitle>{bundleProduct.name} -- rolls used</DialogTitle>
           <DialogDescription>
             {requiredTotal != null
-              ? `Log the actual rolls used for this ${itemQuantity > 1 ? `${itemQuantity}x ` : ''}${bundleSize.size_label}. Must total exactly ${requiredTotal} pieces.`
+              ? replace
+                ? `The standard mix was already taken from stock. Set the rolls actually used; the difference is fixed. Must total exactly ${requiredTotal} pieces.`
+                : `Log the actual rolls used for this ${itemQuantity > 1 ? `${itemQuantity}x ` : ''}${bundleSize.size_label}. Must total exactly ${requiredTotal} pieces.`
               : 'No bundle configuration found for this size -- cannot log a checklist.'}
           </DialogDescription>
         </DialogHeader>

@@ -14,6 +14,7 @@ from postgrest.exceptions import APIError
 from pydantic import BaseModel, Field, TypeAdapter
 
 from app.auth import CurrentUser, get_current_user, require_role, verify_employee_pin, verify_override_key
+from app import platter_mix
 from app.bundles import atomic_bundles_available, bundle_rpc, completed_bundle_ids, legacy_recipe_sizes, pending_bundle_item_ids
 from app.deps import get_supabase
 from app.idempotency import check_idempotency_key, record_idempotency_key
@@ -944,6 +945,12 @@ def _write_items_and_totals(
             supabase, item.product_size_id, item.quantity, sign=-1,
             employee_id=employee_id, transaction_id=transaction_id,
         )
+    # Platters with a standard mix take their rolls' recipes now (0090);
+    # the kitchen can still change the mix per order.
+    platter_mix.auto_fulfill(
+        supabase, transaction_id, inserted_items,
+        {sid for sid, size in sizes_by_id.items() if size["products"]["is_bundle"]}, employee_id,
+    )
     # Once per transaction, not per item -- e.g. a takeout box consumed
     # once regardless of how many products are in the order.
     adjust_stock_items_for_transaction(
@@ -1552,8 +1559,8 @@ def _embedded_transactions(supabase, columns: str, narrow) -> list[dict]:
         f"{columns}, "
         f"transaction_items({item_columns}, "
         "transaction_item_addons(*, menu_addons(name)), "
-        "bundle_fulfillment_batches(restored_at, bundle_pending_deductions(resolved_at)), "
-        "bundle_fulfillments(quantity), "
+        "bundle_fulfillment_batches(restored_at, auto_mix, bundle_pending_deductions(resolved_at)), "
+        "bundle_fulfillments(quantity, maki_roll_product_id), "
         "product_sizes(bundle_components(total_pieces))), "
         "deliveries(*, profiles(full_name)), "
         "pos_hanged_orders(transaction_id), "
@@ -1596,6 +1603,9 @@ def _embedded_transactions(supabase, columns: str, narrow) -> list[dict]:
             )
             item["bundle_fulfilled"] = fulfilled
             item["bundle_deduction_status"] = ("pending_recipe" if pending else "applied") if fulfilled else None
+            item["bundle_auto_mix"] = fulfilled and any(b.get("auto_mix") and b.get("restored_at") is None for b in batches)
+            item["bundle_lines"] = ([{"maki_roll_product_id": r["maki_roll_product_id"], "quantity": r["quantity"]}
+                                     for r in legacy] if fulfilled and legacy else None)
         t["_items"] = items
 
         deliveries = as_list(t.pop("deliveries", None))
@@ -1883,7 +1893,9 @@ def replace_transaction_items(
     revision = transaction.get("advance_schedule_revision", 0)
 
     # Made bundle lines stay: match each to an unchanged line in the request.
-    locked_ids = _locked_bundle_item_ids(supabase, [i["id"] for i in transaction["items"]])
+    # A platter that only has the sale-time standard mix is not "made" yet.
+    auto_ids = platter_mix.auto_item_ids(supabase, [i["id"] for i in transaction["items"]])
+    locked_ids = _locked_bundle_item_ids(supabase, [i["id"] for i in transaction["items"]]) - auto_ids
     kept = [i for i in transaction["items"] if i["id"] in locked_ids]
     remaining = list(items)
     for row in kept:
@@ -1933,6 +1945,7 @@ def replace_transaction_items(
         raise HTTPException(status_code=409, detail="Order changed; refresh and try again")
 
     replaced = [i for i in transaction["items"] if i["id"] not in locked_ids]
+    platter_mix.undo_auto(supabase, transaction_id, [i["id"] for i in replaced if i["id"] in auto_ids], actor_id)
     # An unmade bundle took no stock, and restoring it would seal it with a
     # batch row that blocks the delete -- give back only the regular lines.
     size_ids = list({i["product_size_id"] for i in replaced})
@@ -2691,8 +2704,12 @@ def bundle_fulfillment(
     body: BundleFulfillmentRequest,
     user: CurrentUser = Depends(get_current_user),
 ):
-    """Keep the existing tablet request contract; resolve and commit in one RPC."""
-    return bundle_rpc(get_supabase(), "fulfill_bundle_with_pending_atomic" if body.allow_pending_recipe else "fulfill_bundle_atomic", {
+    """Keep the existing tablet request contract; resolve and commit in one RPC.
+    replace=true: the kitchen changed the mix already taken (e.g. the sale-time
+    standard mix), so the old one goes back to stock first."""
+    name = ("refulfill_bundle_atomic" if body.replace
+            else "fulfill_bundle_with_pending_atomic" if body.allow_pending_recipe else "fulfill_bundle_atomic")
+    return bundle_rpc(get_supabase(), name, {
         "p_transaction_id": transaction_id,
         "p_item_id": item_id,
         "p_employee_id": user.id,

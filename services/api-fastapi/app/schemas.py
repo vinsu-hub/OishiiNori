@@ -379,6 +379,10 @@ class TransactionItemResponse(BaseModel):
     held_ingredients: list[str] = Field(default_factory=list)
     bundle_fulfilled: bool = False
     bundle_deduction_status: Literal["applied", "pending_recipe"] | None = None
+    # 0090: taken at sale with the platter's standard mix, not yet confirmed
+    # by the kitchen; and the rolls it was fulfilled with.
+    bundle_auto_mix: bool = False
+    bundle_lines: list["BundleFulfillmentLine"] | None = None
     addons: list[TransactionItemAddonResponse] = Field(default_factory=list)
 
 
@@ -467,6 +471,8 @@ class BundleFulfillmentLine(BaseModel):
 class BundleFulfillmentRequest(BaseModel):
     lines: list[BundleFulfillmentLine]
     allow_pending_recipe: bool = False
+    # Kitchen changed an already-taken mix: put the old one back first (0090).
+    replace: bool = False
 
 
 class BundleRecipeSource(BaseModel):
@@ -514,6 +520,36 @@ class PendingBundleDeductionOut(BaseModel):
     product_name: str
     reason: str
     created_at: datetime
+    # Rolls whose recipe still blocks it now (the saved reason is frozen).
+    blocking_rolls: list[str] = Field(default_factory=list)
+
+
+class ClosePendingIn(BaseModel):
+    transaction_item_ids: list[str] = Field(min_length=1, max_length=500)
+    note: str | None = Field(default=None, max_length=200)
+
+
+class PlatterMixLine(BaseModel):
+    roll_product_id: str
+    pieces: int = Field(gt=0, le=1000)
+
+
+class PlatterMixRoll(BaseModel):
+    id: str
+    name: str
+
+
+class PlatterMixOut(BaseModel):
+    product_size_id: str
+    platter_name: str
+    size_label: str
+    total_pieces: int
+    lines: list[PlatterMixLine]
+    allowed_rolls: list[PlatterMixRoll]
+
+
+class PlatterMixIn(BaseModel):
+    lines: list[PlatterMixLine] = Field(max_length=30)
 
 
 # ---------------------------------------------------------------------------
@@ -2237,3 +2273,7 @@ class KitchenPrinterStatusOut(BaseModel):
     last_print_order_number: int | None = None
     last_error: str | None = None
     last_error_at: datetime | None = None
+
+
+# Forward reference to BundleFulfillmentLine (defined after it).
+TransactionItemResponse.model_rebuild()

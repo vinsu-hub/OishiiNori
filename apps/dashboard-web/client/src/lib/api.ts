@@ -670,6 +670,9 @@ export interface ApiTransactionItem {
   held_ingredients: string[];
   bundle_fulfilled: boolean;
   bundle_deduction_status?: 'applied' | 'pending_recipe' | null;
+  /** Taken at sale with the platter's standard mix; the kitchen hasn't confirmed it. */
+  bundle_auto_mix?: boolean;
+  bundle_lines?: BundleFulfillmentLine[] | null;
   addons: ApiTransactionItemAddon[];
 }
 
@@ -986,11 +989,12 @@ export interface ApiBundleFulfillmentResult {
 export function submitBundleFulfillment(
   transactionId: string,
   itemId: string,
-  lines: BundleFulfillmentLine[]
+  lines: BundleFulfillmentLine[],
+  replace = false,
 ): Promise<ApiBundleFulfillmentResult> {
   return request(`/transactions/${transactionId}/items/${itemId}/bundle-fulfillment`, {
     method: 'POST',
-    body: JSON.stringify({ lines, allow_pending_recipe: true }),
+    body: JSON.stringify({ lines, allow_pending_recipe: true, replace }),
   });
 }
 
@@ -1001,10 +1005,43 @@ export interface PendingBundleDeduction {
   product_name: string;
   reason: string;
   created_at: string;
+  /** Rolls whose recipe still blocks it right now. */
+  blocking_rolls?: string[];
 }
 
 export function fetchPendingBundleDeductions(): Promise<PendingBundleDeduction[]> {
   return request('/bundle-deductions/pending');
+}
+
+/** Close platter orders that never took stock, without taking it now. */
+export function closePendingBundleDeductions(ids: string[], note?: string): Promise<{ closed: number }> {
+  return request('/bundle-deductions/pending/close', {
+    method: 'POST',
+    body: JSON.stringify({ transaction_item_ids: ids, note: note ?? null }),
+  });
+}
+
+export interface PlatterMixLine {
+  roll_product_id: string;
+  pieces: number;
+}
+
+export interface PlatterMix {
+  product_size_id: string;
+  platter_name: string;
+  size_label: string;
+  total_pieces: number;
+  lines: PlatterMixLine[];
+  allowed_rolls: { id: string; name: string }[];
+}
+
+/** Every platter with its standard mix (empty = the kitchen logs rolls). */
+export function fetchPlatterMixes(): Promise<PlatterMix[]> {
+  return request('/platter-mixes');
+}
+
+export function savePlatterMix(sizeId: string, lines: PlatterMixLine[]): Promise<PlatterMix> {
+  return request(`/product-sizes/${sizeId}/platter-mix`, { method: 'PUT', body: JSON.stringify({ lines }) });
 }
 
 export function publishBundleRecipe(sizeId: string, items: {

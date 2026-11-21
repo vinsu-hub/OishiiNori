@@ -28,11 +28,15 @@ from postgrest.exceptions import APIError
 
 from app.auth import CurrentUser, get_current_user, require_role
 from app.deps import get_supabase
+from app import platter_mix
 from app.bundles import atomic_bundles_available, bundle_rpc
 from app.routers.recipes import _get_recipe_data
 from app.schemas import (
     ProductCreate,
     BundleRecipeSource,
+    ClosePendingIn,
+    PlatterMixIn,
+    PlatterMixOut,
     PendingBundleDeductionOut,
     PublishBundleRecipeRequest,
     PublishBundleRecipeResponse,
@@ -103,6 +107,7 @@ def _pending_bundle_rows(db) -> list[dict]:
     transactions = (db.table("transactions").select("id,order_number,status")
                     .in_("id", list({row["transaction_id"] for row in items})).execute().data) if items else []
     tx_by_id = {row["id"]: row for row in transactions}
+    blocking = _blocking_rolls(db, [row["transaction_item_id"] for row in pending])
     result = []
     for row in pending:
         item = by_id.get(row["transaction_item_id"])
@@ -116,8 +121,111 @@ def _pending_bundle_rows(db) -> list[dict]:
             "transaction_id": item["transaction_id"],
             "order_number": tx.get("order_number"),
             "product_name": ((item.get("product_sizes") or {}).get("products") or {}).get("name") or "Platter",
+            "blocking_rolls": blocking.get(row["transaction_item_id"], []),
         })
     return sorted(result, key=lambda row: row["created_at"])
+
+
+def _blocking_rolls(db, item_ids: list[str]) -> dict[str, list[str]]:
+    """item id -> rolls whose recipe has a line not in its ingredient's unit."""
+    if not item_ids:
+        return {}
+    lines = []
+    for start in range(0, len(item_ids), 200):
+        lines += (db.table("bundle_fulfillments").select("transaction_item_id, product_size_id, products(name)")
+                  .in_("transaction_item_id", item_ids[start:start + 200]).execute().data or [])
+    size_ids = list({r["product_size_id"] for r in lines if r.get("product_size_id")})
+    recipe = (db.table("recipe_items").select("product_size_id, unit, ingredients(base_unit)")
+              .in_("product_size_id", size_ids).execute().data or []) if size_ids else []
+    bad = {r["product_size_id"] for r in recipe
+           if (r.get("ingredients") or {}).get("base_unit") is not None and r["unit"] != r["ingredients"]["base_unit"]}
+    out: dict[str, list[str]] = {}
+    for r in lines:
+        if r.get("product_size_id") in bad:
+            name = (r.get("products") or {}).get("name") or "?"
+            if name not in out.setdefault(r["transaction_item_id"], []):
+                out[r["transaction_item_id"]].append(name)
+    return out
+
+
+@router.post("/bundle-deductions/pending/close")
+def close_pending_bundle_deductions(body: ClosePendingIn, user: CurrentUser = Depends(get_current_user)):
+    """Close platter orders that never took stock, without taking it now
+    (e.g. old orders before a fresh stock count). Kept for history."""
+    require_role(user, "executive")
+    db = get_supabase()
+    closed = (db.table("bundle_pending_deductions").update({
+        "resolved_at": datetime.now(timezone.utc).isoformat(), "closed_without_deduction": True,
+        "closed_by": user.id, "closed_note": (body.note or "").strip() or "Closed without deduction",
+    }).in_("transaction_item_id", body.transaction_item_ids).is_("resolved_at", "null").execute().data or [])
+    return {"closed": len(closed)}
+
+
+def _platter_sizes(db, size_id: str | None = None) -> list[dict]:
+    q = db.table("bundle_components").select("product_size_id, total_pieces, product_sizes(size_label, products(name, active))")
+    if size_id:
+        q = q.eq("product_size_id", size_id)
+    return q.execute().data or []
+
+
+@router.get("/platter-mixes", response_model=list[PlatterMixOut])
+def list_platter_mixes(user: CurrentUser = Depends(get_current_user)):
+    """Every platter size with its standard mix (empty = kitchen logs rolls).
+    Any signed-in user: the Kitchen Display pre-fills its checklist from it."""
+    db = get_supabase()
+    rolls = (db.table("products").select("id, name, active, is_bundle, category")
+             .eq("category", platter_mix.ROLL_CATEGORY).execute().data or [])
+    mixes = platter_mix.all_mixes(db)
+    out = []
+    for row in _platter_sizes(db):
+        size = row.get("product_sizes") or {}
+        product = size.get("products") or {}
+        if not product.get("active", True):
+            continue
+        name = product.get("name") or "Platter"
+        out.append(PlatterMixOut(
+            product_size_id=row["product_size_id"], platter_name=name, size_label=size.get("size_label") or "",
+            total_pieces=int(row["total_pieces"] or 0), lines=mixes.get(row["product_size_id"], []),
+            allowed_rolls=[{"id": r["id"], "name": r["name"]} for r in sorted(rolls, key=lambda r: r["name"])
+                           if platter_mix.roll_allowed(name, r)],
+        ))
+    return sorted(out, key=lambda m: (m.platter_name, m.total_pieces))
+
+
+@router.put("/product-sizes/{size_id}/platter-mix", response_model=PlatterMixOut)
+def save_platter_mix(size_id: str, body: PlatterMixIn, user: CurrentUser = Depends(get_current_user)):
+    """Save a platter's standard mix. No lines = back to the kitchen logging rolls."""
+    require_role(user, "manager", "executive")
+    db = get_supabase()
+    rows = _platter_sizes(db, size_id)
+    if not rows:
+        raise HTTPException(status_code=404, detail="This isn't a platter size")
+    total = int(rows[0]["total_pieces"] or 0)
+    name = ((rows[0].get("product_sizes") or {}).get("products") or {}).get("name") or "Platter"
+    merged: dict[str, int] = {}
+    for line in body.lines:
+        merged[line.roll_product_id] = merged.get(line.roll_product_id, 0) + line.pieces
+    if merged:
+        if sum(merged.values()) != total:
+            raise HTTPException(status_code=400, detail=f"The rolls add up to {sum(merged.values())} pcs; {name} is {total} pcs")
+        rolls = {r["id"]: r for r in (db.table("products").select("id, name, active, is_bundle, category")
+                                      .in_("id", list(merged)).execute().data or [])}
+        for rid in merged:
+            if rid not in rolls or not platter_mix.roll_allowed(name, rolls[rid]):
+                raise HTTPException(status_code=400, detail=f"{rolls.get(rid, {}).get('name', 'That roll')} can't go in {name}")
+        sources = {r["product_id"] for r in (db.table("bundle_recipe_sources").select("product_id")
+                                              .in_("product_id", list(merged)).execute().data or [])}
+        missing = [rolls[rid]["name"] for rid in merged if rid not in sources]
+        if missing:
+            raise HTTPException(status_code=400, detail=f"Set the platter recipe size first for: {', '.join(missing)}")
+    db.table("bundle_default_mix").delete().eq("product_size_id", size_id).execute()
+    if merged:
+        db.table("bundle_default_mix").insert([
+            {"product_size_id": size_id, "roll_product_id": rid, "pieces": pcs, "updated_by": user.id}
+            for rid, pcs in merged.items()
+        ]).execute()
+    platter_mix.clear_cache()
+    return next(m for m in list_platter_mixes(user) if m.product_size_id == size_id)
 
 
 @router.get("/bundle-deductions/pending", response_model=list[PendingBundleDeductionOut])
@@ -356,6 +464,31 @@ def delete_product_size(size_id: str, user: CurrentUser = Depends(get_current_us
 # Recipe items
 # ---------------------------------------------------------------------------
 
+# Same thing, different spelling: stored as the ingredient's own unit.
+_UNIT_ALIASES = [{"pc", "pcs", "piece", "pieces"}, {"g", "gram", "grams"}, {"ml"}, {"kg", "kilo", "kilos"}]
+
+
+def _recipe_qty_in_base(supabase, ingredient_id: str, qty: float, unit: str | None) -> tuple[float, str]:
+    """A recipe line is stored in the ingredient's main unit, so sales,
+    platters and counts all agree. A size ("pack", "slice") is converted;
+    anything else is refused rather than guessed."""
+    ing = (supabase.table("ingredients").select("name, base_unit").eq("id", ingredient_id)
+           .maybe_single().execute())
+    if not ing or not ing.data:
+        raise HTTPException(status_code=404, detail="Ingredient not found")
+    base = ing.data["base_unit"]
+    u = (unit or "").strip().lower()
+    b = (base or "").strip().lower()
+    if not u or u == b or any(u in group and b in group for group in _UNIT_ALIASES):
+        return qty, base
+    sizes = (supabase.table("item_units").select("name, base_qty").eq("ingredient_id", ingredient_id)
+             .execute().data or [])
+    for size in sizes:
+        if size["name"].strip().lower() == u:
+            return round(qty * float(size["base_qty"]), 4), base
+    names = ", ".join([base] + [s_["name"] for s_ in sizes])
+    raise HTTPException(status_code=400, detail=f"{ing.data['name']} is counted in {base}; use one of: {names}")
+
 
 @router.post("/product-sizes/{size_id}/recipe-items", response_model=RecipeItemOut)
 def create_recipe_item(
@@ -368,13 +501,14 @@ def create_recipe_item(
     if not existing or not existing.data:
         raise HTTPException(status_code=404, detail="Product size not found")
 
+    qty, unit = _recipe_qty_in_base(supabase, body.ingredient_id, body.qty_per_serving, body.unit)
     try:
         supabase.table("recipe_items").insert(
             {
                 "product_size_id": size_id,
                 "ingredient_id": body.ingredient_id,
-                "qty_per_serving": body.qty_per_serving,
-                "unit": body.unit,
+                "qty_per_serving": qty,
+                "unit": unit,
                 "prep_notes": body.prep_notes,
             }
         ).execute()
@@ -394,7 +528,7 @@ def update_recipe_item(item_id: str, body: RecipeItemUpdate, user: CurrentUser =
 
     existing = (
         supabase.table("recipe_items")
-        .select("id, product_size_id")
+        .select("id, product_size_id, ingredient_id, qty_per_serving, unit")
         .eq("id", item_id)
         .maybe_single()
         .execute()
@@ -403,6 +537,14 @@ def update_recipe_item(item_id: str, body: RecipeItemUpdate, user: CurrentUser =
         raise HTTPException(status_code=404, detail="Recipe item not found")
 
     update_data = body.model_dump(exclude_unset=True)
+    if {"ingredient_id", "qty_per_serving", "unit"} & set(update_data):
+        qty, unit = _recipe_qty_in_base(
+            supabase,
+            update_data.get("ingredient_id") or existing.data["ingredient_id"],
+            float(update_data.get("qty_per_serving") or existing.data["qty_per_serving"]),
+            update_data.get("unit", existing.data["unit"]),
+        )
+        update_data.update(qty_per_serving=qty, unit=unit)
     try:
         result = supabase.table("recipe_items").update(update_data).eq("id", item_id).execute()
     except APIError:

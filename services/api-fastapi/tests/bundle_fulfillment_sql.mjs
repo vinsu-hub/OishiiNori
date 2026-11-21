@@ -22,6 +22,7 @@ await db.exec(`
 `);
 await db.exec(await readFile(new URL('../../../supabase/migrations/0063_atomic_bundle_fulfillment.sql', import.meta.url), 'utf8'));
 await db.exec(await readFile(new URL('../../../supabase/migrations/0066_pending_bundle_deductions.sql', import.meta.url), 'utf8'));
+await db.exec(await readFile(new URL('../../../supabase/migrations/0090_platter_default_mix.sql', import.meta.url), 'utf8'));
 await db.exec(`
   insert into profiles values ('${id(1)}');
   insert into products values ('${id(2)}','Large Platter','Platters',true,true),('${id(3)}','Torikatsu Maki','Oishii Maki Rolls',true,false),('${id(4)}','Futo Maki','Oishii Maki Rolls',true,false);
@@ -38,6 +39,10 @@ const fulfill = async (lines = [line(3, 64)]) => (await db.query('select fulfill
 const fulfillPending = async (lines = [line(3, 64)]) => (await db.query('select fulfill_bundle_with_pending_atomic($1,$2,$3,$4) as result', [id(9),id(10),id(1),JSON.stringify(lines)])).rows[0].result;
 const reconcile = async () => (await db.query('select reconcile_pending_bundle_atomic($1,$2) as result',[id(10),id(1)])).rows[0].result;
 const publish = async (rows) => (await db.query('select publish_bundle_recipe_atomic($1,$2) as result',[id(6),JSON.stringify(rows)])).rows[0].result;
+const refulfill = async (lines) => (await db.query('select refulfill_bundle_atomic($1,$2,$3,$4) as result', [id(9),id(10),id(1),JSON.stringify(lines)])).rows[0].result;
+const autoFulfill = async (lines=[line(3,64)]) => (await db.query('select auto_fulfill_bundle_atomic($1,$2,$3,$4) as result', [id(9),id(10),id(1),JSON.stringify(lines)])).rows[0].result;
+const unfulfill = async () => (await db.query('select unfulfill_bundle_atomic($1,$2,$3) as result',[id(9),id(10),id(1)])).rows[0].result;
+const autoFlag = async () => (await db.query('select auto_mix from bundle_fulfillment_batches')).rows[0]?.auto_mix;
 const restore = async () => (await db.query('select restore_bundle_atomic($1,$2,$3) as result',[id(9),id(10),id(1)])).rows[0].result;
 const stock = async (n=11) => Number((await db.query('select current_stock from ingredients where id=$1',[id(n)])).rows[0].current_stock);
 const count = async (table) => Number((await db.query(`select count(*) from ${table}`)).rows[0].count);
@@ -198,6 +203,76 @@ await test('Refund before correction seals pending rolls without stock movement'
 await test('Publishing rejects mismatched units before changing saved recipe', async () => {
   await rejected(()=>publish([{ingredient_id:id(11),qty_per_serving:220,unit:'pcs'}]),'PT400');
   assert.equal(await count('recipe_items'),3);
+});
+await test('Changed platter mix restores the first mix and deducts only the new one', async () => {
+  await fulfill();  // 64 Torikatsu: 8 servings -> rice 8240, nori 92
+  const out=await refulfill([line(3,40),line(4,24)]);  // 5 x 220 + 4 x 180 rice, 5 nori
+  assert.equal(out.stock_deduction_status,'applied');
+  assert.equal(await stock(),8180);
+  assert.equal(await stock(12),95);
+  assert.equal(Number((await db.query(`select count(*) from inventory_movements where type='sale_consumption_reversal'`)).rows[0].count),2);
+  assert.equal(await count('bundle_fulfillment_batches'),1);
+  await restore();
+  assert.equal(await stock(),10000); assert.equal(await stock(12),100);
+});
+await test('Same mix again changes nothing', async () => {
+  await fulfill();
+  await refulfill([line(3,64)]);
+  assert.equal(await stock(),8240);
+  assert.equal(await count('inventory_movements'),2);
+});
+await test('A bad new mix keeps the first deduction untouched', async () => {
+  await fulfill();
+  await rejected(()=>refulfill([line(3,40)]),'PT400');
+  assert.equal(await stock(),8240);
+  assert.equal(await count('bundle_ingredient_deductions'),2);
+});
+await test('Changing the mix of a platter not yet logged just logs it', async () => {
+  await refulfill([line(3,64)]);
+  assert.equal(await stock(),8240);
+});
+await test('Voided or reversed platters cannot change mix', async () => {
+  await fulfill(); await restore();
+  await rejected(()=>refulfill([line(3,40),line(4,24)]),'PT409');
+  await db.exec(`update transactions set status='voided'`);
+  await rejected(()=>refulfill([line(3,64)]),'PT409');
+  assert.equal(await stock(),10000);
+});
+await test('Changing a pending platter to good rolls deducts them', async () => {
+  await db.exec(`update recipe_items set unit='pcs' where id='${id(13)}'`);
+  await fulfillPending([line(3,40),line(4,24)]);
+  assert.equal(await count('bundle_pending_deductions'),1);
+  await refulfill([line(4,64)]);  // Futo only, its recipe is fine
+  assert.equal(await count('bundle_pending_deductions'),0);
+  assert.equal(Math.round(await stock()),10000-Math.round(64/6*180));
+});
+await test('Sale-time mix deducts, is flagged auto, and an order edit can undo it', async () => {
+  await autoFulfill();
+  assert.equal(await stock(),8240); assert.equal(await autoFlag(),true);
+  assert.equal(await unfulfill(),true);
+  assert.equal(await stock(),10000);
+  assert.equal(await count('bundle_fulfillment_batches'),0);
+  assert.equal(await count('bundle_fulfillments'),0);
+});
+await test('Sale-time mix never overwrites a kitchen log', async () => {
+  await fulfill([line(3,40),line(4,24)]);
+  assert.equal(await autoFulfill(),null);
+  assert.equal(await stock(),8180);
+  assert.equal(await unfulfill(),false);  // kitchen-made: an edit can't undo it
+  assert.equal(await stock(),8180);
+});
+await test('Kitchen confirming or changing the auto mix locks it', async () => {
+  await autoFulfill();
+  await refulfill([line(3,64)]);
+  assert.equal(await autoFlag(),false);
+  assert.equal(await unfulfill(),false);
+  await refulfill([line(3,40),line(4,24)]);
+  assert.equal(await autoFlag(),false);
+  assert.equal(await stock(),8180);
+});
+await test('Void after the sale-time mix restores everything', async () => {
+  await autoFulfill(); await restore();
+  assert.equal(await stock(),10000); assert.equal(await stock(12),100);
 });
 console.log(`${passed} SQL integration checks passed. No production connection used.`);
 await db.close();
